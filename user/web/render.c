@@ -376,6 +376,12 @@ static Color argb(unsigned v) {
     return c;
 }
 
+/* The grid whose named areas the children being emitted right now belong to,
+ * or NULL. A child states `grid-area: columnStart`; only its PARENT knows
+ * where columnStart is, so the parent leaves itself here while its children
+ * are emitted. Grids nest, so every setter saves and restores. */
+static const struct vstyle *g_area_owner;
+
 /* The page's zoom. Lengths the AUTHOR stated -- a 240px sidebar, 16px of
  * padding -- scale with the text, or a zoomed page is large type inside boxes
  * that did not grow. */
@@ -464,6 +470,16 @@ static float box_inset(const struct vstyle *s) {
 }
 
 static void size_box(const struct vstyle *s, int flex_item) {
+    /* Placement first: a box that claims a named area is put where the area
+     * is, rather than wherever the auto-flow happened to reach. */
+    if (g_area_owner && s->grid_area) {
+        for (int a = 0; a < g_area_owner->n_areas; a++)
+            if (g_area_owner->area_name[a] == s->grid_area) {
+                ui_set_grid_place(g_area_owner->area_r[a], g_area_owner->area_c[a],
+                                  g_area_owner->area_rs[a], g_area_owner->area_cs[a]);
+                break;
+            }
+    }
     struct layout_size w, h;
     float grow_w = s->border_box ? 0.0f : box_inset(s);
     float grow_h = s->border_box ? 0.0f
@@ -965,7 +981,13 @@ static void render_children(struct html_doc *d, int node, const struct vstyle *s
     int flexish = (s->display == VD_FLEX || s->display == VD_GRID);
     int outer_item = g_flex_item;
     g_flex_item = flexish;
+    /* A child's `grid-area` names a rectangle only its PARENT knows, so the
+     * parent leaves itself here for exactly as long as its children are being
+     * emitted. Saved and restored because grids nest. */
+    const struct vstyle *outer_owner = g_area_owner;
+    g_area_owner = (s->display == VD_GRID && s->n_areas > 0) ? s : 0;
     render_range(d, d->nodes[node].first_child, -1, s, href, &li);
+    g_area_owner = outer_owner;
     g_flex_item = outer_item;
 }
 

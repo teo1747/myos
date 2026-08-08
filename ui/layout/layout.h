@@ -87,6 +87,11 @@ struct layout_node {
     int           grid_ntrack;
     float grid_col_gap, grid_row_gap;  /* grid track gaps */
     int   grid_span;                   /* a grid CHILD spans this many columns (default 1) */
+    /* EXPLICIT PLACEMENT for a grid child, from `grid-area`. -1 = auto-flow,
+     * which is what everything did before named areas existed. Row and column
+     * are zero-based; grid_span is the column span, so only the row span needs
+     * its own field. */
+    int   grid_row, grid_col, grid_rowspan;
     float scroll_offset;               /* column scroll: children shift up by this many px */
     float offset_x, offset_y;          /* post-layout translate ADDED to the resolved
                                         * position (CSS `transform: translate`-style) --

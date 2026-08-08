@@ -191,6 +191,9 @@ void css_sheet_parse(struct css_sheet *sheet, const char *text, size_t len);
  * costs speed and never correctness. */
 void css_sheet_index(struct css_sheet *sheet);
 
+/* A grid-area name as 16 bits -- see style.h. */
+unsigned short css_name_hash(const char *s, size_t n);
+
 /* Apply every matching rule to `out`, weakest first, so the strongest wins by
  * landing last. Call AFTER the user-agent stylesheet and BEFORE inline style,
  * which is the cascade's origin order. */

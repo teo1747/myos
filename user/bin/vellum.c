@@ -44,8 +44,13 @@
 /* One document at a time, in fixed arenas. A browser that can be handed a
  * hostile page needs a bounded appetite -- see docs/BROWSER.md §7. */
 #define SRC_MAX   (512 * 1024)
-#define NODE_MAX  8192
-#define STR_MAX   (256 * 1024)
+/* Sized from what real pages need, counted rather than rounded: Wikipedia's
+ * "Operating system" article parses to about 9400 nodes and MDN's flex page to
+ * about 8100, so 8192 missed both -- and missing means the DOCUMENT STOPS.
+ * Wikipedia's header alone filled the old arena and the article was never
+ * parsed, which is not a truncated page, it is no page. */
+#define NODE_MAX  16384
+#define STR_MAX   (1024 * 1024)
 
 /* The bytes of the page being DISPLAYED. They live in the current TAB rather
  * than in one buffer here, because a background tab has to keep its own -- see

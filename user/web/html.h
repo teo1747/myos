@@ -69,6 +69,12 @@ struct html_doc {
     size_t strn, strcap;
     int  root;
     int  truncated;                 /* ran out of arena: tree is partial   */
+    /* WHICH arena ran out, because they mean different things and the answer
+     * used to be a single flag. A full NODE arena stops the document dead --
+     * Wikipedia's header alone consumed all 8192 and the article was never
+     * parsed at all, which read as a layout bug for far longer than it should
+     * have. A full STRING arena keeps the structure and loses text. */
+    int  trunc_nodes, trunc_strings;
     /* <style> content, concatenated in document order. The parser still does
      * not INTERPRET it -- it just stops throwing it away, so the stylist can
      * ask for it. NULL when the document has no <style>. */

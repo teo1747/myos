@@ -57,6 +57,7 @@ enum { VA_LEFT = 0, VA_CENTER, VA_RIGHT };
  * layout engine, and converted where the two meet in render.c. */
 enum { VT_AUTO = 0, VT_PX, VT_FR };
 #define VSTYLE_TRACKS 8
+#define VSTYLE_AREAS  8
 
 struct vstyle {
     unsigned char display;
@@ -65,6 +66,18 @@ struct vstyle {
      * means "no template" and the tracks are sized from their content. */
     unsigned char grid_track_mode[VSTYLE_TRACKS];   /* VT_* */
     unsigned char grid_ntrack;
+    /* NAMED AREAS. A container's `grid-template-areas` is reduced here to one
+     * rectangle per distinct name -- which is all a placer needs, and far less
+     * than the row-by-row map it was written as. A child's `grid-area` is the
+     * name it claims, hashed: comparing 16 bits beats carrying a string
+     * through every copy of this struct, and a collision between two of the
+     * eight names a container may have would misplace a box rather than
+     * corrupt anything. */
+    unsigned short area_name[VSTYLE_AREAS];                  /* 0 = unused */
+    unsigned char  area_r[VSTYLE_AREAS],  area_c[VSTYLE_AREAS];
+    unsigned char  area_rs[VSTYLE_AREAS], area_cs[VSTYLE_AREAS];
+    unsigned char  n_areas;
+    unsigned short grid_area;    /* the CHILD's claim, 0 = none */
     short         grid_track_val[VSTYLE_TRACKS];    /* px, or fr weight x16 */
     unsigned char size;        /* 0 body, 1 caption, 2 title, 3 heading */
     unsigned char bold, italic, mono, underline, link, pre;

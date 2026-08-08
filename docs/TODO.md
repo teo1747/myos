@@ -2734,8 +2734,13 @@ found the biggest fidelity bug yet -- the page was drawn with the DESKTOP's
 palette, so Wikipedia's own white background carried our light-grey text.
 
 Still open, from looking:
-- [ ] Wikipedia's chrome still renders as full-width stacked rows. Two things
-      were wrong and one is fixed. The first was not a layout bug at all:
+- [ ] Wikipedia now lays out in two columns above its own 1120px breakpoint --
+      title, tabs, infobox and sidebar all in place -- but the article's BODY
+      text is squeezed into a column a few characters wide, and the header
+      overlaps itself. Both look like `position` (sticky/absolute) rather than
+      grid; that is the next layer and it has not been diagnosed yet.
+- [x] ~~Wikipedia's chrome renders as full-width stacked rows~~ -- FOUR things
+      were wrong, none of them the layout engine. The first was not a layout bug at all:
       entities were not decoded in ATTRIBUTE values, so its stylesheet URL
       (`load.php?lang=en&amp;modules=...`) was requested literally and
       MediaWiki replied "no modules were requested" -- 196 bytes instead of
@@ -2776,3 +2781,21 @@ Still open, from looking:
 - [ ] HN's rank column is align=right in the markup and now maps to CSS, but
       table cells do not yet honour text-align for their own content in every
       path -- worth checking against the real page.
+
+### Sizes, and why they are all measured now
+
+Every arena that a real page can fill is sized from a count taken across the
+seventeen sites rather than from a round number, and every one of them that can
+overflow says so:
+
+- DOM nodes 8192 -> 16384 (Wikipedia needs ~9400, MDN ~8100). A full node arena
+  STOPS THE DOCUMENT; it is not a truncation, and `trunc_nodes` now says which
+  arena ran out so the two are distinguishable.
+- Document strings 256KB -> 1MB.
+- Declare instances 8192 -> 24576 (Wikipedia builds ~18000 views).
+- CSS rules 256 -> 4096, external CSS 128KB -> 1MB, one sheet 64KB -> 512KB.
+  A sheet that does not fit is counted (`cssref_dropped`) instead of vanishing.
+
+Vellum's BSS is 28MB as a result, up from 20MB. The remaining known overflow is
+github, which ships 6.9MB of CSS across 41 sheets; that bound is reported and
+not worth chasing.

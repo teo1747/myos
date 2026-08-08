@@ -1275,6 +1275,30 @@ seventeen sites. What Wikipedia additionally needs is placement by NAME
 (`grid-template-areas` + `grid-area`), measured at 3 sites, and logged with
 that number rather than guessed at.
 
+**Wikipedia's layout was four bugs, none of them the layout engine.** It had
+been logged as the hardest layout case in the corpus. It was: entities not
+decoded in attribute values, so its stylesheet URL was requested with `&amp;`
+in it and MediaWiki replied "no modules were requested"; the DOM arena filling
+up inside its HEADER, so the article was never parsed at all -- the ARENA-FULL
+flag had been sitting in the triage output for days being read as "the tail is
+cut"; the external-stylesheet buffer being 128KB against a 216KB sheet and
+dropping it WHOLE AND SILENTLY; and `grid-template`, the shorthand Wikipedia
+uses, not being parsed, so its named areas had no widths.
+
+What the layout engine did need was real: grid tracks are sizes rather than a
+count, and `grid-template-areas` + `grid-area` place a child by NAME, which is
+how a sidebar and an article that are siblings in document order end up side by
+side. Both are shared by one resolver so the measure and arrange passes cannot
+disagree -- the code already carried a scar from the last time they were
+written twice. Wikipedia now lays out in two columns above its own 1120px
+breakpoint, with the title, tabs, infobox and sidebar in place; the body text
+is still squeezed and the header overlaps itself, which looks like `position`
+and is the next layer.
+
+Every arena a real page can fill is now sized from a COUNT taken across the
+seventeen sites, and every one that can overflow says so. See TODO.md for the
+numbers; the browser's BSS is 28MB as a result.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

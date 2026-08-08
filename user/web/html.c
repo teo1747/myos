@@ -6,7 +6,7 @@
 /* ---- arena ------------------------------------------------------------- */
 
 static int node_new(struct html_doc *d, int kind, int parent) {
-    if (d->n >= d->cap) { d->truncated = 1; return -1; }
+    if (d->n >= d->cap) { d->truncated = 1; d->trunc_nodes = 1; return -1; }
     struct html_node *n = &d->nodes[d->n];
     memset(n, 0, sizeof *n);
     n->kind = (unsigned char)kind;
@@ -26,7 +26,7 @@ static int node_new(struct html_doc *d, int kind, int parent) {
 }
 
 static char *str_put(struct html_doc *d, const char *s, size_t len) {
-    if (d->strn + len + 1 > d->strcap) { d->truncated = 1; return 0; }
+    if (d->strn + len + 1 > d->strcap) { d->truncated = 1; d->trunc_strings = 1; return 0; }
     char *out = d->strs + d->strn;
     memcpy(out, s, len);
     out[len] = 0;

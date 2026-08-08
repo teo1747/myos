@@ -25,7 +25,13 @@
  * COUNTED (ui_instance_overflow) instead of silently returning null and
  * letting the caller draw a collapsed box; paging this arena the way the scene
  * and layout arenas already are is the proper fix, logged in docs/TODO.md. */
-#define INST_MAX          8192
+/* Sized from what a real page builds, not from a round number: Wikipedia's
+ * article needs about 10400 views and dropped 2178 of them at 8192 -- and a
+ * dropped view is the bottom of the page simply not being there. Raised with
+ * the arena sizes it has to keep up with (html.h's NODE_MAX), and no further:
+ * this pool is per-process BSS, and an earlier guess of 65536 took the shared
+ * library to 48MB. */
+#define INST_MAX          24576
 /* Real HTML nests deeper than a hand-written UI does -- an English Wikipedia
  * article got past 64 without trying. The stack is two handles per level, so
  * this is a few kilobytes; the depth CLAMP below, not this number, is what
@@ -571,6 +577,16 @@ void ui_set_grid_tracks(const unsigned char *mode, const float *val, int n) {
     if (n < 0) n = 0;
     for (int i = 0; i < n; i++) { ln->grid_track_mode[i] = mode[i]; ln->grid_track_val[i] = val[i]; }
     ln->grid_ntrack = n;
+    ln->dirty = true;
+}
+
+void ui_set_grid_place(int row, int col, int rowspan, int colspan) {
+    struct instance *b = cur_box(); if (!b) return;
+    struct layout_node *ln = layout_resolve(g_la, b->layout_node);
+    if (!ln) return;
+    ln->grid_row = row; ln->grid_col = col;
+    ln->grid_rowspan = rowspan > 0 ? rowspan : 1;
+    ln->grid_span = colspan > 0 ? colspan : 1;
     ln->dirty = true;
 }
 

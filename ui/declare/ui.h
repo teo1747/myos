@@ -52,6 +52,9 @@ void ui_set_grid(int cols, float col_gap, float row_gap);   /* container: 2D gri
 /* Explicit track sizes for that grid -- see layout.h. Pass n == 0 (or never
  * call it) to keep tracks sized from their content. */
 void ui_set_grid_tracks(const unsigned char *mode, const float *val, int n);
+/* Place a grid CHILD explicitly, as `grid-area` does. row/col are zero-based;
+ * pass row < 0 to auto-flow it, which is the default. */
+void ui_set_grid_place(int row, int col, int rowspan, int colspan);
 void ui_set_grid_span(int span);                            /* child: columns to span */
 void ui_set_justify(enum layout_justify j);
 void ui_set_align(enum layout_align a);

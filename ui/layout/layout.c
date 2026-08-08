@@ -116,6 +116,7 @@ struct layout_handle layout_create_node(struct layout_arena *a, struct layout_ha
     lz(n, sizeof(*n));
     n->self.index = idx; n->self.generation = gen;
     n->width.mode = SIZE_INTRINSIC; n->height.mode = SIZE_INTRINSIC;
+    n->grid_row = -1; n->grid_col = -1; n->grid_rowspan = 1;   /* auto-flow */
     struct layout_handle h = n->self;
     if (layout_resolve(a, parent)) { n->parent = parent; lappend_child(a, parent, h); }
     return h;
@@ -529,6 +530,13 @@ static float measure_wrap_height(struct layout_arena *la, struct scene_arena *sa
  * (each cell's intrinsic width) and scales, in both directions -- which gets
  * the shape of a layout table right and degrades sanely on a dense one. */
 #define GRID_MAX_COLS 64
+#define GRID_MAX_ROWS 256
+/* The measure pass gathers children onto the C STACK, so this is a bound on
+ * how many a grid can be measured with -- generous for a page layout and well
+ * under a table, which is why a table's rows are measured the same way but
+ * counted, not indexed. Beyond it the tail is measured as if it were on the
+ * last row, which is wrong by a row rather than catastrophically. */
+#define GRID_MEASURE_KIDS 1024
 
 static void grid_col_widths(struct layout_arena *la, struct layout_node *n,
                             float content_w, float *out) {
@@ -622,6 +630,49 @@ static void grid_col_widths(struct layout_arena *la, struct layout_node *n,
     for (int i = 0; i < cols; i++) out[i] = want[i] * k;
 }
 
+/* WHERE EVERY CHILD SITS IN THE GRID -- resolved once, by one function.
+ *
+ * Both the measure pass and the arrange pass need this, and the code below
+ * already carries a scar from the last time they were written twice and
+ * disagreed: the row takes its height from its tallest cell, so a placement
+ * the two passes compute differently makes rows overlap. Now they cannot
+ * disagree, because there is only one answer.
+ *
+ * A child with `grid-area` states its row and column; everything else
+ * auto-flows into the next free run of columns, wrapping when it will not fit
+ * -- which is exactly what the grid did before placement existed, so a grid
+ * with no explicit placement lays out identically.
+ *
+ * Returns the number of ROWS the grid needs; fills r/c/rs/cs per child in
+ * document order. Auto-flow does NOT hunt for gaps left by explicitly placed
+ * cells: CSS calls that "sparse" packing and it is a refinement, not the
+ * behaviour anything here depends on. */
+static int grid_places(struct layout_arena *la, struct layout_node *n, int cols,
+                       struct layout_handle *kid, int nk,
+                       unsigned char *r, unsigned char *c,
+                       unsigned char *rs, unsigned char *cs) {
+    (void)n;
+    int flow_r = 0, flow_c = 0, rows = 0;
+    for (int i = 0; i < nk; i++) {
+        struct layout_node *k = kid ? layout_resolve(la, kid[i]) : 0;
+        if (!k || k->is_overlay) { r[i] = c[i] = 0; rs[i] = cs[i] = 0; continue; }
+        int span = k->grid_span > 0 ? k->grid_span : 1;
+        if (span > cols) span = cols;
+        int rspan = k->grid_rowspan > 0 ? k->grid_rowspan : 1;
+        if (k->grid_row >= 0 && k->grid_col >= 0) {
+            r[i] = (unsigned char)k->grid_row;
+            c[i] = (unsigned char)(k->grid_col < cols ? k->grid_col : cols - 1);
+        } else {
+            if (flow_c > 0 && flow_c + span > cols) { flow_r++; flow_c = 0; }
+            r[i] = (unsigned char)flow_r; c[i] = (unsigned char)flow_c;
+            flow_c += span;
+        }
+        rs[i] = (unsigned char)rspan; cs[i] = (unsigned char)span;
+        if (r[i] + rspan > rows) rows = r[i] + rspan;
+    }
+    return rows;
+}
+
 /* x of a column's left edge, given the resolved widths */
 static float grid_col_x(const float *w, float cgap, int col) {
     float x = 0;
@@ -640,32 +691,50 @@ static float measure_grid_height(struct layout_arena *la, struct scene_arena *sa
     if (content_w < 0) content_w = 0;
     float colw[GRID_MAX_COLS];
     grid_col_widths(la, n, content_w, colw);
-    float total = 0, row_h = 0; int col = 0, nrows = 0;
-    for (struct layout_handle c = n->first_child; !layout_handle_is_null(c); ) {
+
+    /* Gather the children, place them, then sum the ROW heights -- rows now
+     * being real indices rather than "however many times the flow wrapped",
+     * because a grid-area can put two children on the same row out of
+     * document order. */
+    struct layout_handle kid[GRID_MEASURE_KIDS];
+    int nk = 0;
+    for (struct layout_handle c = n->first_child;
+         !layout_handle_is_null(c) && nk < GRID_MEASURE_KIDS; ) {
         struct layout_node *cn = layout_resolve(la, c);
         if (!cn) break;
-        if (!cn->is_overlay) {
-            int span = cn->grid_span > 0 ? cn->grid_span : 1;
-            if (span > cols) span = cols;
-            if (col > 0 && col + span > cols) { total += row_h; nrows++; row_h = 0; col = 0; }
-            float cw = cgap * (float)(span - 1);
-            for (int k2 = 0; k2 < span && col + k2 < cols; k2++) cw += colw[col + k2];
-            /* A CELL is usually a container, and a container's intrinsic_h was
-             * computed before any width was known -- so a cell whose text
-             * wraps measured as ONE LINE. In a grid that is not a cosmetic
-             * error: the row takes its height from the tallest cell, so every
-             * row after it sat too high and the table's rows overlapped.
-             * Measure the subtree at the width the cell will actually get. */
-            float ch = (cn->height.mode == SIZE_FIXED) ? cn->height.fixed_value
-                     : is_text(sa, cn) ? layout_measure_height_at_width(la, sa, c, cw)
-                     : cn->is_container ? measure_subtree_height(la, sa, c, cw)
-                     : cn->intrinsic_h;
-            if (ch > row_h) row_h = ch;
-            col += span;
-        }
+        kid[nk++] = c;
         c = cn->next_sibling;
     }
-    if (col > 0) { total += row_h; nrows++; }
+    unsigned char pr[GRID_MEASURE_KIDS], pc[GRID_MEASURE_KIDS],
+                  prs[GRID_MEASURE_KIDS], pcs[GRID_MEASURE_KIDS];
+    int nrows = grid_places(la, n, cols, kid, nk, pr, pc, prs, pcs);
+    if (nrows > GRID_MAX_ROWS) nrows = GRID_MAX_ROWS;
+    float rowh[GRID_MAX_ROWS];
+    for (int i = 0; i < nrows; i++) rowh[i] = 0;
+
+    for (int i = 0; i < nk; i++) {
+        struct layout_node *cn = layout_resolve(la, kid[i]);
+        if (!cn || cn->is_overlay || !pcs[i]) continue;
+        float cw = cgap * (float)(pcs[i] - 1);
+        for (int k2 = 0; k2 < pcs[i] && pc[i] + k2 < cols; k2++) cw += colw[pc[i] + k2];
+        /* A CELL is usually a container, and a container's intrinsic_h was
+         * computed before any width was known -- so a cell whose text
+         * wraps measured as ONE LINE. In a grid that is not a cosmetic
+         * error: the row takes its height from the tallest cell, so every
+         * row after it sat too high and the table's rows overlapped.
+         * Measure the subtree at the width the cell will actually get. */
+        float ch = (cn->height.mode == SIZE_FIXED) ? cn->height.fixed_value
+                 : is_text(sa, cn) ? layout_measure_height_at_width(la, sa, kid[i], cw)
+                 : cn->is_container ? measure_subtree_height(la, sa, kid[i], cw)
+                 : cn->intrinsic_h;
+        /* A cell spanning rows contributes to the LAST of them, the same rule
+         * grid_col_widths uses for a cell spanning columns. */
+        int rr = pr[i] + prs[i] - 1;
+        if (rr >= nrows) rr = nrows - 1;
+        if (rr >= 0 && ch > rowh[rr]) rowh[rr] = ch;
+    }
+    float total = 0;
+    for (int i = 0; i < nrows; i++) total += rowh[i];
     total += rgap * (nrows > 1 ? nrows - 1 : 0);
     return total + n->padding_top + n->padding_bottom;
 }
@@ -796,8 +865,32 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
         float grid_w = W - n->padding_left - n->padding_right;
         float colw[GRID_MAX_COLS];
         grid_col_widths(la, n, grid_w, colw);
-        float row_y = n->padding_top - n->scroll_offset;
-        int col = 0; float row_h = 0;
+        /* The SAME placement the measure pass used -- see grid_places. */
+        unsigned char pr[GRID_MEASURE_KIDS], pc[GRID_MEASURE_KIDS],
+                      prs[GRID_MEASURE_KIDS], pcs[GRID_MEASURE_KIDS];
+        int nplace = nk < GRID_MEASURE_KIDS ? nk : GRID_MEASURE_KIDS;
+        int nrows = grid_places(la, n, cols, kids, nplace, pr, pc, prs, pcs);
+        if (nrows > GRID_MAX_ROWS) nrows = GRID_MAX_ROWS;
+        float rowh[GRID_MAX_ROWS], rowy[GRID_MAX_ROWS];
+        for (int i = 0; i < nrows; i++) rowh[i] = 0;
+        /* Row heights first, so a cell can be placed on any row without
+         * needing the ones after it to have been walked already. */
+        for (int i = 0; i < nplace; i++) {
+            struct layout_node *k = layout_resolve(la, kids[i]);
+            if (!k || k->is_overlay || !pcs[i]) continue;
+            float cw = cgap * (float)(pcs[i] - 1);
+            for (int k2 = 0; k2 < pcs[i] && pc[i] + k2 < cols; k2++) cw += colw[pc[i] + k2];
+            float ch = (k->height.mode == SIZE_FIXED) ? k->height.fixed_value
+                     : is_text(sa, k) ? layout_measure_height_at_width(la, sa, kids[i], cw)
+                     : k->is_container ? measure_subtree_height(la, sa, kids[i], cw)
+                     : k->intrinsic_h;
+            int rr = pr[i] + prs[i] - 1;
+            if (rr >= nrows) rr = nrows - 1;
+            if (rr >= 0 && ch > rowh[rr]) rowh[rr] = ch;
+        }
+        { float y = n->padding_top - n->scroll_offset;
+          for (int i = 0; i < nrows; i++) { rowy[i] = y; y += rowh[i] + rgap; } }
+
         for (int i = 0; i < nk; i++) {
             struct layout_node *k = layout_resolve(la, kids[i]);
             if (k->is_overlay) {
@@ -812,25 +905,20 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
                 else                 write_scene(sa, k);
                 continue;
             }
-            int span = k->grid_span > 0 ? k->grid_span : 1;
-            if (span > cols) span = cols;
-            if (col > 0 && col + span > cols) { row_y += row_h + rgap; row_h = 0; col = 0; }
-            float cw = cgap * (float)(span - 1);
-            for (int k2 = 0; k2 < span && col + k2 < cols; k2++) cw += colw[col + k2];
-            float cx = n->padding_left + grid_col_x(colw, cgap, col);
-            /* same as the measure pass above, and it MUST agree with it: this
-             * ch is both the cell's box and the height its children are
-             * arranged in, so a wrong value here wraps the text differently
-             * than the row was sized for. */
-            float ch = (k->height.mode == SIZE_FIXED) ? k->height.fixed_value
-                     : is_text(sa, k) ? layout_measure_height_at_width(la, sa, kids[i], cw)
-                     : k->is_container ? measure_subtree_height(la, sa, kids[i], cw)
-                     : k->intrinsic_h;
-            k->resolved_x = cx; k->resolved_y = row_y; k->resolved_w = cw; k->resolved_h = ch;
-            if (ch > row_h) row_h = ch;
+            if (i >= nplace || !pcs[i]) continue;
+            float cw = cgap * (float)(pcs[i] - 1);
+            for (int k2 = 0; k2 < pcs[i] && pc[i] + k2 < cols; k2++) cw += colw[pc[i] + k2];
+            float cx = n->padding_left + grid_col_x(colw, cgap, pc[i]);
+            /* The cell's box is as tall as the ROWS it occupies, so a cell in
+             * a short row is not stretched by a tall one elsewhere and a cell
+             * spanning rows really covers them. */
+            float ch = 0;
+            for (int rr = pr[i]; rr < pr[i] + prs[i] && rr < nrows; rr++)
+                ch += rowh[rr] + (rr > pr[i] ? rgap : 0);
+            float cy = (pr[i] < nrows) ? rowy[pr[i]] : (n->padding_top - n->scroll_offset);
+            k->resolved_x = cx; k->resolved_y = cy; k->resolved_w = cw; k->resolved_h = ch;
             if (k->is_container) arrange(la, sa, kids[i], cw, ch);
             else                 write_scene(sa, k);
-            col += span;
         }
         return;
     }

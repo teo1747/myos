@@ -48,8 +48,8 @@ static uint8_t *read_file(const char *path, size_t *len) {
 
 /* ---- the document ------------------------------------------------------ */
 
-#define NODE_MAX 8192
-#define STR_MAX  (256 * 1024)
+#define NODE_MAX 16384
+#define STR_MAX  (1024 * 1024)
 static struct html_node g_nodes[NODE_MAX];
 static char             g_strs[STR_MAX];
 static struct html_doc  g_doc;
@@ -177,6 +177,36 @@ static int subtree_text(struct html_doc *d, int node) {
     for (int c = d->nodes[node].first_child; c >= 0; c = d->nodes[c].next_sibling)
         n += subtree_text(d, c);
     return n;
+}
+
+static void dump_grids(struct html_doc *d, int node, const struct vstyle *parent,
+                       int depth) {
+    if (node < 0 || node >= d->n || depth > 40) return;
+    struct vstyle s = *parent;
+    if (d->nodes[node].kind == HTML_ELEM) {
+        vstyle_for_node(d, node, parent, &g_sheet, &s);
+        if (s.display == VD_GRID) {
+            printf("GRID| <%s%s%s> cols=%d tracks=%d areas=%d\n",
+                   d->nodes[node].tag,
+                   d->nodes[node].klass ? " class=" : "",
+                   d->nodes[node].klass ? d->nodes[node].klass : "",
+                   s.grid_cols, s.grid_ntrack, s.n_areas);
+            for (int c = d->nodes[node].first_child; c >= 0; c = d->nodes[c].next_sibling) {
+                if (d->nodes[c].kind != HTML_ELEM) continue;
+                struct vstyle cs;
+                vstyle_for_node(d, c, &s, &g_sheet, &cs);
+                int placed = 0;
+                for (int a = 0; a < s.n_areas; a++)
+                    if (cs.grid_area && s.area_name[a] == cs.grid_area) { placed = 1; break; }
+                printf("GRID|   child <%s%s%s> area=%u %s\n", d->nodes[c].tag,
+                       d->nodes[c].klass ? " class=" : "",
+                       d->nodes[c].klass ? d->nodes[c].klass : "",
+                       cs.grid_area, placed ? "PLACED" : "(auto-flow)");
+            }
+        }
+    }
+    for (int c = d->nodes[node].first_child; c >= 0; c = d->nodes[c].next_sibling)
+        dump_grids(d, c, &s, depth + 1);
 }
 
 static void dump_hidden(struct html_doc *d, int node, const struct vstyle *parent,
@@ -400,6 +430,14 @@ int main(int argc, char **argv) {
      * renderer does, and reports every subtree that gets dropped -- so the
      * question becomes a lookup. Shallowest first: the one nearest the root is
      * the one that matters. */
+    /* GRID=1 -- every element that computes to display:grid, with the tracks
+     * and named areas it got, and which of its children claimed one. "The
+     * layout is stacked" is otherwise a guess about which of four things went
+     * wrong. */
+    if (getenv("GRID")) {
+        struct vstyle rs; vstyle_root(&rs);
+        dump_grids(&g_doc, g_root, &rs, 0);
+    }
     if (getenv("BUCKETS")) {
         int keyless = 0, byid = 0, bycls = 0, bytag = 0;
         for (int i = 0; i < g_sheet.n; i++) {
@@ -760,12 +798,13 @@ static uint8_t  HSCR[IMG_MAX_PX * 4 + IMG_MAX_DIM + 64];
  * harness cannot do. Loading the sheets from beside the document instead keeps
  * everything ABOVE the fetch -- resolution, concatenation, cascade order --
  * under test, which is where the interesting behaviour is. */
-static char   HCSS[160 * 1024];
+static char   HCSS[1024 * 1024];
 static size_t HCSSN;
 
 void cssref_reset(void) { HCSSN = 0; HCSS[0] = 0; }
 int  cssref_pump(void) { return 0; }
 int  cssref_pending(void) { return 0; }
+int  cssref_dropped(void) { return 0; }
 const char *cssref_text(size_t *len) { if (len) *len = HCSSN; return HCSSN ? HCSS : 0; }
 
 int cssref_start(struct html_doc *doc, const char *base) {
@@ -785,6 +824,9 @@ int cssref_start(struct html_doc *doc, const char *base) {
             HCSSN += n;
             HCSS[HCSSN] = 0;
             got++;
+        } else {
+            fprintf(stderr, "  *** stylesheet %s DROPPED: %zu bytes would not fit ***\n",
+                    doc->cssref[i], n);
         }
         free(buf);
     }

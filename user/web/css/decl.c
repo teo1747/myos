@@ -55,6 +55,14 @@ static int len_pct(const char *s, size_t n) {
     return v > 100.0 ? 100 : (int)(v + 0.5);
 }
 
+/* A grid area's name, as 16 bits. See style.h for why it is not a string. */
+unsigned short css_name_hash(const char *s, size_t n) {
+    unsigned h = 2166136261u;
+    for (size_t i = 0; i < n; i++) { h ^= (unsigned char)s[i]; h *= 16777619u; }
+    unsigned short v = (unsigned short)(h ^ (h >> 16));
+    return v ? v : 1;                 /* 0 means "no name" */
+}
+
 static short len_px(const char *s, size_t n, int *ok) {
     *ok = 0;
     size_t i = 0;
@@ -154,6 +162,73 @@ static unsigned css_color(const char *s, size_t n) {
     for (unsigned i = 0; i < sizeof named / sizeof named[0]; i++)
         if (tok_eq(s, n, named[i].name)) return 0xFF000000u | named[i].rgb;
     return 0;
+}
+
+/* Parse a track list -- the value of `grid-template-columns`, or the part of
+ * the `grid-template` shorthand after the slash. Fills mode/val and returns
+ * how many tracks were STATED, which can exceed what fits.
+ *
+ * What each form becomes:
+ *   200px, 12.25rem, 3em  -> a fixed track
+ *   1fr, 2fr             -> a weighted track
+ *   minmax(a, b)         -> b, the maximum: that is the size it takes
+ *                           whenever there is room, and there usually is
+ *   auto, min/max-content, anything unrecognised -> content-sized, which is
+ *                           where this was before sizes were read at all
+ *   repeat(n, <one>)     -> n copies of it
+ */
+static int parse_tracks(const char *v, size_t vn, unsigned char *tm, short *tv, int *out_nt) {
+    int nt = 0, cols = 0, rep = 1;
+    size_t k = 0;
+    if (vn > 7 && (v[0]=='r'||v[0]=='R') && !strncmp(v + 1, "epeat", 5)) {
+        while (k < vn && v[k] != '(') k++;
+        k++;
+        rep = 0;
+        while (k < vn && v[k] >= '0' && v[k] <= '9') { rep = rep * 10 + (v[k] - '0'); k++; }
+        while (k < vn && (v[k] == ',' || v[k] == ' ')) k++;
+        if (rep < 1) rep = 1;
+    }
+    while (k < vn) {
+        while (k < vn && (v[k]==' '||v[k]=='\t')) k++;
+        if (k >= vn) break;
+        size_t ts = k; int depth = 0;
+        while (k < vn && !((v[k]==' '||v[k]=='\t') && depth == 0)) {
+            if (v[k] == '(') depth++;
+            else if (v[k] == ')') { if (depth) depth--; else break; }
+            k++;
+        }
+        size_t tl = k - ts;
+        if (!tl) break;
+        const char *t = v + ts;
+        if (tl > 7 && (t[0]=='m'||t[0]=='M') && !strncmp(t + 1, "inmax(", 6)) {
+            size_t c2 = 0;
+            while (c2 < tl && t[c2] != ',') c2++;
+            if (c2 < tl) { t += c2 + 1; tl -= c2 + 1; }
+            while (tl && (*t == ' ')) { t++; tl--; }
+            while (tl && (t[tl-1] == ')' || t[tl-1] == ' ')) tl--;
+        }
+        cols++;
+        if (nt < VSTYLE_TRACKS) {
+            if (tl > 2 && (t[tl-2]=='f'||t[tl-2]=='F') && (t[tl-1]=='r'||t[tl-1]=='R')) {
+                float f = 0; size_t i2 = 0;
+                while (i2 < tl - 2 && t[i2] >= '0' && t[i2] <= '9') { f = f*10 + (t[i2]-'0'); i2++; }
+                if (f <= 0) f = 1;
+                tm[nt] = VT_FR; tv[nt] = (short)(f * 16.0f);
+            } else {
+                int lok = 0; short px = len_px(t, tl, &lok);
+                if (lok && px > 0) { tm[nt] = VT_PX; tv[nt] = px; }
+                else               { tm[nt] = VT_AUTO; tv[nt] = 0; }
+            }
+            nt++;
+        }
+    }
+    if (rep > 1 && nt == 1) {
+        cols = rep;
+        for (int i = 1; i < rep && i < VSTYLE_TRACKS; i++) { tm[i] = tm[0]; tv[i] = tv[0]; }
+        nt = rep < VSTYLE_TRACKS ? rep : VSTYLE_TRACKS;
+    }
+    *out_nt = nt;
+    return cols;
 }
 
 int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
@@ -291,84 +366,105 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
             }
             if (tok_eq(v, vn, "none")) { out->grow = 0; ok = 1; }
             else { out->grow = nonzero ? 1 : 0; ok = 1; }
-        } else if (tok_eq(p, pn, "grid-template-columns")) {
-            /* Track SIZES, not just a count. `12.25rem minmax(0,1fr)` is a
-             * 196px sidebar beside everything else, and reading it as "two
-             * columns" and sizing both from their content is how a page's
-             * chrome ends up divided by how much text each side happens to
-             * hold.
+        } else if (tok_eq(p, pn, "grid-template-areas")) {
+            /* `'siteNotice siteNotice' 'columnStart pageContent' 'footer footer'`
+             * -- one quoted string per row, names separated by spaces, `.` for
+             * a cell nobody claims. Reduced to one RECTANGLE per name, which
+             * is what placing a box actually needs.
              *
-             * What each form becomes:
-             *   200px, 12.25rem, 3em  -> a fixed track
-             *   1fr, 2fr             -> a weighted track
-             *   minmax(a, b)         -> b, the maximum: that is the size it
-             *                           takes whenever there is room, and
-             *                           there usually is
-             *   auto, min/max-content, anything unrecognised -> content-sized,
-             *                           which is the old behaviour and a safe
-             *                           place to land
-             *   repeat(n, <one>)     -> n copies of it
-             */
-            unsigned char tm[VSTYLE_TRACKS];
-            short tv[VSTYLE_TRACKS];
-            int nt = 0, cols = 0;
+             * Wikipedia's whole chrome is one of these: the sidebar and the
+             * article are siblings in document order and belong side by side,
+             * and without the map they auto-flow and stack. */
+            unsigned short nm[VSTYLE_AREAS]; unsigned char r0[VSTYLE_AREAS], c0[VSTYLE_AREAS];
+            unsigned char r1[VSTYLE_AREAS], c1[VSTYLE_AREAS];
+            int na = 0, row = 0, maxcol = 0;
             size_t k = 0;
-            int rep = 1;
-            if (vn > 7 && (v[0]=='r'||v[0]=='R') && !strncmp(v + 1, "epeat", 5)) {
-                while (k < vn && v[k] != '(') k++;
-                k++;
-                rep = 0;
-                while (k < vn && v[k] >= '0' && v[k] <= '9') { rep = rep * 10 + (v[k] - '0'); k++; }
-                while (k < vn && (v[k] == ',' || v[k] == ' ')) k++;
-                if (rep < 1) rep = 1;
-            }
-            /* one pass over the track list, honouring nesting so a comma
-             * inside minmax() does not read as a track separator */
             while (k < vn) {
-                while (k < vn && (v[k]==' '||v[k]=='\t')) k++;
+                while (k < vn && v[k] != '\'' && v[k] != '"') k++;
                 if (k >= vn) break;
-                size_t ts = k; int depth = 0;
-                while (k < vn && !((v[k]==' '||v[k]=='\t') && depth == 0)) {
-                    if (v[k] == '(') depth++;
-                    else if (v[k] == ')') { if (depth) depth--; else break; }
-                    k++;
-                }
-                size_t tl = k - ts;
-                if (!tl) break;
-                const char *t = v + ts;
-                /* minmax(a,b) -> b */
-                if (tl > 7 && (t[0]=='m'||t[0]=='M') && !strncmp(t + 1, "inmax(", 6)) {
-                    size_t c2 = 0;
-                    while (c2 < tl && t[c2] != ',') c2++;
-                    if (c2 < tl) { t += c2 + 1; tl -= c2 + 1; }
-                    while (tl && (*t == ' ')) { t++; tl--; }
-                    while (tl && (t[tl-1] == ')' || t[tl-1] == ' ')) tl--;
-                }
-                cols++;
-                if (nt < VSTYLE_TRACKS) {
-                    if (tl > 2 && (t[tl-2]=='f'||t[tl-2]=='F') && (t[tl-1]=='r'||t[tl-1]=='R')) {
-                        float f = 0; size_t i2 = 0;
-                        while (i2 < tl - 2 && t[i2] >= '0' && t[i2] <= '9') { f = f*10 + (t[i2]-'0'); i2++; }
-                        if (f <= 0) f = 1;
-                        tm[nt] = VT_FR; tv[nt] = (short)(f * 16.0f);
-                    } else {
-                        int lok = 0; short px = len_px(t, tl, &lok);
-                        if (lok && px > 0) { tm[nt] = VT_PX; tv[nt] = px; }
-                        else               { tm[nt] = VT_AUTO; tv[nt] = 0; }
+                char q = v[k++];
+                size_t re = k;
+                while (re < vn && v[re] != q) re++;
+                int col = 0;
+                for (size_t j = k; j < re; ) {
+                    while (j < re && (v[j]==' '||v[j]=='\t')) j++;
+                    size_t ns = j;
+                    while (j < re && v[j]!=' ' && v[j]!='\t') j++;
+                    if (j == ns) break;
+                    if (!(j - ns == 1 && v[ns] == '.')) {      /* '.' claims nothing */
+                        unsigned short h = css_name_hash(v + ns, j - ns);
+                        int f = -1;
+                        for (int a = 0; a < na; a++) if (nm[a] == h) { f = a; break; }
+                        if (f < 0 && na < VSTYLE_AREAS) {
+                            f = na++;
+                            nm[f] = h; r0[f] = (unsigned char)row; c0[f] = (unsigned char)col;
+                            r1[f] = (unsigned char)row; c1[f] = (unsigned char)col;
+                        }
+                        if (f >= 0) {
+                            if (row > r1[f]) r1[f] = (unsigned char)row;
+                            if (col > c1[f]) c1[f] = (unsigned char)col;
+                            if (col < c0[f]) c0[f] = (unsigned char)col;
+                        }
                     }
-                    nt++;
+                    col++;
                 }
+                if (col > maxcol) maxcol = col;
+                row++;
+                k = re + 1;
             }
-            if (rep > 1 && nt == 1) {           /* repeat(n, <one track>) */
-                cols = rep;
-                for (int i = 1; i < rep && i < VSTYLE_TRACKS; i++) { tm[i] = tm[0]; tv[i] = tv[0]; }
-                nt = rep < VSTYLE_TRACKS ? rep : VSTYLE_TRACKS;
-            }
-            if (cols > 0 && cols <= 64) {
-                out->grid_cols = (unsigned char)cols;
-                out->grid_ntrack = (unsigned char)nt;
-                for (int i = 0; i < nt; i++) { out->grid_track_mode[i] = tm[i]; out->grid_track_val[i] = tv[i]; }
+            if (na > 0) {
+                out->n_areas = (unsigned char)na;
+                for (int a = 0; a < na; a++) {
+                    out->area_name[a] = nm[a];
+                    out->area_r[a] = r0[a]; out->area_c[a] = c0[a];
+                    out->area_rs[a] = (unsigned char)(r1[a] - r0[a] + 1);
+                    out->area_cs[a] = (unsigned char)(c1[a] - c0[a] + 1);
+                }
+                /* The template also states the column COUNT, and it is the
+                 * authority when grid-template-columns did not. */
+                if (maxcol > 0 && out->grid_cols == 0) out->grid_cols = (unsigned char)maxcol;
                 ok = 1;
+            }
+        } else if (tok_eq(p, pn, "grid-area")) {
+            /* Only the single-name form. The four-value
+             * `row / col / row-end / col-end` spelling is a different feature
+             * (line-based placement) and nothing here reads it yet. */
+            size_t k = 0;
+            while (k < vn && v[k] != '/') k++;
+            if (k == vn) {
+                size_t a = 0, b = vn;
+                while (a < b && (v[a]==' '||v[a]=='\t')) a++;
+                while (b > a && (v[b-1]==' '||v[b-1]=='\t'||v[b-1]==';')) b--;
+                if (b > a) { out->grid_area = css_name_hash(v + a, b - a); ok = 1; }
+            }
+        } else if (tok_eq(p, pn, "grid-template-columns") ||
+                   tok_eq(p, pn, "grid-template")) {
+            /* `grid-template` is the shorthand `<rows> / <columns>`; only the
+             * columns matter here, and a value with no slash is a track list
+             * already. Wikipedia states its two-column chrome ONLY through the
+             * shorthand, so reading grid-template-columns alone left it with
+             * named areas and no idea how wide they were. */
+            const char *tv2 = v; size_t tn2 = vn;
+            if (tok_eq(p, pn, "grid-template")) {
+                size_t sl = 0; int depth = 0, found = 0;
+                for (size_t k2 = 0; k2 < vn; k2++) {
+                    if (v[k2] == '(') depth++;
+                    else if (v[k2] == ')') { if (depth) depth--; }
+                    else if (v[k2] == '/' && depth == 0) { sl = k2; found = 1; }
+                }
+                if (!found) { tv2 = 0; tn2 = 0; }       /* rows only: nothing to take */
+                else { tv2 = v + sl + 1; tn2 = vn - sl - 1;
+                       while (tn2 && (*tv2 == ' ')) { tv2++; tn2--; } }
+            }
+            if (tn2) {
+                unsigned char tm[VSTYLE_TRACKS]; short tvv[VSTYLE_TRACKS]; int nt = 0;
+                int cols = parse_tracks(tv2, tn2, tm, tvv, &nt);
+                if (cols > 0 && cols <= 64) {
+                    out->grid_cols = (unsigned char)cols;
+                    out->grid_ntrack = (unsigned char)nt;
+                    for (int i = 0; i < nt; i++) { out->grid_track_mode[i] = tm[i]; out->grid_track_val[i] = tvv[i]; }
+                    ok = 1;
+                }
             }
         } else if (tok_eq(p, pn, "width") || tok_eq(p, pn, "height")) {
             int is_w = tok_eq(p, pn, "width");

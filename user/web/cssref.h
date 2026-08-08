@@ -44,4 +44,8 @@ int cssref_pending(void);
  * Valid until the next cssref_reset. */
 const char *cssref_text(size_t *len);
 
+/* Stylesheets dropped because they did not fit the buffers. A page missing a
+ * whole sheet renders as though it had none, so this is worth showing. */
+int cssref_dropped(void);
+
 #endif /* _EMBLINK_WEB_CSSREF_H_ */

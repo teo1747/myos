@@ -12,6 +12,16 @@
    table's rule, and it put a 200px sidebar and an article in two columns
    divided by how much text each happened to hold. */
 .tracks { display: grid; grid-template-columns: 200px minmax(0,1fr); column-gap: 20px }
+
+/* NAMED AREAS. The children are siblings in document order; the template says
+   which of them sit side by side. Wikipedia's whole chrome is one of these,
+   and without the map they auto-flow and stack. Stated through the
+   `grid-template` SHORTHAND, because that is how Wikipedia states it and
+   reading only grid-template-columns left the areas with no widths. */
+.pg   { display: grid; grid-template: auto auto auto / 180px minmax(0,1fr); column-gap: 12px }
+.pg   { grid-template-areas: 'notice notice' 'side main' 'foot foot' }
+.a-n  { grid-area: notice } .a-s { grid-area: side }
+.a-m  { grid-area: main }   .a-f { grid-area: foot }
 </style></head><body>
 
 <nav class="bar"><a href="/a">NAVONE</a><a href="/b">NAVTWO</a><a href="/c">NAVTHREE</a></nav>
@@ -47,4 +57,20 @@
 <!-- EXPECT-X: GRIDTRACKMAIN 240 246 -->
 <!-- ...and they are on the same row, which is what makes it a sidebar. -->
 <!-- EXPECT-LEFT-OF: GRIDTRACKSIDE GRIDTRACKMAIN -->
+<div class="pg">
+  <div class="a-n">AREANOTICE</div>
+  <div class="a-s">AREASIDE</div>
+  <div class="a-m">AREAMAIN with a great deal more text than the sidebar holds</div>
+  <div class="a-f">AREAFOOT</div>
+</div>
+
+<!-- The sidebar and the main column are on the SAME row, in the order the
+     template gives -- not the order the children appear in. -->
+<!-- EXPECT-LEFT-OF: AREASIDE AREAMAIN -->
+<!-- The fixed 180px track puts the main column at padding + 180 + 12, and
+     that must not depend on how much text either side holds. -->
+<!-- EXPECT-X: AREAMAIN 210 218 -->
+<!-- The notice spans both columns above them, the footer below. -->
+<!-- EXPECT-BELOW: AREASIDE AREANOTICE -->
+<!-- EXPECT-BELOW: AREAFOOT AREAMAIN -->
 </body></html>
