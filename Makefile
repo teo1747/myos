@@ -1933,6 +1933,18 @@ ico-test:
 	    -o $(BUILD)/ico_test
 	$(BUILD)/ico_test
 
+# The syntax highlighter -- a pure function, so it needs no screen. The cases
+# that matter are the ones a compiler is allowed to refuse and an editor is not.
+syntax-test:
+	$(HOSTCC) -std=c11 -Wall -Wextra -O2 -Iuser/note \
+	    user/note/syntax.c user/note/syntax_test.c -o $(BUILD)/syntax_test
+	$(BUILD)/syntax_test
+
+# Which words are C is the compiler's fact, not the editor's. Regenerate with
+# `python3 tools/mkkeywords.py` after EmbCC's keyword table changes.
+keyword-check:
+	python3 tools/mkkeywords.py --check
+
 icon-check:
 	python3 tools/checkicons.py
 

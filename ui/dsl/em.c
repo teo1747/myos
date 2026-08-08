@@ -2834,9 +2834,89 @@ static int te_line_end(const char *buf, int len, int cur) {
     return i;
 }
 
+/* One-shot editor settings; see em_editor_syntax. */
+static EmSyntaxFn g_syn_fn;
+static void      *g_syn_ud;
+static int        g_gutter;
+
+void em_editor_syntax(EmSyntaxFn fn, void *ud) { g_syn_fn = fn; g_syn_ud = ud; }
+void em_editor_gutter(int on) { g_gutter = on; }
+
+/* Draw one line: the gutter number, then the line's coloured spans, with the
+ * caret box dropped in at `caret` (-1 for none) -- splitting whichever span it
+ * lands inside, so the line being edited keeps its colours. Drawing that line
+ * plain would make the one line you are looking at the only uncoloured one. */
+static void te_draw_line(const char *buf, int i, int e, int caret, int lineno,
+                         int gutter, const struct ui_theme *t) {
+    char tmp[512];
+    ui_begin_hstack((uint64_t)(lineno + 1));
+    ui_set_align(ALIGN_CENTER);
+    ui_set_spacing(0);
+    if (gutter) {
+        char num[16];
+        snprintf(num, sizeof num, "%4d ", lineno + 1);
+        EmProps gp = { .font = Body, .color = t->text_tertiary };
+        em_text_impl(num, gp);
+    }
+
+    int n = e - i;
+    if (n > (int)sizeof tmp - 1) n = (int)sizeof tmp - 1;
+
+    struct em_span spans[128];
+    int ns = 0;
+    if (g_syn_fn && n > 0) ns = g_syn_fn(buf + i, n, spans, 128, g_syn_ud);
+    if (ns <= 0) { spans[0].len = n; spans[0].color = t->text; ns = n > 0 ? 1 : 0; }
+
+    int off = 0;
+    for (int k = 0; k < ns; k++) {
+        int sl = spans[k].len;
+        if (off + sl > n) sl = n - off;
+        if (sl <= 0) continue;
+        int rel = caret - off;                 /* caret position within this span */
+        if (caret >= 0 && rel >= 0 && rel < sl) {
+            if (rel > 0) {
+                memcpy(tmp, buf + i + off, (size_t)rel); tmp[rel] = 0;
+                EmProps tp = { .font = Body, .color = spans[k].color };
+                em_text_impl(tmp, tp);
+            }
+            ui_box_begin(0);
+            ui_set_paint(solid(t->accent));
+            ui_set_size(sz_fixed(2), sz_fixed(t->text_body));
+            ui_box_end();
+            int rest = sl - rel;
+            memcpy(tmp, buf + i + off + rel, (size_t)rest); tmp[rest] = 0;
+            EmProps tp = { .font = Body, .color = spans[k].color };
+            em_text_impl(tmp, tp);
+        } else {
+            memcpy(tmp, buf + i + off, (size_t)sl); tmp[sl] = 0;
+            EmProps tp = { .font = Body, .color = spans[k].color };
+            em_text_impl(tmp, tp);
+        }
+        off += sl;
+    }
+    /* caret at (or past) the end of the line, including an empty line */
+    if (caret >= 0 && caret >= off) {
+        ui_box_begin(0);
+        ui_set_paint(solid(t->accent));
+        ui_set_size(sz_fixed(2), sz_fixed(t->text_body));
+        ui_box_end();
+    }
+    /* An all-empty row collapses in an ALIGN_CENTER hstack, so an empty,
+     * caret-less line still needs something with a height. */
+    if (!off && caret < 0 && !gutter) {
+        EmProps tp = { .font = Body, .color = t->text };
+        em_text_impl(" ", tp);
+    }
+    ui_spacer();
+    ui_end_stack();
+}
+
 bool em_text_editor(char *buf, size_t cap, int *cursor, float height) {
     em_flush();                       /* emit any pending staged leaf first */
     const struct ui_theme *t = TH;
+    EmSyntaxFn syn = g_syn_fn; void *syn_ud = g_syn_ud; int gutter = g_gutter;
+    (void)syn; (void)syn_ud;
+    g_gutter = 0;                     /* one-shot: consumed by this editor */
     int len = (int)strlen(buf);
     int cur = cursor ? *cursor : 0;
     if (cur > len) cur = len;
@@ -2914,36 +2994,8 @@ bool em_text_editor(char *buf, size_t cap, int *cursor, float height) {
         while (i <= len) {
             int e = i; while (e < len && buf[e] != '\n') e++;
             int is_cur = (cur >= i && cur <= e);
-            char tmp[512];
-            if (is_cur && focused) {
-                ui_begin_hstack((uint64_t)(line + 1));
-                ui_set_align(ALIGN_CENTER);
-                ui_set_spacing(0);
-                int bn = cur - i; if (bn > (int)sizeof tmp - 1) bn = sizeof tmp - 1;
-                memcpy(tmp, buf + i, (size_t)bn); tmp[bn] = 0;
-                /* skip empty text nodes: an empty string in an ALIGN_CENTER hstack
-                 * collapses the row's layout (same reason the plain-line path below
-                 * substitutes a space). Cursor at line start -> no before-text;
-                 * cursor at line end -> no after-text; the caret always draws. */
-                if (bn > 0) { EmProps tp = { .font = Body, .color = t->text }; em_text_impl(tmp, tp); }
-                ui_box_begin(0);              /* caret */
-                ui_set_paint(solid(t->accent));
-                ui_set_size(sz_fixed(2), sz_fixed(t->text_body));
-                ui_box_end();
-                int an = e - cur; if (an > (int)sizeof tmp - 1) an = sizeof tmp - 1;
-                memcpy(tmp, buf + cur, (size_t)an); tmp[an] = 0;
-                if (an > 0) { EmProps tp = { .font = Body, .color = t->text }; em_text_impl(tmp, tp); }
-                ui_spacer();
-                ui_end_stack();
-            } else {
-                int ln = e - i; if (ln > (int)sizeof tmp - 1) ln = sizeof tmp - 1;
-                memcpy(tmp, buf + i, (size_t)ln); tmp[ln] = 0;
-                ui_begin_hstack((uint64_t)(line + 1));
-                ui_set_align(ALIGN_CENTER);
-                { EmProps tp = { .font = Body, .color = t->text }; em_text_impl(tmp[0] ? tmp : " ", tp); }
-                ui_spacer();
-                ui_end_stack();
-            }
+            te_draw_line(buf, i, e, (is_cur && focused) ? cur - i : -1,
+                         line, gutter, t);
             line++;
             i = e + 1;
             if (e == len) break;

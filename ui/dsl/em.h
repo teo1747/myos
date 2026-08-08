@@ -561,6 +561,23 @@ void em_feed_right_button(float x, float y, bool down);
  *   static int   cur = 0;
  *   TextEditor(doc, sizeof doc, &cur, 240);
  */
+/* SYNTAX COLOURING, and the line-number gutter that goes with it.
+ *
+ * The editor draws a line at a time, so colouring one is a matter of drawing it
+ * as several runs instead of one. What the runs MEAN is not the toolkit's
+ * business: it hands out a line and takes back a list of coloured spans, and
+ * the app supplies the language. That is the same split as everywhere else here
+ * -- the kit knows how to draw, the caller knows what it is drawing.
+ *
+ * Both settings are ONE-SHOT, consumed by the next editor, like the field
+ * emphasis in ui_text_field_emphasis. */
+struct em_span { int len; Color color; };
+/* Fill `out` with spans covering exactly the `n` bytes of `line`; return how
+ * many were written. Returning 0 draws the line in the ordinary text colour. */
+typedef int (*EmSyntaxFn)(const char *line, int n, struct em_span *out, int max, void *ud);
+void em_editor_syntax(EmSyntaxFn fn, void *ud);
+void em_editor_gutter(int on);
+
 bool em_text_editor(char *buf, size_t cap, int *cursor, float height);
 #define TextEditor(buf, cap, cursor, height) em_text_editor((buf), (cap), (cursor), (height))
 

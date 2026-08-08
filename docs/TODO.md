@@ -6,6 +6,49 @@ left to do.
 
 ---
 
+## Note++ -- the OS's own editor (started)
+
+Foundations in, app shell next:
+- [x] `user/note/syntax.{c,h}` -- per-line highlighter for C, Python, JS,
+      shell and Markdown, with the block-comment/string state carried between
+      lines so scrolling a long file stays linear. 33 host tests.
+- [x] C's keywords GENERATED from EmbCC's lexer (tools/mkkeywords.py), so the
+      editor and the compiler cannot disagree about what C is. The lexing is
+      deliberately not shared -- see that file for why.
+- [x] Toolkit: `em_editor_syntax()` colours the editor's lines, and
+      `em_editor_gutter()` draws line numbers inside it so they scroll in step.
+- [ ] `user/note/doc.{c,h}` -- the open-documents model: path, buffer, cursor,
+      dirty flag, language. One per tab.
+- [ ] `user/bin/notepp.c` -- the app: own chrome (tab strip + toolbar, the
+      shape Vellum now uses), Open/Save against EMBKFS, status bar with
+      line:col and language. Monospace throughout, the way term.c picks
+      /system/fonts/mono.ttf.
+- [ ] Find/replace, and undo. Neither exists yet in the toolkit's editor.
+- [ ] The editor caps a drawn line at 512 bytes; a longer line is clipped
+      rather than wrapped or scrolled horizontally.
+
+## The JavaScript gap -- it is the PLATFORM, not the engine
+
+QuickJS (ES2020) is already complete; nothing is left to port. What real pages
+die on is the web platform around it, and nobody ships that as a portable
+library -- every browser's DOM is welded to its own engine, so V8 or
+SpiderMonkey would arrive with no more of it than we have. Ranked by what the
+corpus actually throws:
+
+- [ ] `window` is not defined. The global alias nearly every script touches in
+      its first ten lines; jsdom.c exposes `document`, `console`, `fetch`,
+      `location`, `localStorage` and element-level `addEventListener` but not
+      this. Close to a one-liner, and it unblocks scripts that currently die
+      before doing anything.
+- [ ] `URL` is not defined.
+- [ ] `addEventListener` at global scope (it exists on elements only).
+- [ ] Considered and rejected: porting LibCSS (NetSurf). It is genuinely
+      portable and does parsing/selection/cascade well, but it stops at
+      COMPUTED STYLE -- and our measured gap is properties that need PAINTING
+      (opacity, box-shadow, transform), which it would hand us and not draw.
+      It is also roughly CSS 2.1 + Selectors 3, so it would not have given us
+      `:is`/`:where`/`:not` either, which took ~150 lines to write.
+
 ## What still makes a page look older than it is
 
 Measured against the CSS of the seventeen real sites, ranked by how often the
