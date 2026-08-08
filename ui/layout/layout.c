@@ -978,6 +978,29 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
         int ktext = is_text(sa, k);
 
         int has_main = 0;
+        /* A PERCENTAGE resolves only against a DEFINITE containing block.
+         *
+         * `height: 100%` inside a parent whose own height is auto does not
+         * mean "as tall as the parent" -- the parent does not have a height
+         * yet, it is about to get one from its children. CSS says such a
+         * percentage computes to auto, and that rule is not a nicety: without
+         * it every child is handed the height the parent measured, they stack,
+         * and the parent's height no longer matches the sum of what is inside
+         * it. Three children in a 119px box each came out 119 tall and reached
+         * 357. MDN's page did that at several levels and ended up placing text
+         * 307394 pixels down a document whose own box was 14781.
+         *
+         * The main axis is the one that can feed back -- a column's height
+         * comes from its children -- so it is the one checked. */
+        int definite_main = is_row ||
+                            n->height.mode == SIZE_FIXED ||
+                            n->height.mode == SIZE_FLEX;
+        struct layout_size auto_main;
+        if (!definite_main && ms->mode == SIZE_PERCENT) {
+            auto_main = *ms;
+            auto_main.mode = SIZE_INTRINSIC;
+            ms = &auto_main;
+        }
         float stated_main = stated_px(ms, content_main, &has_main);
         if (has_main) {
             base[i] = stated_main;

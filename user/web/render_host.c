@@ -183,6 +183,7 @@ static float g_tall_min = 2000;
 
 /* node -> the instance box render.c gave it, filled by the box hook. */
 static struct { unsigned idx, gen; } g_box[NODE_MAX];
+static float g_box_y[NODE_MAX];
 static void box_hook(int node, unsigned idx, unsigned gen) {
     if (node >= 0 && node < NODE_MAX) { g_box[node].idx = idx; g_box[node].gen = gen; }
 }
@@ -196,6 +197,7 @@ static void dump_tall(struct html_doc *d, struct scene_arena *sa) {
         struct instance_handle h = { g_box[i].idx, g_box[i].gen };
         struct scene_node *sn = scene_resolve(sa, ui_scene_of(h));
         float hgt = sn ? sn->height : -1;
+        g_box_y[i] = sn ? sn->ty : 0;
         if (hgt < g_tall_min) continue;
         int at = n < 12 ? n++ : 11;
         top[at].h = hgt; top[at].node = i;
@@ -205,7 +207,8 @@ static void dump_tall(struct html_doc *d, struct scene_arena *sa) {
     }
     for (int i = 0; i < n; i++) {
         int k = top[i].node;
-        printf("TALL| %9.0f px  <%s%s%s%s%s>\n", top[i].h, d->nodes[k].tag,
+        printf("TALL| %9.0f px  box=%-5u y=%-9.0f <%s%s%s%s%s>\n", top[i].h,
+               g_box[k].idx, g_box_y[k], d->nodes[k].tag,
                d->nodes[k].id ? " id=" : "", d->nodes[k].id ? d->nodes[k].id : "",
                d->nodes[k].klass ? " class=" : "",
                d->nodes[k].klass ? d->nodes[k].klass : "");

@@ -1,0 +1,30 @@
+<html><head><title>Percentage heights need a definite block</title><style>
+body { color: #1b1b1b }
+/* `height: 100%` inside a parent whose own height is AUTO does not mean "as
+   tall as the parent": the parent has no height yet -- it is about to get one
+   from these very children. CSS says such a percentage computes to auto.
+
+   Without that rule each child is handed the height the parent measured, they
+   stack, and the parent's height stops matching what is inside it. MDN placed
+   text 307394 pixels down a document whose own box was 14781. */
+.auto  > * { height: 100% }
+/* ...but against a parent with a DEFINITE height it resolves as written. */
+.fixed { height: 300px }
+.fixed > .half { height: 50%; background: #dde }
+</style></head><body>
+<div class="auto"><h1>AUTOONE</h1><p>AUTOTWO</p><p>AUTOTHREE</p></div>
+<p>AFTERAUTO</p>
+<div class="fixed"><div class="half">HALFBOX</div><p>UNDERHALF</p></div>
+<p>AFTERFIXED</p>
+
+<!-- Three children in an auto-height parent keep their own heights, so they
+     stack tightly and AFTERAUTO is a couple of hundred pixels down -- not
+     three times the parent's height. -->
+<!-- EXPECT-ORDER: AUTOONE AUTOTWO -->
+<!-- EXPECT-ORDER: AUTOTWO AUTOTHREE -->
+<!-- EXPECT-BELOW: AFTERAUTO AUTOTHREE -->
+<!-- Against a stated 300px, 50% is still 150px, so what follows the half box
+     inside it starts well below it. -->
+<!-- EXPECT-BELOW: UNDERHALF HALFBOX -->
+<!-- EXPECT-BELOW: AFTERFIXED UNDERHALF -->
+</body></html>

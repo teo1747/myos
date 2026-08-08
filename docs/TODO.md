@@ -2840,19 +2840,13 @@ could not explain, which is written down here rather than guessed at.
       element; its paths and groups are a different rendering model. MDN's
       83x24 logo came out 3340 pixels tall. It reserves its stated box now.
       Drawing the vector is a renderer this browser does not have.
-- [ ] MDN'S TEXT IS PLACED OUTSIDE ITS BOXES. The diagnostic now works
-      (`TALL=<px>`, via a box hook render.c offers) and it reframed the
-      question: the DOCUMENT'S OWN BOX IS 14781px TALL, which is right for that
-      page, while text runs land at y up to 307394. So nothing is "too tall" --
-      boxes are placed far outside the parents that measured them, and the
-      measure and arrange passes disagree by twenty times.
-      Established by elimination, each tested by disabling the feature and
-      re-measuring: NOT grid (307634 with display:grid off), NOT position
-      (307742 with absolute/fixed/relative off), NOT svg, NOT <details>, and
-      nested lists and nested details are both linear to depth 8 synthetically.
-      The scene chain shows each nested level offset from its parent by a whole
-      multiple of the subtree's own height -- 2x, then 8x, then 13x -- which is
-      the shape of a cursor advancing over the same subtree repeatedly, or of a
-      child measuring as tall as its parent. Several elements report the
-      identical height (10163px) including an <h1>, which cannot be right.
-      That is where to look next.
+- [x] ~~MDN'S TEXT IS PLACED OUTSIDE ITS BOXES~~ -- FOUND AND FIXED. A
+      PERCENTAGE HEIGHT WAS RESOLVING AGAINST AN AUTO-HEIGHT PARENT.
+      `height: 100%` inside a parent whose own height is auto does not mean "as
+      tall as the parent" -- the parent has no height yet, it is about to get
+      one from those very children. CSS computes such a percentage to auto, and
+      that rule is what stops the feedback: without it every child is handed
+      the height the parent just measured, they stack, and the parent's height
+      no longer matches what is inside it. MDN went 307394px -> 14859px, which
+      is its document box. Pinned by tests/web/pct-height.html, which also
+      checks that a percentage against a DEFINITE height still resolves.

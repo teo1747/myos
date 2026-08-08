@@ -1324,9 +1324,21 @@ carries no value, and the check for it sat inside the branch that only runs for
 rendering model; walking into them as document blocks gave MDN's 83x24 logo a
 height of 3340 pixels.
 
-MDN is still 307000 pixels tall for a reason not yet found. What is established
-about it -- and what tool would have answered it -- is written down in TODO.md
-rather than guessed at.
+**And MDN's 307000-pixel page was a percentage height.** `height: 100%` inside
+a parent whose own height is auto does not mean "as tall as the parent": the
+parent has no height yet, it is about to get one from those very children. CSS
+computes such a percentage to auto, and that rule is not a nicety -- without it
+every child is handed the height the parent just measured, they stack, and the
+parent's height stops matching what is inside it. Three children in a 119px box
+each came out 119 tall and reached 357. MDN did that at several levels and put
+text 307394 pixels down a document whose own box was 14781. It is 14859 now.
+
+Finding it took building the diagnostic first: `TALL=<px>` reports the elements
+that own a page's height, via a box hook render.c offers so that no geometry
+changes. The first version reported nothing, because render.c only keys a box
+when a script is listening to the element. Once it worked it turned the
+question over -- the document box was RIGHT and the text was outside it -- and
+the cause fell out of a four-line reproduction.
 
 ## Major To-Do Buckets (Rough Priority)
 
