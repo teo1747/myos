@@ -23,6 +23,25 @@ Foundations in, app shell next:
       shape Vellum now uses), Open/Save against EMBKFS, status bar with
       line:col and language. Monospace throughout, the way term.c picks
       /system/fonts/mono.ttf.
+- [ ] 🐛 **THE SECOND LINE DOES NOT DRAW.** Type a line, press Return, type
+      another: the buffer is right and the screen is not. Evidence gathered,
+      so the next person does not repeat it:
+        * the text IS there -- after typing two lines the editor reports
+          `focus=1 len=22 cur=22`, exactly the bytes typed, cursor at the end;
+        * focus is held throughout, so no input is being lost;
+        * the draw loop is correct by inspection -- walked by hand against that
+          buffer it makes three te_draw_line calls, for "int x = 42;",
+          "return 0;" and the empty line holding the caret;
+        * only the first appears on screen.
+      So it is neither input nor drawing but the declare layer's handling of a
+      child list that GROWS -- the same family as the DragHandle key and the
+      document key, one level down. It reproduces in the pre-existing
+      user/bin/edit.c too, so it predates Note++ and means the toolkit's
+      multi-line editor has never actually accepted a second line.
+      Tried and did NOT fix it: making the line rows positional instead of
+      keyed by line number (that keying is wrong anyway -- inserting a line
+      renumbers every line below it -- but it is not this bug, and the change
+      was reverted rather than shipped unverified).
 - [ ] Find/replace, and undo. Neither exists yet in the toolkit's editor.
 - [ ] The editor caps a drawn line at 512 bytes; a longer line is clipped
       rather than wrapped or scrolled horizontally.

@@ -1147,6 +1147,22 @@ build/%.elf: build/%.o build/crt0.o build/syscalls.o build/libembk.so
 build/appauth.o: user/lib/appauth.c user/lib/appauth.h user/lib/embk.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(UIDEMO_INC) -c $< -o $@
 
+# Note++ links the editor's own two modules (the documents model and the syntax
+# highlighter), which live in user/note/ rather than beside the app -- they are
+# testable without a screen and syntax.c is exercised by `make syntax-test`.
+# An explicit rule beats the generic one, so this is the whole override.
+build/note_syntax.o: user/note/syntax.c user/note/syntax.h user/note/ckeywords.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/note -c $< -o $@
+build/note_doc.o: user/note/doc.c user/note/doc.h user/note/syntax.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/note -c $< -o $@
+build/notepp.o: user/bin/notepp.c user/note/doc.h user/note/syntax.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) $(UIDEMO_INC) -Iuser/note -c $< -o $@
+build/notepp.elf: build/notepp.o build/note_syntax.o build/note_doc.o \
+                  build/crt0.o build/syscalls.o build/libembk.so
+	$(USER_CC) $(NEWLIB_DYN_LDFLAGS) build/crt0.o build/syscalls.o \
+	    build/notepp.o build/note_syntax.o build/note_doc.o \
+	    build/libembk.so -lc -lm -lgcc $(NEWLIB_DYN_WL) -o $@
+
 build/home.elf: build/home.o build/appauth.o build/crt0.o build/syscalls.o build/libembk.so
 	$(USER_CC) $(NEWLIB_DYN_LDFLAGS) build/crt0.o build/syscalls.o \
 	    build/home.o build/appauth.o \

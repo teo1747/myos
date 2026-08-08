@@ -1,0 +1,12 @@
+# notepp namespace manifest (docs/USERSPACE_v2.md UP4).
+#
+# A code editor: reads its UI from the sealed /system (fonts + libembk.so) and
+# reads and writes source under /data. The same two subtrees the simple editor
+# needs, and for the same reason -- it cannot name /run or any other root.
+#
+# It does NOT get to name the compiler or run one. Highlighting C is a matter of
+# knowing C's words (baked in at build time from EmbCC's table, see
+# tools/mkkeywords.py), not of asking a compiler at runtime, so the editor needs
+# no authority it would not otherwise have.
+ro /system
+rw /data
