@@ -1913,6 +1913,13 @@ reactive-test:
 	$(BUILD)/reactive_test
 
 # Piece 7: the declarative API (capstone). Ties scene/layout/reactive together.
+# Every Icon* in the toolkit must be a codepoint the shipped font can draw.
+# Seven of them were not, and nothing anywhere would have said so: a missing
+# glyph is not a build error and not a run-time error either -- it is a box on
+# screen, in whichever app happened to ask for that icon.
+icon-check:
+	python3 tools/checkicons.py
+
 declare-test:
 	$(HOSTCC) -std=c11 -Wall -Wextra -O2 -Iui/scene -Iui/backend -Iui/layout -Iui/reactive -Iui/declare \
 	    ui/scene/scene.c ui/backend/cpu_backend.c ui/backend/font.c ui/layout/layout.c \

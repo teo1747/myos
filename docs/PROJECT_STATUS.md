@@ -1422,6 +1422,30 @@ per-load counter now, which makes a new page a new subtree rather than a diff
 against the old one. It is the same reconciliation rule the browser's own
 chrome needed, one level up.
 
+**The browser's own chrome was rebuilt.** It had grown three stacked rows --
+a title bar saying "Vellum", an address row, a status row -- which spent a
+quarter of a 620px window on chrome and still had nowhere to put the page
+title. It is two rows now: the lights share the tab strip, the tab carries the
+title, and back/forward/reload sit beside the address they act on rather than
+at the far right of a different row. Return in the address bar navigates, and
+the bar accepts `example.com` rather than requiring a scheme.
+
+Two real bugs fell out of building it, both of which had been hidden by the
+mouse. **A page fetched while the pointer was still never appeared**: the
+repaint clock is armed at the top of the frame loop, but every navigation
+starts inside the view build, so the frame that started a fetch ended with
+nothing scheduled to look at it again -- with a moving mouse, pointer events
+kept producing frames and hid it completely. And **DragHandle was the one
+container that could not be keyed**, so a control appearing before it in a
+toolbar inherited the single property that defines a drag zone: grow.
+
+**Seven of the toolkit's icons had no glyph in the shipped font** -- a bell, a
+clock, a magnifier, a folder, a document, a trash can, a person, all of them in
+the emoji planes DejaVu does not cover. Each drew a tofu box in every app that
+asked for it. `make icon-check` now fails the build for a codepoint the font
+cannot draw, because nothing else ever would: a missing glyph is not a compile
+error and not a run-time error either.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

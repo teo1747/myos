@@ -350,6 +350,16 @@ void ui_avatar(const char *initials) {
 
 /* --- text field --------------------------------------------------------- */
 
+/* Enter, seen by the field that had focus when it was typed.
+ *
+ * One global rather than per-field state, because exactly one field can hold
+ * focus -- so exactly one field can see a Return. The caller reads it right
+ * after emitting its field, and reading CLEARS it: a submit is an edge, and an
+ * edge that stays set fires again on every later frame. */
+static bool g_field_submit;
+
+bool ui_text_field_submitted(void) { bool s = g_field_submit; g_field_submit = false; return s; }
+
 static bool ui_field(char *buf, unsigned long cap, const char *placeholder, bool masked) {
     const struct ui_theme *t = TH;
     ui_box_begin(0);
@@ -365,7 +375,8 @@ static bool ui_field(char *buf, unsigned long cap, const char *placeholder, bool
         for (int i = 0; i < n; i++) {
             char c = in[i];
             if (c == '\b') { if (len > 0) buf[--len] = 0; }
-            else if (c == '\n' || c == '\t') { /* single-line: ignore submit/tab */ }
+            else if (c == '\n') { g_field_submit = true; }   /* submit; see above */
+            else if (c == '\t') { /* single-line: no tab traversal yet */ }
             else if ((unsigned char)c >= 32 && (unsigned char)c < 127 && len + 1 < cap) {
                 buf[len++] = c; buf[len] = 0;
             }

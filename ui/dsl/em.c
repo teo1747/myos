@@ -351,6 +351,10 @@ static bool em_search_impl(char *buf, size_t cap, const char *ph, bool *hov);
 static void em_spinner_impl(void);
 static bool em_dropdown_impl(const char *const *labels, int count, int *sel, bool *hov);
 
+/* Set when the field emitted by the last flush saw a Return; read by
+ * .submitted() on the chain that produced it. */
+static bool g_field_submit;
+
 void em_flush(void) {
     if (!P.active) return;
     PKind k = P.kind; EmProps pr = P.props; const char *id = P.id;
@@ -371,7 +375,11 @@ void em_flush(void) {
         case PK_CHECK:    em_checkbox_impl(P.str, (bool *)P.bind, pr); break;
         case PK_SLIDER:   em_slider_impl((float *)P.bind, pr); break;
         case PK_STEPPER:  em_stepper_impl(P.str, (int *)P.bind, P.lo, P.hi, pr); break;
-        case PK_FIELD:    clicked = em_field_impl(P.buf, P.cap, P.str, pr, &hovered); break;  /* clicked == focused */
+        /* clicked == focused for a field. The submit edge is read here, right
+         * after the field is emitted, because reading it clears it -- see
+         * ui_text_field_submitted. */
+        case PK_FIELD:    clicked = em_field_impl(P.buf, P.cap, P.str, pr, &hovered);
+                          g_field_submit = ui_text_field_submitted(); break;
         case PK_PASSWORD: clicked = em_password_impl(P.buf, P.cap, P.str, pr, &hovered); break;
         case PK_SEGMENTED:em_segmented_impl(P.labels, P.count, (int *)P.bind, pr); break;
         case PK_LISTROW:  clicked = em_listrow_impl(P.cp, P.str, P.str2, pr, &hovered); break;
@@ -561,6 +569,9 @@ static EmV m_align(EmAlign a){ P.props.align = a; return em_v; }
 static EmV m_id(const char *s){ P.id = s; return em_v; }
 static bool m_clicked(void){ em_flush(); return P.result; }
 static bool m_focused(void){ em_flush(); return P.result; }
+/* Return was pressed in this field. See g_field_submit -- the flag is set by
+ * the flush that emitted the field, so flushing first is what makes it true. */
+static bool m_submitted(void){ em_flush(); return g_field_submit; }
 
 static const EmV em_v = {
     .title=m_title, .heading=m_heading, .body=m_body, .bold=m_bold, .caption=m_caption, .font=m_font,
@@ -570,7 +581,7 @@ static const EmV em_v = {
     .bg=m_bg, .padding=m_padding, .px=m_px, .py=m_py, .frame=m_frame, .width=m_width, .height=m_height, .grow=m_grow,
     .corner=m_corner, .border=m_border, .shadow=m_shadow,
     .center=m_center, .leading=m_leading, .trailing=m_trailing, .align=m_align,
-    .id=m_id, .clicked=m_clicked, .focused=m_focused,
+    .id=m_id, .clicked=m_clicked, .focused=m_focused, .submitted=m_submitted,
 };
 
 /* ---- creators (stage a pending element, return the chain) -------------- */
@@ -1235,7 +1246,12 @@ void em_appbar_end_(void) { em_flush(); ui_end_stack(); }
  * empty middle of a menu bar). Grows by default; put controls to either side. */
 void em_drag_handle_(EmProps p) {
     em_flush();
-    ui_begin_hstack(0);
+    /* Keyed like every other container. It was not, and a drag handle lives at
+     * the END of a toolbar -- exactly where the sibling count changes -- so a
+     * control appearing before it took its retained instance and inherited the
+     * one property that makes a drag zone what it is: grow. A tab's close
+     * button came out as wide as the strip. */
+    ui_begin_hstack(em_key_hash(p.key));
     ui_open();
     if (p.width <= 0) ui_set_size(sz_grow(), sz_intrinsic());
     ui_set_align(ALIGN_CENTER);

@@ -6,6 +6,22 @@ left to do.
 
 ---
 
+## Browser chrome -- what is still missing
+
+- [ ] The address field shows the whole URL in one weight. Real browsers dim
+      the scheme and path and leave the HOST legible, which is the part that
+      says who you are actually talking to -- and the part a phishing URL
+      lies about. The security dot beside it is the honest half of this; the
+      other half is typography the field does not support yet.
+- [ ] No favicon anywhere. The tab identifies a page by title alone, so two
+      pages from one site are told apart only by reading.
+- [ ] The status line still reports node and rule counts -- developer
+      telemetry as a permanent resting state. Useful here, but not what a
+      reader wants the bottom of the window to say.
+- [ ] Tabs do not scroll or shrink: six is the cap and the strip would simply
+      run out of room before that on a narrow window.
+- [ ] No context menu, no bookmarks, no downloads UI.
+
 ## Bootloader
 
 ### Stage 1

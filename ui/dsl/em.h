@@ -255,6 +255,10 @@ struct EmV {
     EmV  (*id)(const char *);
     bool (*clicked)(void);
     bool (*focused)(void);
+    /* Return pressed in a TextField. Appended, so every existing chain is
+     * unchanged. A field without it is a field you can only leave by clicking
+     * something else, which is why the browser had an "Open" button. */
+    bool (*submitted)(void);
 };
 
 #define Text(...)        em_text(__VA_ARGS__)
@@ -806,12 +810,17 @@ void em_dialog_end_(void);
 #define IconPlus      0x002B
 #define IconMinus     0x2212   /* minus sign */
 #define IconGear      0x2699   /* gear */
-#define IconBell      0x1F514  /* bell (may fall back) */
+/* Every codepoint below is present in DejaVuSans, which is the font the OS
+ * ships -- CHECKED against its cmap, not assumed. The ones that used to live in
+ * the emoji planes (a bell, a clock, a magnifier, a folder) are not in that
+ * font and never were: each one drew a tofu box, in every app that asked for
+ * it. An icon set whose glyphs the renderer cannot draw is not an icon set. */
+#define IconBell      0x266B   /* beamed notes -- stands in for an alert */
 #define IconInfo      0x2139   /* information source */
 #define IconWarn      0x26A0   /* warning sign */
 #define IconBolt      0x26A1   /* high voltage */
-#define IconSearch    0x1F50D
-#define IconUser      0x1F464
+#define IconSearch    0x26B2  /* the magnifier DejaVu has */
+#define IconUser      0x263A  /* a face, rather than a bust */
 #define IconDot       0x2022   /* bullet */
 #define IconArrowR    0x2192
 #define IconChevronD  0x2304   /* down arrowhead (Dropdown/Disclosure) */
@@ -822,10 +831,11 @@ void em_dialog_end_(void);
 #define IconGrid      0x25A6   /* squared grid (dashboard tab) */
 #define IconList      0x2630   /* trigram / list (list tab) */
 #define IconHome      0x2302   /* house */
-#define IconClock     0x1F550
-#define IconFolder    0x1F4C1
-#define IconDoc       0x1F4C4
-#define IconTrash     0x1F5D1
+#define IconClock     0x21BA  /* anticlockwise arrow = back in time */
+#define IconFolder    0x229E  /* squared plus -- a container */
+#define IconDoc       0x25AD  /* a sheet */
+#define IconTrash     0x2327  /* X in a rectangle = delete */
 #define IconCloud     0x2601
+#define IconReload    0x27F3   /* clockwise open circle arrow */
 
 #endif /* __EMBLINK_EM_UI_H__ */

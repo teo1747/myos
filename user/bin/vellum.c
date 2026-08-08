@@ -6,8 +6,11 @@
  * from -- which is exactly the seam the design put between fetch and parse, so
  * B2 changes one function and nothing else.
  *
- * The chrome follows the house style: AppBar with the lights leading, the
- * title centred, the app's controls trailing.
+ * The chrome is TWO rows, not the house AppBar. A browser's title bar has
+ * nothing to put in it -- the app's name never changes -- so the lights share
+ * the tab strip, and the tab carries the page title instead. Below that, one
+ * row holding back/forward/reload and the address, in that order, because they
+ * all act on the same thing.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,7 +89,7 @@ static float sheet_viewport_w(void) { return em_viewport_width() - 44.0f; }
 /* Every caller of this is a reason the computed styles are stale. */
 static void rebuild_sheet(void) {
     struct oscfg cfg; oscfg_load(&cfg);
-    css_media_set(sheet_viewport_w(), em_viewport_height() - 132.0f, cfg.dark != 0);
+    css_media_set(sheet_viewport_w(), em_viewport_height() - 110.0f, cfg.dark != 0);
     size_t n = 0, extn = 0;
     const char *ext = cssref_text(&extn);
     if (ext && extn) {
@@ -300,6 +303,22 @@ static void load(const char *url) {
         return;
     }
     snprintf(g_status, sizeof g_status, "Loading...  0.0s");
+    /* ARM THE REPAINT HERE, where the load begins.
+     *
+     * The clock that ticks "Loading..." is armed at the top of app(), by a
+     * check that asks whether a fetch is running. But every navigation starts
+     * INSIDE the view build -- a link click, Return in the address bar, a form
+     * submit -- so on the frame that starts one, that check has already run and
+     * said no. The frame ended with a fetch in flight and nothing scheduled to
+     * look at it again.
+     *
+     * With a mouse that never stopped moving this was invisible: pointer events
+     * kept producing frames, and one of them noticed the page had arrived.
+     * Return from the keyboard leaves the machine perfectly still, and the page
+     * then sat fully fetched and unpainted until the reader moved the mouse --
+     * 559 bytes of example.com, arrived, parsed, and invisible. */
+    em_app_set_refresh(200);
+    em_request_frame();
     (void)url;
 }
 
@@ -387,6 +406,32 @@ static void navigate(const char *url) {
     if (!url || !url[0]) return;
     if (g_url[0]) tab_hist_push(tab_current(), g_url);
     load(url);
+}
+
+/* What the ADDRESS BAR does with what you typed, as opposed to what a link
+ * hands over already resolved.
+ *
+ * People type "example.com". This browser passed that straight to the fetcher,
+ * which has no scheme to open it with, so nothing happened at all -- no page,
+ * no error, just an address bar that had apparently ignored you. A leading '/'
+ * still means a path on this machine, which is the other thing that gets typed
+ * here and must keep working. */
+static void navigate_typed(const char *what) {
+    while (*what == ' ') what++;
+    if (!*what) return;
+    /* A scheme is letters followed by "://" -- or one of the schemeless forms
+     * the browser generates itself. Requiring the slashes is what keeps
+     * "localhost:8080/x" a host and a port rather than a scheme named
+     * "localhost". */
+    int alpha = 0;
+    while (((what[alpha] | 32) >= 'a' && (what[alpha] | 32) <= 'z') ||
+           (alpha && what[alpha] >= '0' && what[alpha] <= '9')) alpha++;
+    int has_scheme = alpha > 0 && !strncmp(what + alpha, "://", 3);
+    if (!has_scheme && !strncmp(what, "about:", 6)) has_scheme = 1;
+    if (has_scheme || what[0] == '/') { navigate(what); return; }
+    char u[512];
+    snprintf(u, sizeof u, "https://%s", what);
+    navigate(u);
 }
 
 static void go_back(void) {
@@ -644,7 +689,7 @@ static int vellum_key(int ch) {
         if (f >= 0) { on_submit(f); return 1; }
     }
     if (ui_any_focus()) return 0;
-    float page = (em_viewport_height() - 132.0f) * 0.85f;
+    float page = (em_viewport_height() - 110.0f) * 0.85f;
     if (ch == ' ')      { g_scroll += page; }
     else if (ch == 'b') { g_scroll -= page; }
     else return 0;
@@ -653,6 +698,35 @@ static int vellum_key(int ch) {
 }
 
 /* --- the window --------------------------------------------------------- */
+
+/* Chrome palette. The app runs Dark (see EM_APPLICATION), so these are stated
+ * rather than derived: the tab you are on is the same surface as the toolbar
+ * beneath it, which is what makes it read as continuous with the page instead
+ * of as a button floating above one. */
+/* Unlike the renderer's argb(), a zero alpha stays ZERO here. That is the
+ * whole representation of "no background": a button whose fill has no alpha
+ * takes the ghost path and paints nothing, which is what an unselected tab is. */
+static Color chrome_rgb(unsigned v) {
+    Color c;
+    c.r = (float)((v >> 16) & 0xFF) / 255.0f;
+    c.g = (float)((v >>  8) & 0xFF) / 255.0f;
+    c.b = (float)( v        & 0xFF) / 255.0f;
+    c.a = (float)((v >> 24) & 0xFF) / 255.0f;
+    return c;
+}
+
+#define TAB_ON        chrome_rgb(0xFF3A3A3CU)
+#define TAB_OFF       chrome_rgb(0x00000000U)
+#define TAB_TEXT_ON   chrome_rgb(0xFFF2F2F7U)
+#define TAB_TEXT_OFF  chrome_rgb(0xFF98989EU)
+
+/* The security dot beside the address. Green ONLY for a chain that verified --
+ * anything weaker would be a lie told in the one place a reader trusts. */
+static Color scheme_color(void) {
+    if (strstr(g_st.via, "authenticated")) return chrome_rgb(0xFF30D158U);  /* verified TLS */
+    if (!strncmp(g_url, "http://", 7))     return chrome_rgb(0xFFFF9F0AU);  /* in the clear */
+    return chrome_rgb(0xFF636366U);                                         /* local file   */
+}
 
 static void app(void) {
     static bool first = true;
@@ -787,7 +861,7 @@ static void app(void) {
      * frame clears first. The find bar has the same shape and gets the same
      * treatment, for the same reason. */
     { static int last_rows = -1;
-      int rows = (tab_count() > 1 ? 1 : 0) | (find_is_open() ? 2 : 0);
+      int rows = find_is_open() ? 1 : 0;
       if (rows != last_rows) { last_rows = rows; em_structure_changed(); } }
 
     /* act on last frame's click before building this one */
@@ -803,60 +877,102 @@ static void app(void) {
     }
 
     Window("Vellum") {
-        AppBar("Vellum") {
-            if (IconButton(IconChevronL).clicked()) go_back();
-            if (IconButton(IconChevronR).clicked()) go_fwd();
-            if (IconButton(IconArrowR).clicked())   load(g_url);
-            if (Button("History").ghost().font(Caption).py(2).clicked())
-                navigate("about:history");
-        }
-
-        /* THE TAB STRIP, above the address bar -- because the address belongs
-         * to the tab, and a bar that sits above the thing it describes reads
-         * as belonging to the window instead. Only when there is more than one
-         * tab: a strip showing a single tab is a row of chrome that tells you
-         * nothing, and this window is not tall. */
-        if (tab_count() > 1) {
-            /* KEYED, along with every other row below. Rows that come and go
-             * -- this strip, the find bar -- are otherwise matched to last
-             * frame's by position, so the moment one appears every row after it
-             * adopts its neighbour's retained instance and the whole chrome is
-             * laid out as something else. See EmProps.key. */
-            HStack(.spacing = 4, .align = Center, .px = 10, .py = 4, .key = "tabstrip") {
-                /* .id() is a reconciliation KEY and takes a string. Stable
-                 * per SLOT rather than per label, so a tab whose title arrives
-                 * later is still the same widget and does not inherit the
-                 * geometry of whatever last held that position. */
-                static const char *KEY[TAB_MAX]   = { "t0","t1","t2","t3","t4","t5" };
-                static const char *KEYX[TAB_MAX]  = { "x0","x1","x2","x3","x4","x5" };
-                for (int i = 0; i < TAB_MAX; i++) {
-                    if (!tab_is_open(i)) continue;
-                    char lbl[28];
-                    snprintf(lbl, sizeof lbl, "%.24s", tab_label(i));
-                    /* The current tab is the SOLID one. Which tab you are on
-                     * has to be readable without counting. */
-                    if (i == tab_current()) {
-                        Button(lbl).primary().font(Caption).py(2).id(KEY[i]);
-                    } else if (Button(lbl).ghost().font(Caption).py(2).id(KEY[i]).clicked()) {
-                        g_switch_to = i;
-                    }
-                    if (Button("x").ghost().font(Caption).py(2).px(4).id(KEYX[i]).clicked())
+        /* ROW 1 -- THE TAB STRIP, and the window's own title bar at the same
+         * time. The lights sit here rather than on a bar of their own, and
+         * that is what removes a whole row: the old chrome spent one row on
+         * the word "Vellum", which never changes and therefore tells you
+         * nothing, and another on the address. The top row of a browser should
+         * say which page you are looking at, and a tab already does.
+         *
+         * ALWAYS shown, even at one tab. That single tab is where the page
+         * TITLE lives -- before this the title was parsed, stored, and never
+         * put on screen anywhere. */
+        HStack(.spacing = 3, .align = Center, .px = 8, .py = 4, .key = "tabstrip") {
+            CloseButton(); MinimizeButton();
+            /* .id() is a reconciliation KEY and takes a string. Stable per
+             * SLOT rather than per label, so a tab whose title arrives later
+             * is still the same widget and does not inherit the geometry of
+             * whatever last held that position. */
+            static const char *KEY[TAB_MAX]  = { "t0","t1","t2","t3","t4","t5" };
+            static const char *KEYL[TAB_MAX] = { "l0","l1","l2","l3","l4","l5" };
+            static const char *KEYX[TAB_MAX] = { "x0","x1","x2","x3","x4","x5" };
+            for (int i = 0; i < TAB_MAX; i++) {
+                if (!tab_is_open(i)) continue;
+                int cur = (i == tab_current());
+                char lbl[26];
+                snprintf(lbl, sizeof lbl, "%.22s", tab_label(i));
+                /* The current tab is RAISED -- a lighter surface, the colour
+                 * the toolbar under it already is. It used to be the accent
+                 * blue, which made the tab you are already on the loudest
+                 * thing in the window. Selection is not an alert.
+                 *
+                 * The unselected ones must say .ghost() rather than just hand
+                 * over a transparent background: a button's DEFAULT style is
+                 * the filled accent, so "no background" fell through to it and
+                 * every tab you were NOT on came out bright blue. */
+                /* The tab is the CONTAINER, and the label and the ✕ are two
+                 * transparent controls inside it. Made of two chips instead,
+                 * a tab and its close button read as two separate things that
+                 * happen to be adjacent -- which is what they were. */
+                HStack(.spacing = 0, .align = Center, .px = 3, .corner = 8,
+                       .background = cur ? TAB_ON : TAB_OFF, .key = KEY[i]) {
+                    EmV tb = Button(lbl).ghost().font(Caption).py(3).px(7).id(KEYL[i]);
+                    tb.color(cur ? TAB_TEXT_ON : TAB_TEXT_OFF);
+                    if (tb.clicked() && !cur) g_switch_to = i;
+                    /* The ✕ only on the tab you are on, and only when closing
+                     * one is possible at all. A row of them is a row of things
+                     * you did not mean to click. */
+                    if (cur && tab_count() > 1 &&
+                        Button("\xc3\x97").ghost().font(Caption).py(3).px(5)
+                            .color(TAB_TEXT_OFF).id(KEYX[i]).clicked())
                         g_close_tab = i;
                 }
-                if (Button("+").ghost().font(Caption).py(2).id("tnew").clicked()) g_new_tab = 1;
-                /* No Spacer here on purpose. It has no key, and it sits AFTER
-                 * a variable number of tab buttons -- so opening a third tab
-                 * shifted it a position and the grow landed on a button, which
-                 * showed up as a ragged gap in the middle of the strip. The
-                 * row is left-aligned without one. */
             }
-            Divider("tabsep");
+            if (Button("+").ghost().font(Caption).py(3).px(7).id("tnew").clicked())
+                g_new_tab = 1;
+            /* The rest of the strip is the window's drag zone -- the same
+             * place every desktop browser lets you pick the window up. It also
+             * replaces the Spacer that used to be here: a Spacer has no key,
+             * and sitting after a VARIABLE number of tabs meant opening a
+             * third tab shifted it a position and the grow landed on a button,
+             * which read as a ragged gap in the middle of the strip. */
+            DragHandle(.key = "tabdrag") { }
         }
+        Divider("tabsep");
 
-        /* the address row: the widest thing in the chrome, as it should be */
-        HStack(.spacing = 8, .align = Center, .px = 12, .py = 6, .key = "urlrow") {
-            if (TextField(g_bar, sizeof g_bar, "Path or URL").focused()) { }
-            if (Button("Open").primary().font(Caption).py(2).clicked()) navigate(g_bar);
+        /* ROW 2 -- navigation and the address, on ONE row.
+         *
+         * Back, forward and reload belong beside the address field because
+         * they change what it says. They used to be at the far right of a
+         * different row -- the width of the window away from the thing they
+         * act on, and past the title, so going back meant crossing the whole
+         * chrome to reach a control every browser puts at the left. */
+        HStack(.spacing = 5, .align = Center, .px = 8, .py = 5, .key = "urlrow") {
+            if (IconButton(IconChevronL).clicked()) go_back();
+            if (IconButton(IconChevronR).clicked()) go_fwd();
+            /* A circling arrow, not the plain "→" that used to be here: an
+             * arrow pointing right is where a browser puts FORWARD, and this
+             * button sat immediately beside the forward button meaning
+             * something else entirely. */
+            if (IconButton(IconReload).clicked())   load(g_url);
+
+            /* How the bytes got here, as a dot: green only when a certificate
+             * chain actually verified, amber for plain HTTP, quiet for a local
+             * file. The browser has known this since TLS landed and had
+             * nowhere to say it except a line of telemetry at the bottom. */
+            Icon(IconDot).color(scheme_color()).font(Caption);
+
+            /* Enter navigates. There used to be a blue "Open" button here --
+             * the single loudest element in the chrome, for an action nobody
+             * clicks, because a text field that could not submit left no other
+             * way out. See EmV.submitted. */
+            if (TextField(g_bar, sizeof g_bar, "Search or enter address").submitted())
+                navigate_typed(g_bar);
+
+            /* NOT a clock, however much history wants one: the clock glyph and
+             * the reload glyph are both circling arrows, and side by side in
+             * one toolbar they were the same button drawn twice. */
+            if (IconButton(IconList).clicked()) navigate("about:history");
         }
         /* The find bar, only when it is open -- a browser that shows one
          * always has given up a line of the page for something you use once. */
@@ -895,10 +1011,15 @@ static void app(void) {
          * plus each optional one. Guessing it (a single 132/168 constant) is
          * what made the tab strip push the document off the bottom the moment
          * a second tab existed. */
-        float chrome = 132.0f;
+        float chrome = 110.0f;
         if (find_is_open())  chrome += 36.0f;
-        if (tab_count() > 1) chrome += 36.0f;
-        ScrollView(&g_scroll, em_viewport_height() - chrome, .key = "page") {
+        /* The page area is PAPER-coloured, not window-coloured. With the dark
+         * app surface showing through, the 22px margin around the document
+         * read as a dark frame drawn around a white card -- a browser looking
+         * at a page rather than a browser showing one. Same padding, no
+         * frame: the margin is now part of the page. */
+        ScrollView(&g_scroll, em_viewport_height() - chrome, .key = "page",
+                   .background = chrome_rgb(PAGE_CANVAS)) {
             /* Fill, not Leading: this is the block every other block inherits
              * its width from. Left it Leading and the whole document sizes to
              * its longest line instead of to the window, so nothing wraps. */
@@ -922,8 +1043,11 @@ static void app(void) {
              * script's output is the thing the reader is waiting for. */
             const char *h = vellum_hovered_link();
             Text(h ? h : (g_console[0] ? g_console : g_status)).caption().tertiary();
+            /* The URL used to be echoed on the right, which put the address on
+             * screen twice -- and the copy down here was the one nobody could
+             * edit. The row keeps its height so that hovering a link does not
+             * reflow the page underneath it. */
             Spacer();
-            Text(g_url).caption().tertiary();
         }
     }
 }

@@ -94,6 +94,12 @@ struct color ui_ctl_color_(int which, struct color dflt);
 bool ui_text_field(char *buf, unsigned long cap, const char *placeholder);
 bool ui_password_field(char *buf, unsigned long cap, const char *placeholder);
 
+/* Did the field just emitted see a Return? Call it immediately after the field.
+ * Reading clears it -- a submit is an EDGE, and an edge left set fires again on
+ * every subsequent frame, which for a browser's address bar means reloading the
+ * page forever. One field holds focus, so one flag is the whole state. */
+bool ui_text_field_submitted(void);
+
 /* --- scroll view --- */
 /* A fixed-height viewport that clips + vertically scrolls its children. `scroll_y`
  * is the app-owned scroll position (px from top); the wheel over the view and a
