@@ -125,6 +125,19 @@ struct layout_handle layout_create_node(struct layout_arena *a, struct layout_ha
 void layout_destroy_node(struct layout_arena *a, struct layout_handle h) {
     struct layout_node *n = layout_resolve(a, h);
     if (!n) return;
+    /* UNLINK IT FROM ITS PARENT FIRST. Without this the parent keeps pointing
+     * at a slot that is on the free list, and the moment that slot is handed
+     * out again -- with a bumped generation -- the parent's link resolves to
+     * nothing and the child walk STOPS THERE. Every sibling after the
+     * destroyed node silently leaves the tree: still built, still linked in the
+     * instance tree, never measured and never arranged, so it collapses to
+     * nothing at the origin.
+     *
+     * The declarative layer has always done this (destroy_instance calls
+     * inst_unlink_child); the layout arena simply forgot the same step, and it
+     * only shows on a subtree that is removed and later rebuilt -- a dialog, a
+     * menu, the desktop's application launcher opening a second time. */
+    lunlink_from_parent(a, h);
     struct layout_handle c = n->first_child;
     while (!layout_handle_is_null(c)) {
         struct layout_node *cn = layout_resolve(a, c);

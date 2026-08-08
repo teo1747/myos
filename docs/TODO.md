@@ -8,39 +8,22 @@ left to do.
 
 ## The Applications launcher
 
-- [x] Full-screen, searchable, 72px icons, tinted glass. The menu bar stays
-      visible above it.
-- [x] The button OPENS rather than toggles. Toggling turned one press into
-      open+close whenever the signal arrived twice, which looked like a dead
-      button.
-- [ ] 🐛 THE OPEN ONE. Re-opening the launcher paints nothing. ISOLATED
-      cleanly at last: open, close (Esc), open again with NO app ever launched
-      -- the second one is still blank. So it has nothing to do with app
-      windows or with window order, and the earlier note claiming it needed an
-      app on screen was an untested combination, not an observation.
-      CAUSE: scene_render caches a rect per NODE INDEX; the launcher's subtree
-      is destroyed and rebuilt onto the same indices with the same geometry, so
-      every node compares equal and none of it is repainted. home's log shows
-      the declarative pass running (11 apps, two frames) over a screen that
-      keeps the previous frame.
-      TRIED AND NOT ENOUGH: keying the sheet by an open-generation counter (the
-      fix that worked for the browser's documents) -- it makes the DSL
-      instances new but does not move the renderer's per-index cache, so the
-      frame is still skipped. Kept anyway; it is correct in itself.
-      THE FIX AND ITS SECOND HALF: scene_render_invalidate() (added, documented,
-      unused) does make the second open paint -- at the WRONG GEOMETRY, the
-      search field landing top-left instead of centred. That misplaced layout
-      of a re-created Overlay/Glass subtree is the last thing to solve. Start
-      there, with the invalidate switched on so the fault is on screen.
-      Meanwhile the desktop lift is OFF, so the launcher behaves as it always
-      did (behind app windows) and the menu bar is never taken away.
-- [ ] The bar is covered while the launcher is up IF the layer is ever lifted
-      again. Doing that properly means the bar's OPAQUE STRIP above and its
-      dropdown canvas below -- a compositing change, not a z-order one.
-- [ ] The launcher button is /system/images/launcher.eic at the FAR LEFT of the
-      menu bar (x~16), not the bolt glyph at x~561 -- that one is a draggable
-      status chip. Worth writing down: several rounds of "this cannot be tested
-      under QMP" were simply clicking the wrong pixel.
+- [x] Opens every time, in FRONT of app windows, full-screen and searchable
+      with 72px icons.
+- [x] ~~Re-opening it painted nothing~~ -- the cause was in the LAYOUT ARENA,
+      not the launcher, the compositor or the window order:
+      `layout_destroy_node` freed a node without unlinking it from its parent's
+      child list. The parent kept pointing at a slot on the free list, and the
+      moment that slot was reissued with a bumped generation the parent's link
+      resolved to nothing and the child walk STOPPED THERE. Every sibling after
+      the destroyed node quietly left the tree -- still built, still linked in
+      the instance tree, never measured, never arranged. It affected ANY
+      subtree that is removed and later rebuilt; the launcher is just where it
+      was noticed.
+- [ ] The menu bar is covered while the launcher is up rather than staying
+      above it. Lifting translucent bars above the layer is the obvious move
+      and needs care: the bar's window GROWS to 792x340 for its dropdowns, so
+      naively it covers the launcher instead.
 
 ## Note++ -- the OS's own editor (started)
 

@@ -232,20 +232,11 @@ static void apps_set_open(int open) {
     /* Render the new state BEFORE moving the layer when closing, and move it
      * before rendering when opening -- either way the compositor's recompose
      * must not be the one that shows a half-updated desktop. */
-    /* THE LIFT IS OFF, and it is not the bug. Isolated properly at last: open,
-     * close, open again with NO app ever launched, and the second one still
-     * paints nothing -- so this was never about window order, and my earlier
-     * note that it needed an app window on screen was simply an untested
-     * combination. Lifting the layer only made the same blank frame cover the
-     * whole screen and take the menu bar with it, which is why it looked
-     * catastrophic rather than merely broken.
-     *
-     * What it IS: the renderer caches a rect per node index, the launcher's
-     * subtree is destroyed and rebuilt onto the same indices, and every node
-     * compares equal so nothing repaints. scene_render_invalidate() (added in
-     * eacd194) makes it paint again -- and at the wrong geometry, which is the
-     * remaining fault and the next thing to fix. */
-    int rc = 0;  /* embk_win_desktop_front(open) -- see above */
+    /* In front of the app windows. Safe now that the layout arena unlinks a
+     * destroyed node from its parent: until it did, the launcher's second
+     * appearance was never measured, so lifting the layer only put a blank
+     * full-screen surface over everything and took the menu bar with it. */
+    int rc = embk_win_desktop_front(open);
     /* TELL THE RUNTIME THE TREE CHANGED SHAPE. The launcher is a whole subtree
      * that appears and disappears, and the renderer only repaints what it can
      * see has changed -- so the SECOND time it opened, with the same apps in
