@@ -1376,6 +1376,26 @@ browser: `TLS_LIB_OBJS` was defined after the rule that lists it, and make
 expands prerequisites when it reads the rule, so it expanded to nothing --
 changing a trust anchor rebuilt the object and never relinked the binary.
 
+**And the pages have now been seen WITH THEIR IMAGES.** The harness could not
+load a single one: it stripped the leading slash off every image path to make
+it repo-relative, which is right for the corpus in the checkout and wrong for
+the absolute path a fetched page resolves to, so every real page rendered with
+grey boxes where its pictures should be. xkcd's comic and kernel.org's icon
+render on the host now, and kernel.org renders with its image ON THE METAL,
+fetched over the network and decoded on the machine.
+
+What the web actually serves, counted rather than assumed: png 73, webp 28,
+svg 23, jpeg 13, gif 1 across the seventeen sites. This browser decodes PNG and
+JPEG, so WebP is the one missing format that matters.
+
+Two more things the live web said. Matching a trust anchor by its CN is not
+enough -- several GlobalSign roots share `CN=GlobalSign` and differ only by
+OU, so the generator had silently bundled the wrong key and kernel.org and
+python.org were refused by a browser that believed it trusted their root; roots
+are matched on the whole subject now. And xkcd.com speaks only TLS 1.2, which
+this stack does not: not a bug, a missing protocol version, and logged as the
+thing that decides reachability.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

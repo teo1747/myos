@@ -919,9 +919,19 @@ struct img_slot *imgcache_want(const char *url) {
         if (H[i].state != IMG_EMPTY) continue;
         snprintf(H[i].url, sizeof H[i].url, "%s", url);
         size_t n = 0;
-        const char *path = url;
-        while (*path == '/') path++;              /* repo-relative on the host */
-        uint8_t *bytes = read_file(path, &n);
+        /* AS GIVEN first, then repo-relative. The corpus lives in the repo and
+         * writes "/system/web/photo.jpg", which is a path relative to the
+         * checkout; a page fetched from the real web resolves its images to a
+         * real absolute path, and stripping the leading slash turned that into
+         * a relative one that does not exist. Every image on every real page
+         * failed to load, and the pages rendered with grey boxes where the
+         * pictures should be. */
+        uint8_t *bytes = read_file(url, &n);
+        if (!bytes) {
+            const char *rel = url;
+            while (*rel == '/') rel++;
+            bytes = read_file(rel, &n);
+        }
         if (!bytes) { H[i].state = IMG_FAILED; return &H[i]; }
         uint32_t w = 0, h = 0;
         int is_jpeg = n > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8;

@@ -33,7 +33,8 @@ BUNDLES = [
     "/etc/ssl/cert.pem",
 ]
 
-# The roots to bundle, by the CN in their subject, with the C identifier to
+# The roots to bundle, matched as a SUBSTRING of the root's full subject (all
+# its printable attributes joined), with the C identifier to
 # emit. Chosen for COVERAGE of the web a person actually visits rather than for
 # completeness: between them these issue for the large majority of public
 # sites. Adding one is adding a line.
@@ -42,7 +43,7 @@ ROOTS = [
     ("GTS_R1",         "GTS Root R1"),
     ("ISRG_X1",        "ISRG Root X1"),                      # Let's Encrypt
     ("ISRG_X2",        "ISRG Root X2"),
-    ("GS_R3",          "GlobalSign"),                        # GlobalSign Root R3
+    ("GS_R3",          "GlobalSign Root CA - R3"),           # kernel.org, python.org
     ("USERTRUST_ECC",  "USERTrust ECC Certification Authority"),
     ("USERTRUST_RSA",  "USERTrust RSA Certification Authority"),
     ("DIGICERT_G2",    "DigiCert Global Root G2"),           # example.com, much of the web
@@ -136,8 +137,34 @@ def load_bundle():
     sys.exit("no CA bundle found; looked in:\n  " + "\n  ".join(BUNDLES))
 
 
+def subject_text(subj):
+    """Every printable attribute value in the subject, joined.
+
+    Matching on the CN alone is not enough: several GlobalSign roots share
+    `CN=GlobalSign` and are told apart only by their OU, so picking the first
+    one silently bundled the wrong key -- kernel.org and python.org were
+    refused by a browser that thought it trusted their root."""
+    out = []
+    for tag in (0x13, 0x0C, 0x16):        # PrintableString, UTF8String, IA5String
+        pass
+    i = 0
+    while i < len(subj):
+        try:
+            t, hl, ln, vs = tlv(subj, i)
+        except Exception:
+            break
+        if t in (0x13, 0x0C, 0x16):
+            out.append(subj[vs:vs + ln].decode("utf-8", "replace"))
+            i = vs + ln
+        elif t & 0x20:                     # constructed: descend
+            i = vs
+        else:
+            i = vs + ln
+    return " ".join(out)
+
+
 def parse_pems(text):
-    out = {}
+    out = []
     import base64
     for m in re.finditer(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", text, re.S):
         der = base64.b64decode(re.sub(r"\s", "", m.group(1)))
@@ -145,15 +172,15 @@ def parse_pems(text):
             subj, spki = cert_fields(der)
         except Exception:
             continue
-        cn = None
-        # the CN is the last commonName attribute in the subject
-        for m2 in re.finditer(b"\x06\x03\x55\x04\x03", subj):
-            i = m2.end()
-            _, hl, ln, vs = tlv(subj, i)
-            cn = subj[vs:vs + ln].decode("utf-8", "replace")
-        if cn:
-            out.setdefault(cn, (subj, spki))
+        out.append((subject_text(subj), subj, spki))
     return out
+
+
+def find(certs, want):
+    for text, subj, spki in certs:
+        if want in text:
+            return subj, spki
+    return None
 
 
 def carr(name, b, indent="  "):
@@ -172,9 +199,10 @@ def main():
     certs = parse_pems(text)
     body, anchors, missing = [], [], []
     for ident, cn in ROOTS:
-        if cn not in certs:
+        hit = find(certs, cn)
+        if not hit:
             missing.append(cn); continue
-        subj, spki = certs[cn]
+        subj, spki = hit
         kind = spki_key(spki)
         body.append("/* %s */" % cn)
         body.append(carr(ident + "_SUBJECT", subj))

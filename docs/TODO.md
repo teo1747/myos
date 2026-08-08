@@ -2903,9 +2903,28 @@ Three things were in the way, and only one of them was TLS.
       accepted.
 
 Still open:
-- [ ] No page has been seen WITH ITS IMAGES. The host harness cannot fetch
-      them; the metal can. That is a whole dimension of fidelity nobody has
-      looked at.
+- [x] ~~No page has been seen WITH ITS IMAGES~~ -- they are now, on both sides.
+      `make web-real` fetches a page's images alongside its stylesheets, and
+      the harness could not load ANY of them: it stripped the leading slash off
+      every image path to make it repo-relative, which is right for the corpus
+      and wrong for an absolute path, so every real page rendered with grey
+      boxes. xkcd's comic and kernel.org's icon render on the host; kernel.org
+      renders WITH ITS IMAGE on the metal, fetched over the network.
+
+      What the web actually serves, counted across the seventeen sites:
+      png 73, webp 28, svg 23, jpeg 13, gif 1. We decode PNG and JPEG.
+
+- [ ] WEBP IS 28 OF 138 IMAGES and decodes as nothing -- bbc serves 12, github
+      16. It is the one missing format that matters; GIF is a single image in
+      the whole sample and SVG needs a vector renderer, not a decoder.
+- [ ] TLS 1.2 IS NOT SPOKEN. xkcd.com negotiates only 1.2 and the handshake
+      fails with rc=-1 -- not a bug, a missing protocol version, and the one
+      that decides whether a site is reachable at all. Most of the web is 1.3.
+- [ ] The trust set is 23 anchors and five of the listed roots are not in the
+      host's bundle at all (DigiCert Global Root CA, High Assurance EV,
+      Baltimore, GTS R2, Entrust G2) -- so the generator's list should be
+      checked against what a current bundle actually holds rather than from
+      memory of which CAs matter.
 - [ ] Only two live sites have been tried. The seventeen-site corpus is
       fetched by curl and rendered on the host; the same list run on the metal
       would be a different test and would find different things (memory at

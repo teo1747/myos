@@ -15,9 +15,15 @@ The pages are NOT committed. They are someone else's content, they go stale,
 and a corpus that cannot be refetched is a corpus nobody can check. What is
 committed is this file, so the run is repeatable.
 
-The only thing rewritten in a fetched page is each <link> href, which becomes
-the local filename its stylesheet was saved under. Markup and CSS bytes are
-exactly what the server sent -- otherwise the triage measures our edits.
+The only thing rewritten in a fetched page is each <link> href and each <img>
+src, which become the local filenames those files were saved under. Markup,
+CSS and image bytes are exactly what the server sent -- otherwise the triage
+measures our edits.
+
+Images matter more than they look: a browser that has never been seen
+rendering one has a whole dimension nobody has checked. The renderer decodes
+PNG and JPEG by SIGNATURE, so what a site actually serves -- increasingly WebP
+and AVIF -- is reported here rather than silently rendering as nothing.
 
 Some sites answer a plain fetch with a bot-check page rather than content.
 That is not a rendering bug, and the run says so rather than counting it as
@@ -95,8 +101,33 @@ def fetch(name, url, root):
         n += 1
         open(os.path.join(d, fn), "wb").write(css)
         txt = txt.replace(tag, tag.replace(h.group(1), fn), 1)
+
+    # ...and the pictures. Capped: a news front page can carry a hundred, and
+    # the point is to SEE the layout with images in it, not to mirror the site.
+    imgs, kinds = 0, {}
+    for m in list(re.finditer(r'<img\b[^>]*>', txt, re.I))[:24]:
+        tag = m.group(0)
+        h = re.search(r'\bsrc\s*=\s*["\']([^"\']+)["\']', tag, re.I)
+        if not h or h.group(1).startswith("data:"):
+            continue
+        raw = get(urljoin(url, htmlmod.unescape(h.group(1))), 20)
+        if not raw:
+            continue
+        kind = ("png"  if raw[:8] == b"\x89PNG\r\n\x1a\n" else
+                "jpeg" if raw[:2] == b"\xff\xd8" else
+                "gif"  if raw[:3] == b"GIF" else
+                "webp" if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP" else
+                "avif" if raw[4:12] == b"ftypavif" else
+                "svg"  if b"<svg" in raw[:400].lower() else "?")
+        kinds[kind] = kinds.get(kind, 0) + 1
+        fn = "img%d.%s" % (imgs, kind if kind != "?" else "bin")
+        imgs += 1
+        open(os.path.join(d, fn), "wb").write(raw)
+        txt = txt.replace(tag, tag.replace(h.group(1), fn), 1)
+
     open(os.path.join(d, "index.html"), "w", encoding="utf-8").write(txt)
-    print("  %-12s %8d bytes, %d sheet(s)%s" % (name, len(html), n,
+    fmt = " ".join("%s=%d" % kv for kv in sorted(kinds.items()))
+    print("  %-12s %8d bytes, %d sheet(s), %d image(s) %s%s" % (name, len(html), n, imgs, fmt,
           "   [BOT CHECK, not a page]" if any(p in txt.lower() for p in BOT_CHECK) else ""))
 
 
