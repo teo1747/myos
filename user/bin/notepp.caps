@@ -1,0 +1,16 @@
+# What Note++ may DO. notepp.ns says what it may NAME; this is the other half of
+# the same declaration, and the kernel refuses a mask that is not a subset of
+# the grantor's -- so this file can only ever narrow what the editor gets.
+#
+# An editor touches files and draws a window. That is the entire list: no
+# network (it fetches nothing), no audio, no camera, no USB, no raw disk, no
+# debug. Highlighting C needs no compiler at runtime -- the words are baked in
+# from EmbCC's table at build time (tools/mkkeywords.py) -- so nothing here is
+# granted for the sake of the syntax colouring.
+#
+# `gpu` is not optional and its absence is not graceful: a window IS a GPU
+# resource, so without it the app spawns, fails to create one, and exits before
+# drawing anything. That is what an app with no .caps file at all does.
+
+filesystem     # the files being edited, and the font they are drawn with
+gpu            # a window is a GPU resource

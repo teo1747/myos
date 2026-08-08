@@ -1,12 +1,18 @@
 # notepp namespace manifest (docs/USERSPACE_v2.md UP4).
 #
-# A code editor: reads its UI from the sealed /system (fonts + libembk.so) and
-# reads and writes source under /data. The same two subtrees the simple editor
-# needs, and for the same reason -- it cannot name /run or any other root.
+# Modelled on vellum.ns, which is the GUI app whose authority is known to work.
 #
-# It does NOT get to name the compiler or run one. Highlighting C is a matter of
-# knowing C's words (baked in at build time from EmbCC's table, see
-# tools/mkkeywords.py), not of asking a compiler at runtime, so the editor needs
-# no authority it would not otherwise have.
-ro /system
-rw /data
+# `rw $HOME`, not `rw /data`. The session holds
+#   ro /system, ro /data/apps, rw /home/<user>, rw /run
+# and a child can only be granted a SUBSET of what its grantor holds -- so a
+# manifest naming /data asks the desktop for authority it does not have, and
+# the spawn is refused before the app runs. An editor's business is the user's
+# own files, and those are $HOME.
+#
+# Broader than the browser's `rw $HOME/.vellum` on purpose: Vellum writes only
+# its own state, while an editor exists to write files the person chose. That
+# is the widest grant in this tree and it is still bounded -- it cannot name
+# /system to write, /run at all, or another user's home.
+
+ro /system                  # the font it draws with, and libembk.so
+rw $HOME                    # the files being edited

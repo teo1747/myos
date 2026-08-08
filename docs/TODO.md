@@ -42,6 +42,12 @@ Foundations in, app shell next:
       keyed by line number (that keying is wrong anyway -- inserting a line
       renumbers every line below it -- but it is not this bug, and the change
       was reverted rather than shipped unverified).
+- [ ] Launching from the LAUNCHER cannot be driven under QMP here (synthesized
+      clicks do not open the grid), so that path is verified by reading the
+      authority rules, not by running it. Every earlier check launched the app
+      from the Terminal -- which inherits the full session and never reads a
+      manifest, i.e. exactly the path that bypasses the thing being tested.
+      Any future app needs its FIRST launch tested from the launcher.
 - [ ] Find/replace, and undo. Neither exists yet in the toolkit's editor.
 - [ ] The editor caps a drawn line at 512 bytes; a longer line is clipped
       rather than wrapped or scrolled horizontally.
