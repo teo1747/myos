@@ -22,6 +22,14 @@ left to do.
       frame and then presents dirty rects, so whatever the new frame did not
       touch kept the old pixels. The frames either side of the flip present the
       whole surface.
+- [ ] 🐛 A black block sits where the menu bar is while the launcher is up.
+      Two TRANSLUCENT full-screen layers now overlap: the desktop is composited
+      per-pixel (`fb_blit_over`) because its canvas is genuinely transparent --
+      the wallpaper is drawn by the COMPOSITOR, not by home -- and the menu bar
+      is translucent too, with a declared blur sub-rect it frosts before
+      blending. Raising the desktop above it makes the desktop blend over an
+      already-frosted strip, and that strip comes out black rather than tinted.
+      The fix is in the compositing order for that case, not in home.
 - [ ] NOT VERIFIED: that the launcher actually appears in front of a running
       app. The only trigger with an app covering the screen is the menu-bar
       button, and a synthesized click cannot work it here (the bar renders at

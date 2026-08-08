@@ -136,6 +136,7 @@ static int g_all_n = 0;
 static int   g_apps_open = 0;     /* is the launcher grid showing? */
 static int   g_apps_frames = 0;   /* debounce the click that opened it */
 static float g_apps_scroll = 0;   /* launcher grid scroll offset */
+static char  g_apps_q[40];        /* the launcher's search text */
 
 /* Enumerate /data/apps/<name>/, keeping those that hold a <name>.elf, and read
  * each one's presentation manifest. home's namespace grants `ro /data/apps`. */
@@ -223,7 +224,7 @@ static int g_full_present = 0;
 
 static void apps_set_open(int open) {
     if (open == g_apps_open) return;
-    if (open) { scan_apps(); g_apps_frames = 0; g_apps_scroll = 0; }
+    if (open) { scan_apps(); g_apps_frames = 0; g_apps_scroll = 0; g_apps_q[0] = 0; }
     g_apps_open = open;
     /* Render the new state BEFORE moving the layer when closing, and move it
      * before rendering when opening -- either way the compositor's recompose
@@ -515,43 +516,93 @@ static void drag_ghost(void) {
  * there is no resolution at which it can overflow. This is also why the layer
  * comes to the front (see apps_set_open): a full-screen surface behind the
  * windows is just an invisible one. */
+/* The tint the launcher's glass carries, and why it carries one at all.
+ *
+ * "Blur the desktop and dim it" is the whole of this effect on a Mac, and it
+ * works there because the wallpaper has colour in it to blur. This OS ships a
+ * near-black one, so frosting it lands on black and stays black -- the launcher
+ * came out looking like the screen had been switched off, which is a fair
+ * description of a dark rectangle with small icons on it.
+ *
+ * So the glass is tinted rather than merely dimmed: a cool indigo at low alpha,
+ * bright enough to give the surface somewhere to catch light and read as a
+ * material over a dark room, faint enough that it is still the wallpaper you
+ * are looking through. */
+static Color launch_tint(void) {
+    Color c = { .r = 0.10f, .g = 0.12f, .b = 0.22f, .a = 0.52f };
+    return c;
+}
+
+
+/* Does this app match what has been typed? Case-insensitive substring, which
+ * is the whole of "search" at this scale: with a dozen apps, ranking is a
+ * feature nobody can see the benefit of. */
+static int app_matches(const char *label, const char *q) {
+    if (!q[0]) return 1;
+    for (const char *a = label; *a; a++) {
+        const char *x = a, *y = q;
+        while (*x && *y) {
+            char ca = *x | 32, cb = *y | 32;
+            if (ca != cb) break;
+            x++; y++;
+        }
+        if (!*y) return 1;
+    }
+    return 0;
+}
+
 static void apps_grid(void) {
     if (!g_apps_open) return;
     g_apps_frames++;
+    const struct ui_theme *t = ui_theme();
 
     /* Sized from the screen, never from a constant. Columns grow with width so
      * the grid stays a grid rather than a column on a narrow display. */
-    float top    = 34.0f;                       /* clear of the menu bar */
-    float bottom = 76.0f;                       /* clear of the dock     */
-    float availw = g_sw - 80.0f;
-    if (availw < 200.0f) availw = 200.0f;
-    int cols = (int)(availw / 132.0f);
+    float cell   = 116.0f;
+    float availw = g_sw - 72.0f;
+    if (availw < 240.0f) availw = 240.0f;
+    int cols = (int)(availw / cell);
     if (cols < 3) cols = 3;
     if (cols > 7) cols = 7;
-    float body = g_sh - top - bottom - 52.0f;   /* minus the title block */
+    float body = g_sh - 34.0f - 76.0f - 62.0f;    /* minus bar, dock, search row */
     if (body < 120.0f) body = 120.0f;
 
     Overlay() {
-        /* The whole screen is the sheet. One frosted surface over the
-         * wallpaper -- the same material as the dock and the menus, which is
-         * what makes these read as one system rather than three widgets. */
+        /* The sheet is the whole screen. Two layers make it read as a material
+         * rather than a black rectangle: the frost, and a wash over it.
+         *
+         * The wash matters more than it sounds. This OS ships a near-black
+         * wallpaper, so "blur the desktop and dim it" -- which is the whole of
+         * the effect on a Mac -- lands on black and stays black, and the
+         * launcher came out looking like the screen had been switched off. A
+         * faint accent-tinted gradient gives the surface somewhere to catch
+         * light, so it reads as glass over a dark room instead of as an
+         * absence. */
         Glass(.width = g_sw, .height = g_sh, .align = Fill, .spacing = 0,
-              .pt = top, .pb = bottom, .px = 40, .blur = 28) {
-            /* A quiet title, centred. Launchpad has no header bar and no close
-             * button: the whole background dismisses, and Esc does, so a chrome
-             * row would be a control for something you can already do
-             * everywhere. */
-            HStack(.align = Center, .justify = Center, .py = 8) {
-                Text("Applications").heading();
+              .pt = 30, .pb = 70, .px = 36, .blur = 30,
+              .background = launch_tint()) {
+            /* SEARCH, centred, where Launchpad puts it -- and no title. The
+             * word "Applications" over a screen of applications is a label for
+             * something already obvious, and it was the thing overlapping the
+             * menu bar. A search field earns the row: it is the fastest way to
+             * start an app once there are more than a screenful. */
+            HStack(.align = Center, .justify = Center, .py = 6) {
+                HStack(.width = 280, .align = Center) {
+                    SearchField(g_apps_q, sizeof g_apps_q, "Search");
+                }
             }
+
             ScrollView(&g_apps_scroll, body, .key = "appsgrid") {
-                Grid(cols, .spacing = 18) {
+                Grid(cols, .spacing = 10) {
                     for (int i = 0; i < g_all_n; i++) {
-                        VStack(.spacing = 8, .align = Center) {
-                            /* click launches (resolved in dock_resolve_drop);
-                             * drag pins into the dock */
-                            drag_icon(grid_to_item(i), DESK_ICON, 3, i);
-                            Text(g_all[i].label).caption();
+                        if (!app_matches(g_all[i].label, g_apps_q)) continue;
+                        VStack(.spacing = 9, .align = Center, .py = 8) {
+                            /* Big. An app icon is the thing you aim at and the
+                             * thing that tells you which app it is, and at 48px
+                             * -- the size a DESKTOP icon wants, which is what
+                             * this borrowed -- it was doing neither. */
+                            drag_icon(grid_to_item(i), 72, 3, i);
+                            Text(g_all[i].label).caption().color(t->text);
                         }
                     }
                 }
@@ -1006,8 +1057,15 @@ int main(int argc, char **argv, char **envp) {
          * keyboard, and draining keys at any other time would take them from
          * whichever app the user is actually typing into. */
         if (g_apps_open) {
-            for (int c; (c = embk_key_poll()) > 0; )
-                if (c == 27) { apps_set_open(0); break; }
+            for (int c; (c = embk_key_poll()) > 0; ) {
+                if (c == 27) { apps_set_open(0); break; }   /* Esc dismisses */
+                /* Everything else goes to the search field. The desktop has no
+                 * other text to type into, so there is nothing to arbitrate
+                 * between -- and typing straight into the search box, without
+                 * clicking it first, is most of why searching a launcher is
+                 * faster than looking through it. */
+                ui_input_char(c);
+            }
         }
 
         /* pointer: the compositor routes the desktop's content-local mouse to us */
