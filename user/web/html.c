@@ -317,6 +317,35 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
                 } else if (ieq(aname,"style") && !sty[0]) {
                     size_t c = vl < sizeof sty - 1 ? vl : sizeof sty - 1;
                     memcpy(sty, src + vs, c); sty[c] = 0;
+                } else if (ieq(aname,"bgcolor") || ieq(aname,"align") ||
+                           ieq(aname,"color")) {
+                    /* PRESENTATIONAL ATTRIBUTES, mapped into the node's style.
+                     *
+                     * These are not a separate mechanism -- the HTML standard
+                     * defines them as presentational hints that mean exactly
+                     * these CSS declarations -- so folding them into `style`
+                     * here costs no field on the node and no branch anywhere
+                     * downstream: the inline-style path already handles them.
+                     *
+                     * They matter because the old web is built out of them.
+                     * Hacker News paints its header with bgcolor="#ff6600" and
+                     * puts its rank column in align="right"; without these the
+                     * header was unreadable grey-on-dark and the ranks sat in
+                     * the wrong place. Neither is expressible in that page's
+                     * stylesheet, because that page does not have one for it.
+                     *
+                     * One deliberate inaccuracy: a real hint loses to any
+                     * author rule, and these ride the inline style, which
+                     * wins. A page whose CSS contradicts its own bgcolor is
+                     * rarer than a page that only has the bgcolor. */
+                    const char *prop = ieq(aname,"bgcolor") ? "background-color"
+                                     : ieq(aname,"color")   ? "color" : "text-align";
+                    size_t used = strlen(sty);
+                    if (vl && used + vl + 20 < sizeof sty) {
+                        int w = snprintf(sty + used, sizeof sty - used, "%s%s:%.*s",
+                                         used ? ";" : "", prop, (int)vl, src + vs);
+                        if (w < 0) sty[used] = 0;
+                    }
                 } else if (ieq(aname,"width") || ieq(aname,"height")) {
                     /* Kept because a stated size lets the layout RESERVE the
                      * space before the picture arrives -- without it every

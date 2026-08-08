@@ -2711,3 +2711,34 @@ unsigned-char rule index). These are what remain.
       fetch. That is not a rendering bug and the triage has to keep separating
       the two: acmqueue was 45 nodes of "enable JavaScript", not a parse
       failure.
+
+### Browser C6: looking at the pages instead of counting them
+
+The previous run proved every real site produced text runs. It could not prove
+any of them LOOKED right, because a run count says a word reached the screen
+and nothing about where. Rendering them to images found five defects in the
+first two pages looked at, all of which had been passing every check.
+
+Fixed: a table no longer inherits text-align (so <center> around a layout
+table centres the table, not its cells); link words carry no horizontal
+padding (they had 2px a side, setting linked text looser than the text beside
+it); whitespace-only text nodes between inline elements are a real space
+("tosh7 hours ago"), collapsed into the following word so a line never opens
+with one; bgcolor/align/color attributes map to CSS declarations; and a table
+cell paints its own background.
+
+Still open, from looking:
+- [ ] Only two pages have actually been LOOKED at (Hacker News, danluu). The
+      other fifteen have been rendered to images that nobody has opened. Do
+      that before assuming the list below is complete.
+- [ ] There is no visual regression check. The corpus asserts geometry through
+      EXPECT-X / EXPECT-ORDER, which caught none of the five above. A stored
+      reference image per corpus page, compared pixelwise, would -- and the
+      harness already renders one.
+- [ ] Presentational hints ride the INLINE style, so they beat author CSS
+      instead of losing to it. Correct for the common case (a page that has
+      the attribute and no rule) and wrong for a page whose stylesheet
+      contradicts its own bgcolor.
+- [ ] HN's rank column is align=right in the markup and now maps to CSS, but
+      table cells do not yet honour text-align for their own content in every
+      path -- worth checking against the real page.

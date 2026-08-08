@@ -90,7 +90,12 @@ static Color color_for(const struct vstyle *s) {
  * clickable on both halves. */
 static void emit_word(const char *w, const struct vstyle *s, const char *href) {
     if (href && g_on_link) {
-        if (Button(w).ghost().font(font_for(s)).py(0).px(2)
+        /* NO horizontal padding. The word already carries the space that
+         * followed it in the source, so 2px a side adds 4px between every pair
+         * of linked words -- text inside a link was set looser than the text
+         * beside it, and a headline made of links came out visibly gappy. The
+         * word's own box is hit area enough. */
+        if (Button(w).ghost().font(font_for(s)).py(EmZero).px(EmZero)
                 .color(color_for(s)).id(w).clicked()) {
             g_pending = href;
         }
@@ -100,6 +105,11 @@ static void emit_word(const char *w, const struct vstyle *s, const char *href) {
 }
 
 /* Emit a text run word by word into the surrounding Flow. */
+/* A whitespace-only text node was seen and is owed to the next word. Reset per
+ * inline run, so a run never opens with one. See the blank-text branch of
+ * emit_inline. */
+static int g_pending_space;
+
 static void emit_text(const char *txt, const struct vstyle *s, const char *href) {
     static char word[256];
     size_t n = 0;
@@ -129,7 +139,9 @@ static void emit_text(const char *txt, const struct vstyle *s, const char *href)
             /* trailing space unless the run ends here: the space is part of
              * the word box, so a following comma sits flush against it */
             snprintf(pool[pn], sizeof pool[0], "%s%s%s",
-                     (first && lead) ? " " : "", word, (*p || trail) ? " " : "");
+                     (first && (lead || g_pending_space)) ? " " : "", word,
+                     (*p || trail) ? " " : "");
+            if (first) g_pending_space = 0;
             first = 0;
             emit_word(pool[pn], s, href);
             pn++;
@@ -293,7 +305,32 @@ static void emit_inline(struct html_doc *d, int c, const struct vstyle *st,
      * guard, not a policy about how documents may be written. */
     if (depth > 24) return;
     if (d->nodes[c].kind == HTML_TEXT) {
-        if (d->nodes[c].text) emit_text(d->nodes[c].text, st, href);
+        if (!d->nodes[c].text) return;
+        /* A text node that is ONLY whitespace still separates the elements
+         * either side of it. emit_text builds words out of non-space runs, so
+         * it emits nothing at all for one -- and
+         *
+         *     <a>tosh</a> <span>7 hours ago</span>
+         *
+         * came out as "tosh7 hours ago". It had been masked by 2px of padding
+         * on every link word, so removing that padding is what made it
+         * visible: one bug hiding another, and the page looked slightly
+         * wrong-but-plausible the whole time.
+         *
+         * Only BETWEEN things, and only in an inline run. A blank text node
+         * with nothing beside it is layout whitespace in the source, and
+         * emitting a space for it would open a line box where the document
+         * has none. */
+        if (is_blank_text(d, c)) {
+            /* Remember it; do not emit it. The space belongs to the NEXT word,
+             * which is what makes it disappear when there is no next word --
+             * whitespace at the start or end of a line box is collapsed away
+             * in CSS, and emitting it as its own leaf put a stray space at the
+             * top of nearly every real page. It also costs no extra box. */
+            g_pending_space = 1;
+            return;
+        }
+        emit_text(d->nodes[c].text, st, href);
         return;
     }
     struct vstyle s;
@@ -437,6 +474,7 @@ static void render_inline_run(struct html_doc *d, int from, int to,
      * that move. */
     EmAlign j = parent->align == VA_CENTER ? Center
               : parent->align == VA_RIGHT  ? Trailing : Leading;
+    g_pending_space = 0;          /* a line never opens with a space */
     Flow(.spacing = 0, .justify = j) {
         for (int c = from; c >= 0 && c != to; c = d->nodes[c].next_sibling)
             emit_inline(d, c, parent, href, 0);
@@ -729,7 +767,17 @@ static int render_table(struct html_doc *d, int node, const struct vstyle *st,
                 /* A header row needs to READ as one, and a row separator is
                  * what stops a dense table becoming a wall. Both come from the
                  * theme so the table follows the desktop into dark mode. */
-                if (cs.bold) {
+                /* The cell's OWN background first -- an author who painted
+                 * this cell outranks the theme's idea of a header row. It is
+                 * also how the old web colours anything at all: bgcolor= maps
+                 * to background-color (see html.c), and without this Hacker
+                 * News drew its orange header bar as nothing, leaving grey
+                 * text on the page background. */
+                if (cs.bg) {
+                    struct paint cp = { 0 };
+                    cp.kind = PAINT_SOLID; cp.solid = argb(cs.bg);
+                    ui_set_paint(cp);
+                } else if (cs.bold) {
                     struct paint hp = { 0 };
                     hp.kind = PAINT_SOLID; hp.solid = t->surface_alt;
                     ui_set_paint(hp);

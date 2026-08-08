@@ -1,0 +1,47 @@
+<html><head><title>Inline text metrics</title><style>
+p { color: #d0d0d8 }
+a { color: #58a6ff }
+</style></head><body>
+<!-- Three defects that only showed up when a real page was rendered to an
+     IMAGE rather than counted as text runs. Each one made the page look
+     slightly wrong-but-plausible, which is the kind that survives. -->
+
+<!-- 1. A link's words must set exactly like plain words. They used to carry
+        2px of padding a side, so a headline made of links came out gappy. -->
+<p><a href="/x">LINKONE LINKTWO LINKTHREE</a> PLAINONE PLAINTWO PLAINTHREE</p>
+
+<!-- 2. A whitespace-only text node BETWEEN two inline elements is a real
+        space. Dropping it welded them together: "tosh7 hours ago". -->
+<p><a href="/a">JOINA</a> <a href="/b">JOINB</a> <b>JOINC</b> <i>JOIND</i></p>
+
+<!-- 3. A table resets inherited text-align, so <center> around a layout
+        table centres the TABLE and not the text in its cells -- which is how
+        half the old web is built. -->
+<center>
+<table border="0"><tr><td>CELLTEXT stays left</td><td>SECONDCELL</td></tr></table>
+</center>
+<p>AFTERTABLE</p>
+
+<!-- The words are all present... -->
+<!-- EXPECT-TEXT: LINKTWO -->
+<!-- EXPECT-TEXT: JOINB -->
+<!-- EXPECT-TEXT: CELLTEXT -->
+<!-- ...the linked words start at the same left edge as the block, so no
+     stray padding crept in front of the first one. -->
+<!-- EXPECT-X: LINKONE 20 26 -->
+<!-- ...and the cell's text is at the left edge too, not centred in the page. -->
+<!-- EXPECT-X: CELLTEXT 20 45 -->
+<!-- A line never OPENS with a space. The inter-element space belongs to the
+     word after it, so when there is no word after it -- the start of a line --
+     it collapses away, as CSS says it must. Emitting it as its own box put a
+     stray space at the top of nearly every real page, which showed up as the
+     selection no longer starting where the document does. JOINA must begin at
+     the same left edge as a line with no leading space at all. -->
+<!-- EXPECT-X: JOINA 20 26 -->
+<!-- Every one of these lines is ONE line box: if a word were welded to its
+     neighbour or pushed apart, the line would still be one row, so the
+     geometry checks above are what actually pin it. -->
+<!-- EXPECT-ORDER: JOINA JOINB -->
+<!-- EXPECT-ORDER: JOINC JOIND -->
+<!-- EXPECT-BELOW: AFTERTABLE CELLTEXT -->
+</body></html>

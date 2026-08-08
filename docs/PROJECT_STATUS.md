@@ -1200,6 +1200,26 @@ tree through the same relink.
 
 What is left is in `TODO.md` under its own heading.
 
+**Then the pages were LOOKED at, and that found five more.** Every check up to
+this point counted text runs, which says a word reached the screen and nothing
+about where it landed -- so the first real page rendered to an image came out
+as a column of centred headlines with its rank numbers stranded at the left,
+having passed everything. A table was inheriting text-align, so <center> around
+a layout table -- how half the old web is built -- centred every cell instead of
+centring the table. Link words carried 2px of padding a side, setting linked
+text looser than the text beside it. Removing that padding then exposed what it
+had been hiding: a whitespace-only text node between two inline elements was
+being dropped entirely, so "tosh 7 hours ago" read "tosh7 hours ago" -- one bug
+concealing another, with the page looking wrong-but-plausible throughout. The
+space is now owed to the following word, which is also what makes it collapse
+at the start of a line the way CSS says it must. And bgcolor/align/color are
+mapped to the CSS they are defined to mean, so the old web's colours arrive:
+Hacker News paints its header with an attribute, not a stylesheet.
+
+One of these was an API defect rather than a browser one. EmProps uses 0 to
+mean "unset, take the theme's value", which left no way to ask for zero -- so
+`.px(0)` on a link word silently got 16px. `EmZero` says it explicitly.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

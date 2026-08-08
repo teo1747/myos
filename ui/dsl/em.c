@@ -78,6 +78,10 @@ static float g_text_scale = 1.0f;
 void em_set_text_scale(float s) { g_text_scale = (s > 0.05f && s < 20.0f) ? s : 1.0f; }
 float em_text_scale(void) { return g_text_scale; }
 
+/* Resolve a length prop: 0 means "unset, use the default", EmZero means an
+ * explicit zero. See EmProps. */
+float em_len(float v, float dflt) { return v < 0.0f ? 0.0f : (v > 0.0f ? v : dflt); }
+
 static void em_resolve_font(EmFont role, uint32_t *fh, float *sz) {
     const struct ui_theme *t = TH;
     switch (role) {
@@ -750,8 +754,8 @@ static bool em_button_impl(const char *s, EmProps p, bool *out_hov) {
      * and since the button's padding IS the row's height, a caller that could
      * not change it could not make a compact list at all, however tight the
      * container asked to be. */
-    { float pv = p.py > 0 ? p.py : (p.padding > 0 ? p.padding : (float)(t->sp2 + 1));
-      float ph = p.px > 0 ? p.px : (p.padding > 0 ? p.padding : (float)t->sp4);
+    { float pv = em_len(p.py, p.padding > 0 ? p.padding : (float)(t->sp2 + 1));
+      float ph = em_len(p.px, p.padding > 0 ? p.padding : (float)t->sp4);
       ui_set_padding(pv, ph, pv, ph); }
     /* And so is alignment. .leading() sets the ALIGN prop, but a button's
      * label sits on the MAIN axis, which justify controls -- so a caller

@@ -71,7 +71,24 @@ void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {
      * docs/BROWSER.md rightly refuses); it is how a reference page states a
      * grid of facts, and a documentation browser that cannot show one is
      * missing the format its own subject matter is written in. --- */
-    else if (ieq(tag,"table")) { o->display=VD_TABLE; o->margin_top=10; o->margin_bottom=14; }
+    else if (ieq(tag,"table")) {
+        o->display=VD_TABLE; o->margin_top=10; o->margin_bottom=14;
+        /* A TABLE RESETS INHERITED text-align.
+         *
+         * Half the old web is a layout table wrapped in <center>, and that is
+         * not a mistake anyone made -- it centres the table on the page and
+         * leaves the text in its cells alone, which is what browsers do and
+         * what those pages were written against. Letting the alignment inherit
+         * instead centres every cell: Hacker News came out as a column of
+         * centred headlines with its rank numbers stranded at the far left,
+         * and it was the first thing wrong with the first real page rendered
+         * to an image rather than counted as text runs.
+         *
+         * A cell or a rule that states its own alignment still wins -- this is
+         * the inherited value being dropped at the table boundary, not an
+         * override. */
+        o->align = VA_LEFT;
+    }
     else if (ieq(tag,"tr"))    { o->display=VD_ROW; }
     else if (ieq(tag,"th"))    { o->display=VD_CELL; o->bold=1; }
     else if (ieq(tag,"td"))    { o->display=VD_CELL; }

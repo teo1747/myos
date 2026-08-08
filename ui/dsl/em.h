@@ -66,6 +66,10 @@ typedef enum {                 /* .tone on Badge / Tag / Banner */
 /* A zero field means "not set"; the view falls back to a sensible default.   */
 /* ------------------------------------------------------------------------- */
 
+/* An EXPLICIT zero for a length prop, where a plain 0 means "unset -- use
+ * the theme's value". See the note inside EmProps. */
+#define EmZero (-1.0f)
+
 typedef struct {
     /* layout */
     float spacing;                       /* gap between children */
@@ -95,6 +99,18 @@ typedef struct {
     /* variants */
     EmStyle style;
     EmTone  tone;
+
+    /* Sizes and spacings below use 0 to mean "unset -- take the theme's
+     * value", which is what makes designated initialisers pleasant to write
+     * and leaves no way at all to ask for ZERO. Pass EmZero when zero is what
+     * you mean.
+     *
+     * It is not a hypothetical gap: a browser sets its link words with no
+     * horizontal padding, because the word already carries the space that
+     * followed it in the source. Asking for .px(0) silently got the theme's
+     * 16px instead and every linked headline came out visibly gappy -- which
+     * looked like a text-metrics bug and was an API that could only override
+     * upwards. */
 
     /* RECONCILIATION KEY. Optional, and only matters for a container whose
      * PRESENCE varies -- a bar that appears when you open it, a row that shows
@@ -634,6 +650,7 @@ void em_set_post_layout_hook(void (*fn)(void));
  * global setting -- so a browser can scale the document and leave its own
  * chrome alone, which is the difference between page zoom and UI zoom. 1.0 is
  * off; set it back when the content ends. */
+float em_len(float v, float dflt);
 void  em_set_text_scale(float s);
 float em_text_scale(void);
 
