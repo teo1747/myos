@@ -2799,3 +2799,27 @@ overflow says so:
 Vellum's BSS is 28MB as a result, up from 20MB. The remaining known overflow is
 github, which ships 6.9MB of CSS across 41 sheets; that bound is reported and
 not worth chasing.
+
+### C7: positioning and stacking
+
+- [x] ~~An absolutely positioned box is placed against its IMMEDIATE PARENT~~ --
+      fixed. CSS places it against the nearest POSITIONED ancestor, which is
+      the entire reason a page writes `position: relative` on a wrapper with no
+      offsets of its own. Every dropdown, tooltip and badge on the web is built
+      that way, and python.org's menus were landing on top of its article.
+      `position: fixed` now lands against the root (the viewport) as a
+      consequence, which is what fixed means.
+- [ ] Z-INDEX is still not honoured; paint order is document order within a
+      layer. Worth saying what it would and would not fix: the overlap left on
+      python.org is menus a real browser HIDES until hover, not menus painted
+      in the wrong order, so z-index is not what that page is waiting for. The
+      scene supports layers 0..3 and CSS z-index is an arbitrary integer, so a
+      faithful mapping needs a stacking-context pass, and the page must not be
+      able to paint over the browser's own chrome.
+- [ ] `position: sticky` is treated as `relative`, so a sticky header scrolls
+      away instead of pinning. 68 uses across 6 sites.
+- [ ] Negative z-index (paint BEHIND the parent's background) has nowhere to go
+      in a layer scheme that starts at the flow.
+- [ ] Wikipedia's article body is still squeezed into a narrow column and its
+      header overlaps itself, at 206ms a frame with the full stylesheet in.
+      Not yet diagnosed; positioning was not the whole of it.

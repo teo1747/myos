@@ -40,6 +40,10 @@ void ui_set_overlay(bool on);   /* fill parent, out of flow (modal/popover layer
  * 1 right, 2 bottom, 3 left -- because 0 is an ordinary offset and has to be
  * distinguishable from unset. `relative` keeps the box IN flow and offsets it
  * afterwards, so its siblings never notice. */
+/* Mark a box as ESTABLISHING a containing block for positioned descendants --
+ * anything whose CSS `position` is not static. See layout.h. */
+void ui_set_pos_container(int on);
+
 void ui_set_insets(float top, float right, float bottom, float left,
                    unsigned set, bool relative);
 void ui_set_layer(int l);       /* z-layer 0..3: elevated paints above + hits first */

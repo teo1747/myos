@@ -8,6 +8,18 @@
 .side   { width: 240px; background: #303a50 }
 .rest   { width: calc(100% - 240px); background: #3a3050 }
 .row    { display: flex }
+
+/* THE CONTAINING BLOCK. An absolutely positioned box is placed against the
+   nearest POSITIONED ancestor, not against whatever happens to contain it --
+   which is the entire reason a page writes `position: relative` on a wrapper
+   with no offsets of its own. Placing against the immediate parent instead is
+   not a near miss: python.org's dropdown menus landed on top of its article.
+
+   This page had a position section that passed the whole time, because it only
+   ever placed a box inside its direct parent. */
+.anchor { position: relative; margin-left: 120px; width: 300px; height: 90px; background: #223 }
+.middle { margin-left: 70px; width: 150px; height: 40px; background: #262636 }
+.pinned { position: absolute; left: 10px; top: 8px; background: #303048 }
 </style></head><body>
 
 <div class="host">
@@ -39,4 +51,10 @@
 <!-- calc(100% - 240px): the sidebar is 240 wide, so the rest starts at 22+240 -->
 <!-- EXPECT-X: SIDEBAR 22 24 -->
 <!-- EXPECT-X: CALCREST 260 266 -->
+<div class="anchor"><div class="middle"><div class="pinned">NESTEDABS</div></div></div>
+
+<!-- .anchor starts at the page padding + 120. The pinned box is two levels
+     down, inside a .middle that is itself 70px further right -- and it must
+     ignore that, because .middle is not positioned. left:10 from .anchor. -->
+<!-- EXPECT-X: NESTEDABS 148 156 -->
 </body></html>

@@ -131,13 +131,16 @@ int css_sel_match(const struct css_sel *sel, struct html_doc *doc, int node);
  * after is simply not applied, so the cascade the author wrote is not the one
  * that runs.
  *
- * 4096 covers sixteen of the seventeen. The seventeenth is github, which ships
- * 6.9MB of CSS and 40942 rules; that is not a cap to chase, and hitting one is
- * still reported rather than silent (css_sheet.truncated).
+ * Re-counted once the CSS BUFFERS were large enough to hold whole sheets --
+ * which changed the answer, because pages that had been quietly losing a
+ * stylesheet were being measured short. python.org needs 4314 and 4096 missed
+ * it. The seventeenth site is github, which ships 6.9MB of CSS and 40939
+ * rules; that is not a cap to chase, and hitting one is still reported rather
+ * than silent (css_sheet.truncated).
  *
  * The bound exists because a page can be hostile -- so it stays a bound. It is
  * just no longer a bound that ordinary pages trip over. */
-#define CSS_MAX_RULES 4096
+#define CSS_MAX_RULES 8192
 
 struct css_rule {
     struct css_sel sel;
@@ -168,6 +171,10 @@ struct css_rule {
  * sorted by (specificity, document order) and applied weakest-first. */
 #define CSS_BUCKETS 1024        /* power of two; masked, not divided */
 
+/* NOT A STACK OBJECT. A sheet holds CSS_MAX_RULES rules inline and is several
+ * megabytes; `struct css_sheet sh;` as a local is a segfault, and it was one
+ * the moment the cap went from 4096 to 8192 -- html-test crashed in the middle
+ * of the cascade tests. Declare it static, or heap it. */
 struct css_sheet {
     struct css_rule rules[CSS_MAX_RULES];
     int  n;

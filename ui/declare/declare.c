@@ -580,6 +580,12 @@ void ui_set_grid_tracks(const unsigned char *mode, const float *val, int n) {
     ln->dirty = true;
 }
 
+void ui_set_pos_container(int on) {
+    struct instance *b = cur_box(); if (!b) return;
+    struct layout_node *ln = layout_resolve(g_la, b->layout_node);
+    if (ln) { ln->pos_container = on ? 1 : 0; ln->dirty = true; }
+}
+
 void ui_set_grid_place(int row, int col, int rowspan, int colspan) {
     struct instance *b = cur_box(); if (!b) return;
     struct layout_node *ln = layout_resolve(g_la, b->layout_node);

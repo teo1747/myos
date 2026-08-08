@@ -105,6 +105,11 @@ struct layout_node {
     float ins_top, ins_right, ins_bottom, ins_left;
     unsigned char ins_set;             /* bit 0 top, 1 right, 2 bottom, 3 left */
     unsigned char relative;            /* offsets apply, but stay in flow      */
+    /* This box ESTABLISHES a containing block for positioned descendants --
+     * anything whose `position` is not static. An absolutely positioned box is
+     * placed against the nearest such ancestor, not against whatever happens
+     * to contain it. */
+    unsigned char pos_container;
 
     struct layout_size width, height;  /* own sizing, per axis */
 

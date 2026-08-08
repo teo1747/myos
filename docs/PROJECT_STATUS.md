@@ -1299,6 +1299,21 @@ Every arena a real page can fill is now sized from a COUNT taken across the
 seventeen sites, and every one that can overflow says so. See TODO.md for the
 numbers; the browser's BSS is 28MB as a result.
 
+**C7, positioning: an absolutely positioned box was placed against its parent
+rather than against the nearest POSITIONED ancestor.** That is not a near miss.
+`position: relative` on a wrapper with no offsets of its own exists precisely
+so a descendant several levels down can be placed against IT -- every dropdown,
+tooltip and badge on the web is built that way -- and placing against whatever
+happens to contain the box instead is how python.org's menus ended up sprayed
+across its article. The containing block is now tracked through `arrange` and
+saved/restored per subtree, the same discipline the child pool uses, and
+`position: fixed` lands against the root as a consequence, which is what fixed
+means. python.org now renders as python.org: notice bar, nav, hero, four
+columns.
+
+The corpus had a `position.html` that passed the entire time, because it only
+ever placed a box inside its direct parent. It covers the nested case now.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

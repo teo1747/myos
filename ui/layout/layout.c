@@ -768,10 +768,31 @@ void layout_reset_children_dropped(void) { g_kid_dropped = 0; }
 static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
                           struct layout_handle h, float W, float H);
 
+static float g_cb_x, g_cb_y, g_cb_w, g_cb_h;
+
 static void arrange(struct layout_arena *la, struct scene_arena *sa,
                     struct layout_handle h, float W, float H) {
     int save = g_kid_top;
+    /* Carry the containing block INTO this node's coordinate space, and take
+     * it over if this node is itself positioned. Saved and restored around the
+     * subtree, the same way the child pool is -- arrange is depth-first, so
+     * that is all the bookkeeping either of them needs. */
+    float sx = g_cb_x, sy = g_cb_y, sw = g_cb_w, sh = g_cb_h;
+    struct layout_node *n = layout_resolve(la, h);
+    if (n) {
+        if (n->pos_container || sw <= 0) {
+            g_cb_x = n->padding_left;
+            g_cb_y = n->padding_top;
+            g_cb_w = W - n->padding_left - n->padding_right;
+            g_cb_h = H - n->padding_top - n->padding_bottom;
+        } else {
+            /* the ancestor's box, seen from here */
+            g_cb_x -= n->resolved_x;
+            g_cb_y -= n->resolved_y;
+        }
+    }
     arrange_inner(la, sa, h, W, H);
+    g_cb_x = sx; g_cb_y = sy; g_cb_w = sw; g_cb_h = sh;
     g_kid_top = save;                 /* pop, whichever way the callee returned */
 }
 
@@ -793,12 +814,25 @@ static float stated_px(const struct layout_size *s, float avail, int *has) {
  * positioning, in the shape this engine can express. A stated edge pins that
  * side; both edges on an axis give the size; neither leaves the box at the
  * content origin, sized as the caller asked. */
+/* THE CONTAINING BLOCK for absolutely positioned boxes: the content box of the
+ * nearest ancestor that is itself positioned, expressed in the coordinate
+ * space of the node being arranged right now.
+ *
+ * It used to be the immediate parent, always -- which is not what CSS says and
+ * is not a near miss. `position: relative` on a wrapper exists precisely so a
+ * descendant several levels down can be placed against IT, and every dropdown
+ * menu, tooltip and badge on the web is built that way. python.org's menus
+ * landed on top of its article for exactly this reason.
+ *
+ * Tracked as a saved/restored global rather than threaded through arrange():
+ * arrange is strictly depth-first, so a save on entry and a restore on exit is
+ * the same discipline the child pool already uses. */
 static void place_positioned(struct layout_arena *la, struct scene_arena *sa,
                              struct layout_handle kh, struct layout_node *k,
                              struct layout_node *n, float W, float H) {
-    float cx = n->padding_left, cy = n->padding_top;
-    float cw = W - n->padding_left - n->padding_right;
-    float ch = H - n->padding_top - n->padding_bottom;
+    (void)n; (void)W; (void)H;
+    float cx = g_cb_x, cy = g_cb_y;
+    float cw = g_cb_w, ch = g_cb_h;
     int L = (k->ins_set & 8) != 0, R = (k->ins_set & 2) != 0;
     int T = (k->ins_set & 1) != 0, B = (k->ins_set & 4) != 0;
 
@@ -1276,5 +1310,8 @@ void layout_run(struct layout_arena *la, struct scene_arena *sa,
     measure_intrinsic(la, sa, root);
     r = layout_resolve(la, root);
     r->resolved_x = 0; r->resolved_y = 0;
+    /* No containing block yet: the root establishes one, which is the initial
+     * containing block CSS calls the viewport. */
+    g_cb_x = g_cb_y = 0; g_cb_w = 0; g_cb_h = 0;
     arrange(la, sa, root, W, H);
 }

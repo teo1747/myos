@@ -1081,6 +1081,10 @@ static void render_block_inner(struct html_doc *d, int node, const struct vstyle
     int out_of_flow = (s->position == VP_ABSOLUTE || s->position == VP_FIXED);
     open_box(s, bp);
     if (out_of_flow) ui_set_overlay(true);
+    /* Any non-static box is a containing block for its positioned descendants
+     * -- which is the entire reason a page writes `position: relative` on a
+     * wrapper that has no offsets of its own. */
+    if (s->position != VP_STATIC) ui_set_pos_container(1);
     if (s->clip) ui_set_clip_children(true);
     if (s->position != VP_STATIC && (s->ins_set || out_of_flow))
         ui_set_insets((float)s->ins_top, (float)s->ins_right,

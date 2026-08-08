@@ -357,7 +357,9 @@ static void t14_selectors(void) {
 
 static void t15_cascade(void) {
     printf("T15 the cascade resolves by specificity, then order:\n");
-    struct css_sheet sh;
+    /* STATIC: a sheet holds CSS_MAX_RULES rules and is megabytes now, which
+     * is a segfault the moment it goes on the stack. */
+    static struct css_sheet sh;
     struct vstyle v;
 
     /* specificity beats document order */
@@ -402,7 +404,9 @@ static void t15_cascade(void) {
 
 static void t16_origin_order(void) {
     printf("T16 origin order: user-agent < author < inline:\n");
-    struct css_sheet sh;
+    /* STATIC: a sheet holds CSS_MAX_RULES rules and is megabytes now, which
+     * is a segfault the moment it goes on the stack. */
+    static struct css_sheet sh;
     struct vstyle root, v;
     vstyle_root(&root);
 
@@ -437,7 +441,9 @@ static void t17_bounded(void) {
     size_t k = 0;
     for (int i = 0; i < CSS_MAX_RULES + 32 && k < sizeof big - 40; i++)
         k += (size_t)snprintf(big + k, sizeof big - k, ".c%d { color: red } ", i);
-    struct css_sheet sh;
+    /* STATIC: a sheet holds CSS_MAX_RULES rules and is megabytes now, which
+     * is a segfault the moment it goes on the stack. */
+    static struct css_sheet sh;
     css_sheet_parse(&sh, big, k);
     CHECK(sh.n <= CSS_MAX_RULES, "never exceeds the rule table");
     CHECK(sh.truncated == 1, "and truncation is REPORTED, not silent");
@@ -476,7 +482,7 @@ static void t17_bounded(void) {
         for (int i = 0; i < CSS_MAX_RULES - 1 && k < sizeof many - 64; i++)
             k += (size_t)snprintf(many + k, sizeof many - k, ".none%d { color: #010101 } ", i);
         k += (size_t)snprintf(many + k, sizeof many - k, "p { color: #20c040 } ");
-        struct css_sheet big2;
+        static struct css_sheet big2;
         css_sheet_parse(&big2, many, k);
         CHECK(big2.n == CSS_MAX_RULES && !big2.truncated, "a full sheet, not truncated");
 
@@ -529,7 +535,9 @@ static void t17b_image_sizing(void) {
           "an absurd width is refused rather than stored");
 
     /* CSS outranks the attributes, which is the cascade doing its job */
-    struct css_sheet sh; struct vstyle v, root;
+    /* STATIC: a sheet holds CSS_MAX_RULES rules and is megabytes now, which
+     * is a segfault the moment it goes on the stack. */
+    static struct css_sheet sh; struct vstyle v, root;
     vstyle_root(&root);
     static const char *css = "img { width: 100px; height: 50px }";
     css_sheet_parse(&sh, css, strlen(css));
