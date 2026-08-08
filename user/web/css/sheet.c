@@ -51,6 +51,7 @@ void css_sheet_parse(struct css_sheet *sheet, const char *text, size_t len) {
      * does not match is a corner this does not chase.) */
     css_vars_collect(text, len);
     css_sheet_parse_into(sheet, text, len, 0);
+    css_sheet_index(sheet);
 }
 
 static unsigned short css_sheet_parse_into(struct css_sheet *sheet, const char *text,
@@ -132,6 +133,58 @@ static unsigned short css_sheet_parse_into(struct css_sheet *sheet, const char *
     return order;
 }
 
+/* --- the selector index (see css.h) --------------------------------------- */
+
+/* Case-insensitive FNV-1a over one name, salted by which KIND of name it is so
+ * a class "main" and a tag "main" cannot land in the same chain. */
+static unsigned key_hash(char kind, const char *name, size_t n) {
+    unsigned h = 2166136261u;
+    h ^= (unsigned char)kind; h *= 16777619u;
+    for (size_t i = 0; i < n && name[i]; i++) {
+        unsigned char c = (unsigned char)name[i];
+        if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+        h ^= c; h *= 16777619u;
+    }
+    return h & (CSS_BUCKETS - 1);
+}
+
+/* File every rule under its subject's most selective name. Idempotent, and
+ * cheap enough to run once per parse rather than lazily -- the alternative is
+ * a flag every caller has to remember to honour. */
+void css_sheet_index(struct css_sheet *sheet) {
+    if (!sheet) return;
+    memset(sheet->bucket, 0, sizeof sheet->bucket);
+    memset(sheet->next, 0, sizeof sheet->next);
+    sheet->keyless = 0;
+    /* BACKWARDS, so each chain comes out in ascending rule order. It does not
+     * affect correctness -- the cascade sorts -- but it keeps the common case
+     * (a handful of matches already in document order) cheap for the insertion
+     * sort below. */
+    for (int i = sheet->n - 1; i >= 0; i--) {
+        const struct css_sel_part *subj = &sheet->rules[i].sel.part[sheet->rules[i].sel.n - 1];
+        unsigned short *head;
+        if (subj->id[0])         head = &sheet->bucket[key_hash('#', subj->id, sizeof subj->id)];
+        else if (subj->klass[0]) head = &sheet->bucket[key_hash('.', subj->klass, sizeof subj->klass)];
+        else if (subj->tag[0])   head = &sheet->bucket[key_hash('t', subj->tag, sizeof subj->tag)];
+        else                     head = &sheet->keyless;
+        sheet->next[i] = *head;
+        *head = (unsigned short)(i + 1);
+    }
+    sheet->indexed = 1;
+}
+
+/* Walk one chain, keeping the rules that really match. */
+static int gather_chain(const struct css_sheet *sheet, unsigned short head,
+                        struct html_doc *doc, int node,
+                        unsigned short *idx, int m) {
+    for (unsigned short e = head; e; e = sheet->next[e - 1]) {
+        int i = e - 1;
+        if (m >= CSS_MAX_RULES) break;
+        if (css_sel_match(&sheet->rules[i].sel, doc, node)) idx[m++] = (unsigned short)i;
+    }
+    return m;
+}
+
 void css_sheet_apply(const struct css_sheet *sheet, struct html_doc *doc,
                      int node, struct vstyle *out) {
     if (!sheet || !doc || !out || node < 0 || node >= doc->n) return;
@@ -150,8 +203,30 @@ void css_sheet_apply(const struct css_sheet *sheet, struct html_doc *doc,
      * per element per frame, and it does not recurse. */
     static unsigned short idx[CSS_MAX_RULES];
     int m = 0;
-    for (int i = 0; i < sheet->n && m < CSS_MAX_RULES; i++)
-        if (css_sel_match(&sheet->rules[i].sel, doc, node)) idx[m++] = (unsigned short)i;
+    if (!sheet->indexed) {
+        /* An unindexed sheet still has to give the right answer -- a caller
+         * that builds one by hand must not silently get no styling. */
+        for (int i = 0; i < sheet->n && m < CSS_MAX_RULES; i++)
+            if (css_sel_match(&sheet->rules[i].sel, doc, node)) idx[m++] = (unsigned short)i;
+    } else {
+        const struct html_node *e = &doc->nodes[node];
+        m = gather_chain(sheet, sheet->keyless, doc, node, idx, m);
+        if (e->tag[0])
+            m = gather_chain(sheet, sheet->bucket[key_hash('t', e->tag, sizeof e->tag)],
+                             doc, node, idx, m);
+        if (e->id)
+            m = gather_chain(sheet, sheet->bucket[key_hash('#', e->id, strlen(e->id))],
+                             doc, node, idx, m);
+        /* class="a b c" -- one bucket per name the element actually carries */
+        for (const char *p = e->klass; p && *p; ) {
+            while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == '\f') p++;
+            const char *b = p;
+            while (*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r' && *p != '\f') p++;
+            if (p > b)
+                m = gather_chain(sheet, sheet->bucket[key_hash('.', b, (size_t)(p - b))],
+                                 doc, node, idx, m);
+        }
+    }
     if (!m) return;
 
     /* insertion sort by (specificity, document order) -- ascending, so the

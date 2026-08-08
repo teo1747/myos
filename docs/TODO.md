@@ -2669,14 +2669,22 @@ segfault, pseudo-elements matching real elements, display:table dropping its
 subtree, over-long selectors applying to an ancestor, and the cascade's
 unsigned-char rule index). These are what remain.
 
-- [ ] STYLE RESOLUTION IS O(rules x elements) AND IT NOW HURTS. Every element
-      tests every rule. With the rule cap raised to 4096 to fit real sheets,
-      one build+layout pass on the HOST costs 315ms for Wikipedia, 194ms for
-      bbc.com, 104ms for python.org -- against ~4ms for a small page. Under TCG
-      on the metal that is seconds per frame. The standard fix is the right
-      one: index rules by their RIGHTMOST simple selector (id, then class, then
-      tag, then a universal bucket) so an element only tests candidates. Expect
-      10-50x. This is the single biggest thing left in the browser.
+- [x] ~~STYLE RESOLUTION IS O(rules x elements)~~ -- DONE, plus two costs that
+      were bigger and were not where anyone would have guessed. Per pass, on
+      the host: Wikipedia 315 -> 88ms, bbc 194 -> 24, python.org 104 -> 12,
+      rust-lang 56 -> 2.4, mdn 67 -> 12.5. Three separate fixes, each measured:
+      the selector index (rules filed by their subject's most selective name);
+      a no-op guard in the reconciler's relink, which had been unlinking every
+      child every frame by walking the parent's list to find its predecessor
+      (O(N^2) per parent -- 2000 sibling divs went 58.7 -> 5.7ms); and a
+      per-pass memo on computed style, because the renderer asked for the same
+      element's style from sixteen call sites and was running the whole cascade
+      each time.
+- [ ] Wikipedia is still the outlier at 88ms a pass, and it is now BUILD, not
+      style and not layout (78ms build, 9ms layout). It is also the only page
+      that fills the 8192-node arena. Worth a profile with something better
+      than gprof, whose call counts on an inlined -O2 build were wrong by two
+      orders of magnitude and sent this chase down a wrong path once already.
 - [ ] The DOM arena (8192 nodes) truncates Wikipedia and bbc.com. The string
       arena (256KB) truncates bbc.com first -- both are reported as
       "TRUNCATED" without saying which ran out, which cost time to work out.

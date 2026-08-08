@@ -400,6 +400,26 @@ int main(int argc, char **argv) {
      * renderer does, and reports every subtree that gets dropped -- so the
      * question becomes a lookup. Shallowest first: the one nearest the root is
      * the one that matters. */
+    if (getenv("BUCKETS")) {
+        int keyless = 0, byid = 0, bycls = 0, bytag = 0;
+        for (int i = 0; i < g_sheet.n; i++) {
+            const struct css_sel_part *j =
+                &g_sheet.rules[i].sel.part[g_sheet.rules[i].sel.n - 1];
+            if (j->id[0]) byid++;
+            else if (j->klass[0]) bycls++;
+            else if (j->tag[0]) bytag++;
+            else {
+                if (keyless < 6 && g_sheet.rules[i].decls) {
+                    const char *d = g_sheet.rules[i].decls;
+                    printf("KEYLESS| rule %d\n  ...before: %.110s\n  decls: %.70s\n",
+                           i, d - 110, d);
+                }
+                keyless++;
+            }
+        }
+        printf("BUCKETS| %d rules: id=%d class=%d tag=%d KEYLESS=%d\n",
+               g_sheet.n, byid, bycls, bytag, keyless);
+    }
     if (getenv("HIDDEN")) {
         struct vstyle rs; vstyle_root(&rs);
         dump_hidden(&g_doc, g_root, &rs, 0);
@@ -432,15 +452,26 @@ int main(int argc, char **argv) {
         struct timespec t0, t1;
         int N = 60;
         clock_gettime(CLOCK_MONOTONIC, &t0);
+        /* BUILD and LAYOUT timed apart. One number for both says a page is
+         * slow; two say which half to go and look at, and they have been
+         * different halves on different pages. */
+        double build_ms = 0, layout_ms = 0;
         for (int i = 0; i < N; i++) {
+            struct timespec a, b, c;
             g_scroll = (float)(i * 17 % 300);
+            clock_gettime(CLOCK_MONOTONIC, &a);
             ui_frame_begin(); em_new_frame(); app(); em_flush(); ui_frame_end();
+            clock_gettime(CLOCK_MONOTONIC, &b);
             ui_run_layout((float)W, (float)H);
+            clock_gettime(CLOCK_MONOTONIC, &c);
+            build_ms  += (double)(b.tv_sec - a.tv_sec) * 1e3 + (double)(b.tv_nsec - a.tv_nsec) / 1e6;
+            layout_ms += (double)(c.tv_sec - b.tv_sec) * 1e3 + (double)(c.tv_nsec - b.tv_nsec) / 1e6;
         }
         clock_gettime(CLOCK_MONOTONIC, &t1);
         double ms = ((double)(t1.tv_sec - t0.tv_sec) * 1e3 +
                      (double)(t1.tv_nsec - t0.tv_nsec) / 1e6) / N;
-        printf("\n--- scroll cost: %.2f ms per build+layout pass (host) ---\n", ms);
+        printf("\n--- scroll cost: %.2f ms per build+layout pass (host)"
+               "  [build %.2f, layout %.2f] ---\n", ms, build_ms / N, layout_ms / N);
     }
 
     /* --- scroll-blit correctness: an INCREMENTAL scroll frame must be pixel-

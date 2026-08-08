@@ -1,0 +1,35 @@
+<html><head><title>Cascade: index and memo</title><style>
+/* The selector index files each rule under its subject's most selective name,
+   so an element only tests rules that could match it. These four exercise
+   every bucket -- id, class, tag, and the keyless chain -- against elements
+   that must and must not match, so a broken bucket shows up as a wrong colour
+   rather than as a page that merely got slower. */
+#byid       { color: #e05050 }
+.bycls      { color: #50c080 }
+strong      { color: #d0a040 }
+* > .starred { color: #8060e0 }
+
+/* Same name in two namespaces: a class "main" and a tag "main" must not share
+   a chain, which is why the hash is salted by kind. */
+.main       { color: #40a0d0 }
+main        { color: #a04070 }
+</style></head><body>
+<p id="byid">IDTEXT</p>
+<p class="bycls">CLASSTEXT</p>
+<p><strong>TAGTEXT</strong></p>
+<div><span class="starred">STARTEXT</span></div>
+<p class="main">CLASSMAIN</p>
+<main>TAGMAIN</main>
+<p>PLAINTEXT takes none of them</p>
+
+<!-- EXPECT-COLOR: IDTEXT #e05050 -->
+<!-- EXPECT-COLOR: CLASSTEXT #50c080 -->
+<!-- EXPECT-COLOR: TAGTEXT #d0a040 -->
+<!-- EXPECT-COLOR: STARTEXT #8060e0 -->
+<!-- A class and a tag of the same name are different keys; getting this wrong
+     gives both elements whichever rule came last. -->
+<!-- EXPECT-COLOR: CLASSMAIN #40a0d0 -->
+<!-- EXPECT-COLOR: TAGMAIN #a04070 -->
+<!-- ...and an element none of them name keeps the inherited colour. -->
+<!-- EXPECT-TEXT: PLAINTEXT -->
+</body></html>

@@ -1183,9 +1183,22 @@ harness grew a `HIDDEN=1` mode that reports which elements the cascade turned
 off and which rule did it, because "the page is blank" should be a lookup
 rather than an evening of bisecting a stylesheet.
 
-All seventeen now render. What the run says is left -- chiefly that style
-resolution is O(rules x elements) and costs 315ms a frame on Wikipedia -- is in
-`TODO.md` under its own heading.
+All seventeen now render, and then the run's other finding -- that a frame cost
+315ms on Wikipedia -- turned out to be three separate costs, only one of them
+the obvious one. Rules are now filed in a SELECTOR INDEX under their subject's
+most selective name, so an element tests only the rules that could match it.
+The reconciler no longer unlinks every child every frame: relink walked the
+parent's child list to find each child's predecessor, which is quadratic in
+siblings, and a page that is one long list is most pages worth reading. And
+computed style is memoised per pass, because the renderer asks for the same
+element's style from sixteen places and was running the whole cascade each
+time. Per pass on the host: Wikipedia 315 -> 88ms, bbc 194 -> 24, python.org
+104 -> 12, rust-lang 56 -> 2.4.
+
+The reconciler fixes are EmUI-wide, not browser-only -- every app builds its
+tree through the same relink.
+
+What is left is in `TODO.md` under its own heading.
 
 ## Major To-Do Buckets (Rough Priority)
 

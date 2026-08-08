@@ -130,8 +130,68 @@ void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {
  * -- each stage may override the last, and none of them may see the others'
  * inputs. Everything downstream still reads only `struct vstyle`, which is the
  * seam docs/BROWSER.md §4 promised would make CSS additive. */
+/* --- the per-pass style memo ---------------------------------------------- *
+ *
+ * An element's computed style is asked for many times while ONE frame is
+ * built: the renderer wants it to choose a box, again to decide whether the
+ * child floats, again to group floats, again to measure. Sixteen call sites,
+ * and on a real page they added up to sixty-eight cascades per element per
+ * frame -- 557238 calls to css_sheet_apply for Wikipedia's 8192 nodes, with
+ * css_apply_decls alone at 53% of the profile.
+ *
+ * Within a frame the answer cannot change, so it is computed once.
+ *
+ * The key is the node AND a hash of the parent style, not the node alone:
+ * style inherits, so the same element under a different parent style is a
+ * different answer, and a memo that ignored that would be a correctness bug
+ * rather than a speed-up. A miss on the hash simply recomputes.
+ *
+ * Cleared once per pass by the renderer (vstyle_cache_reset), which is also
+ * what makes a new stylesheet take effect: nothing survives a frame. */
+#define VSTYLE_CACHE 8192
+
+static struct { int node; unsigned phash; struct vstyle v; } g_vs_cache[VSTYLE_CACHE];
+static int g_vs_ready;
+
+void vstyle_cache_reset(void) {
+    for (int i = 0; i < VSTYLE_CACHE; i++) g_vs_cache[i].node = -1;
+    g_vs_ready = 1;
+}
+
+static unsigned vstyle_hash(const struct vstyle *v) {
+    const unsigned char *p = (const unsigned char *)v;
+    unsigned h = 2166136261u;
+    for (size_t i = 0; i < sizeof *v; i++) { h ^= p[i]; h *= 16777619u; }
+    return h ? h : 1;
+}
+
+static void vstyle_for_node_uncached(struct html_doc *doc, int node,
+                                     const struct vstyle *parent,
+                                     const struct css_sheet *sheet,
+                                     struct vstyle *out);
+
 void vstyle_for_node(struct html_doc *doc, int node, const struct vstyle *parent,
                      const struct css_sheet *sheet, struct vstyle *out) {
+    if (!g_vs_ready || node < 0) {
+        vstyle_for_node_uncached(doc, node, parent, sheet, out);
+        return;
+    }
+    unsigned ph = parent ? vstyle_hash(parent) : 0;
+    int slot = node & (VSTYLE_CACHE - 1);
+    if (g_vs_cache[slot].node == node && g_vs_cache[slot].phash == ph) {
+        *out = g_vs_cache[slot].v;
+        return;
+    }
+    vstyle_for_node_uncached(doc, node, parent, sheet, out);
+    g_vs_cache[slot].node = node;
+    g_vs_cache[slot].phash = ph;
+    g_vs_cache[slot].v = *out;
+}
+
+static void vstyle_for_node_uncached(struct html_doc *doc, int node,
+                                     const struct vstyle *parent,
+                                     const struct css_sheet *sheet,
+                                     struct vstyle *out) {
     const char *tag = (doc && node >= 0 && node < doc->n) ? doc->nodes[node].tag : "";
     vstyle_for(tag, parent, out);
     /* An <input> is a FIELD or a BUTTON depending on its type -- the one case

@@ -123,6 +123,13 @@ struct node_handle     ui_scene_of(struct instance_handle h);
  * silent, because a page that trips it is laid out slightly wrong and that is
  * worth being able to see. */
 int                    ui_depth_overflowed(void);
+
+/* How many children the reconciler re-linked. Re-declaring an unchanged list
+ * must relink NOTHING: the unlink walks the parent's child list to find a
+ * predecessor, so doing it per child is quadratic in the number of siblings.
+ * Exposed so that cost can be asserted on instead of timed. */
+unsigned long          ui_relink_walks(void);
+void                   ui_relink_walks_reset(void);
 struct scene_arena    *ui_scene_arena(void);
 /* Instance-pool telemetry. `overflow` counts allocations the pool REFUSED --
  * any non-zero value means views were silently dropped and whatever is on

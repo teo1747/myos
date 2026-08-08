@@ -55,6 +55,9 @@ static int g_cursor_top = -1;
  * fault that kills the browser. Found by rendering Wikipedia. */
 static int g_cursor_over;
 static int g_depth_overflowed;
+/* How many children were actually re-linked -- the work the no-op guard above
+ * exists to avoid. Counted rather than timed so a test can assert on it. */
+static unsigned long g_relink_walks;
 
 static uint32_t g_mutation_count;
 /* pointer / hover / press state (§7, extended for a live event loop) */
@@ -213,6 +216,28 @@ static void relink_after(struct instance_handle parent, struct instance_handle h
     struct instance *pi = instance_resolve(parent);
     struct instance *n  = instance_resolve(h);
     if (!pi || !n) return;
+
+    /* ALREADY IN PLACE -- the overwhelmingly common case, since an
+     * immediate-mode reconciler re-declares the same children in the same
+     * order every frame.
+     *
+     * Without this check the unlink below runs anyway, and it finds a child's
+     * predecessor by walking the parent's list from the front: O(k) for the
+     * k'th child, so O(N^2) for a parent with N of them. A page that is one
+     * long list -- which is most pages worth reading -- paid that every frame.
+     * It was 164ms of Wikipedia's 174ms, and it is why a synthetic page of
+     * sibling divs got 4x slower for every doubling.
+     *
+     * scene_reparent and layout_reparent already guard the same no-op for
+     * exactly the same reason; the instance tree was the one that did not. */
+    if (instance_handle_is_null(after)) {
+        if (pi->first_child.index == h.index) return;
+    } else {
+        struct instance *as0 = instance_resolve(after);
+        if (as0 && as0->next_sibling.index == h.index) return;
+    }
+
+    g_relink_walks++;      /* what T5c counts -- see ui_relink_walks */
     inst_unlink_child(pi, h);
     if (instance_handle_is_null(after)) {
         n->next_sibling = pi->first_child; pi->first_child = h;
@@ -238,8 +263,30 @@ static struct instance_handle match_or_create(enum instance_kind kind, uint64_t 
     if (!pi) return INSTANCE_HANDLE_NULL;
 
     struct instance_handle matched = INSTANCE_HANDLE_NULL;
+    /* Where this child was LAST time, if the order has not changed. Both paths
+     * below start here, and for the keyed path that is the whole difference
+     * between linear and quadratic: a keyed lookup used to scan the parent's
+     * child list, so a parent with N keyed children cost N^2 per frame.
+     *
+     * The browser gives every block a key derived from its DOM node, so a page
+     * that is one long list -- which is most pages worth reading -- paid that
+     * in full. Wikipedia spent 164ms of a 174ms frame here, and a synthetic
+     * page of 2000 sibling divs went 4x slower for every doubling.
+     *
+     * Children come back in the same order almost always, so checking that one
+     * position first answers it in O(1) and the scan stays for the case it was
+     * written for: a keyed child that genuinely moved. */
+    struct instance_handle expected;
+    if (instance_handle_is_null(cur->insert_after)) expected = pi->first_child;
+    else { struct instance *ia = instance_resolve(cur->insert_after);
+           expected = ia ? ia->next_sibling : INSTANCE_HANDLE_NULL; }
+
     if (has_key) {
-        for (struct instance_handle c = pi->first_child; !instance_handle_is_null(c); ) {
+        struct instance *xi = instance_resolve(expected);
+        if (xi && xi->has_explicit_key && xi->explicit_key == key && xi->kind == kind)
+            matched = expected;
+        for (struct instance_handle c = matched.index ? INSTANCE_HANDLE_NULL : pi->first_child;
+             !instance_handle_is_null(c); ) {
             struct instance *cn = instance_resolve(c);
             if (!cn) break;
             struct instance_handle next = cn->next_sibling;
@@ -251,12 +298,9 @@ static struct instance_handle match_or_create(enum instance_kind kind, uint64_t 
             c = next;
         }
     } else {
-        struct instance_handle cand;
-        if (instance_handle_is_null(cur->insert_after)) cand = pi->first_child;
-        else { struct instance *ia = instance_resolve(cur->insert_after); cand = ia ? ia->next_sibling : INSTANCE_HANDLE_NULL; }
-        struct instance *ci = instance_resolve(cand);
+        struct instance *ci = instance_resolve(expected);
         if (ci && ci->kind == kind && !ci->has_explicit_key && !ci->visited_this_run)
-            matched = cand;
+            matched = expected;
     }
 
     struct instance_handle inst;
@@ -387,6 +431,9 @@ void ui_begin_hstack(uint64_t key) {
 void ui_end_stack(void) { exit_container(); }
 
 int ui_depth_overflowed(void) { return g_depth_overflowed; }
+
+unsigned long ui_relink_walks(void)      { return g_relink_walks; }
+void          ui_relink_walks_reset(void) { g_relink_walks = 0; }
 
 void ui_set_paint(struct paint p) {
     struct instance *b = cur_box(); if (!b) return;

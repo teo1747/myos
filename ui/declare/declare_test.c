@@ -289,6 +289,48 @@ static void t5b_inserted_row(void) {
     done();
 }
 
+/* ---- T5c: re-declaring N children costs O(N), not O(N^2) ---------------- *
+ *
+ * An immediate-mode reconciler re-declares the same children every frame, and
+ * relink_after used to unlink each one before putting it back -- finding its
+ * predecessor by walking the parent's list from the front. O(k) for the k'th
+ * child is O(N^2) for the parent, which a page that is one long list pays in
+ * full every frame. It was most of a browser frame on a real article.
+ *
+ * A timing test would be flaky, so this counts WORK instead: the reconciler
+ * exposes how many sibling links it walked, and re-declaring an unchanged list
+ * must walk none of them.
+ */
+static void t5c_relink_cost(void) {
+    printf("T5c re-declaring an unchanged list walks no sibling links:\n");
+    fresh();
+    const int N = 400;
+    for (int frame = 0; frame < 2; frame++) {
+        if (frame) ui_relink_walks_reset();
+        ui_frame_begin();
+        ui_begin_vstack(0);
+        for (int i = 0; i < N; i++) row((uint64_t)(0x1000 + i), 10);
+        ui_end_stack();
+        ui_frame_end();
+        ui_run_layout(400, 4000);
+    }
+    CHECK(ui_relink_walks() == 0,
+          "a second identical frame relinks nothing -- no walk, no N^2");
+
+    /* ...and the guard is not simply always-true: moving a child really does
+     * relink, or the reconciler would have stopped reordering anything. */
+    ui_relink_walks_reset();
+    ui_frame_begin();
+    ui_begin_vstack(0);
+    row((uint64_t)(0x1000 + N - 1), 10);              /* last one first now */
+    for (int i = 0; i < N - 1; i++) row((uint64_t)(0x1000 + i), 10);
+    ui_end_stack();
+    ui_frame_end();
+    ui_run_layout(400, 4000);
+    CHECK(ui_relink_walks() > 0, "...but a child that actually moves is relinked");
+    done();
+}
+
 /* ---- T6: hit-test clip-awareness --------------------------------------- */
 static void t6_hit_clip(void) {
     printf("T6 hit-test clip-awareness:\n");
@@ -445,6 +487,7 @@ int main(void) {
     t4_props_change();
     t5_keyed_reorder();
     t5b_inserted_row();
+    t5c_relink_cost();
     t6_hit_clip();
     t6b_hit_layers();
     t7_button_pulse();

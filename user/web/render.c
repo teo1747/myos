@@ -1021,6 +1021,8 @@ const char *vellum_render_sized(struct html_doc *d, int root,
     g_pending = 0;
     g_hover_href = 0;
     g_sheet = sheet;
+    /* One pass, one set of computed styles. See vstyle_cache_reset. */
+    vstyle_cache_reset();
     struct vstyle rs;
     vstyle_root(&rs);
     /* Open the zoom bracket around the DOCUMENT only. The chrome is emitted by

@@ -146,15 +146,50 @@ struct css_rule {
     unsigned short order;        /* document order, for equal specificity */
 };
 
+/* THE SELECTOR INDEX.
+ *
+ * Without one, styling an element tests it against every rule in the sheet, so
+ * a page costs rules x elements. That was invisible while sheets were capped
+ * at 256 rules and became the browser's dominant cost the moment the cap was
+ * raised to fit real ones: Wikipedia spent 315ms per build+layout pass on a
+ * dev host, which under TCG on the metal is seconds a frame.
+ *
+ * Every rule is filed under ONE key -- taken from its subject (the rightmost
+ * compound, the element the rule is actually about), choosing the most
+ * selective thing that compound names: its id, else one of its classes, else
+ * its tag, else nothing at all. An element then looks in exactly the buckets
+ * that could hold a rule it matches: its own id, each of its classes, its tag,
+ * and the keyless ones. A rule filed under class "banner" cannot match an
+ * element without that class, so not looking is not a shortcut -- it is the
+ * same answer for less work.
+ *
+ * One bucket per rule means no rule is visited twice and there is nothing to
+ * de-duplicate. The cascade after that is unchanged: the survivors are still
+ * sorted by (specificity, document order) and applied weakest-first. */
+#define CSS_BUCKETS 1024        /* power of two; masked, not divided */
+
 struct css_sheet {
     struct css_rule rules[CSS_MAX_RULES];
     int  n;
     int  truncated;              /* ran out of rule slots */
+
+    /* Chains are rule indices, stored +1 so that 0 means "end". Built once by
+     * css_sheet_index() after parsing rather than maintained per insert. */
+    unsigned short bucket[CSS_BUCKETS];
+    unsigned short next[CSS_MAX_RULES];
+    unsigned short keyless;      /* rules whose subject names nothing */
+    int  indexed;
 };
 
 /* Parse a stylesheet. `text` must OUTLIVE the sheet: rules point into it
  * (the same borrow-don't-copy discipline the DOM uses for its arena). */
 void css_sheet_parse(struct css_sheet *sheet, const char *text, size_t len);
+
+/* Build the selector index. css_sheet_parse does this itself; it is exposed
+ * for anything that populates a sheet another way. Applying an UNINDEXED sheet
+ * still works -- it falls back to testing every rule -- so forgetting this
+ * costs speed and never correctness. */
+void css_sheet_index(struct css_sheet *sheet);
 
 /* Apply every matching rule to `out`, weakest first, so the strongest wins by
  * landing last. Call AFTER the user-agent stylesheet and BEFORE inline style,

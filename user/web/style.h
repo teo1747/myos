@@ -139,6 +139,11 @@ void vstyle_root(struct vstyle *out);
  * stage overriding the last. `sheet` and `doc`/`node` may be absent (NULL/-1),
  * which is exactly the pre-CSS behaviour.  */
 struct css_sheet; struct html_doc;
+/* Drop the per-pass style memo. The renderer calls this once at the top of
+ * each pass; nothing may survive a frame, which is what lets a new stylesheet
+ * take effect and what makes the memo safe. See style.c. */
+void vstyle_cache_reset(void);
+
 void vstyle_for_node(struct html_doc *doc, int node, const struct vstyle *parent,
                      const struct css_sheet *sheet, struct vstyle *out);
 
