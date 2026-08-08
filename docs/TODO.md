@@ -13,24 +13,27 @@ left to do.
 - [x] The button OPENS rather than toggles. Toggling turned one press into
       open+close whenever the signal arrived twice, which looked like a dead
       button.
-- [ ] 🐛 THE OPEN ONE, now half-diagnosed. Re-opening the launcher paints
-      nothing: home runs the declarative pass (its log says so, 11 apps, two
-      frames) and the screen keeps the previous frame.
-      CAUSE FOUND, and it is the renderer's cache, not the window order: the
-      cache is keyed by NODE INDEX, indices are reused, and a subtree that is
-      destroyed and rebuilt identically lands on the same indices holding
-      still-valid entries with the same geometry -- so every node compares
-      equal and nothing is painted. scene_render_invalidate() was added for
-      exactly this (ui/backend/scene_render.h).
-      SECOND FAULT, why it is not switched on: with the cache invalidated the
-      second open DOES paint -- at the wrong geometry. The search field lands
-      in the top-left corner instead of centred, i.e. a re-created overlay
-      subtree lays out wrong, and over the menu bar that looks worse than not
-      painting. Two faults, one understood. The next step is the LAYOUT of a
-      re-created Overlay/Glass subtree, with scene_render_invalidate() turned
-      on so the fault is visible.
-      Consequence for now: the launcher is behind an app window, which is what
-      this OS has always done.
+- [ ] 🐛 THE OPEN ONE. Re-opening the launcher paints nothing. ISOLATED
+      cleanly at last: open, close (Esc), open again with NO app ever launched
+      -- the second one is still blank. So it has nothing to do with app
+      windows or with window order, and the earlier note claiming it needed an
+      app on screen was an untested combination, not an observation.
+      CAUSE: scene_render caches a rect per NODE INDEX; the launcher's subtree
+      is destroyed and rebuilt onto the same indices with the same geometry, so
+      every node compares equal and none of it is repainted. home's log shows
+      the declarative pass running (11 apps, two frames) over a screen that
+      keeps the previous frame.
+      TRIED AND NOT ENOUGH: keying the sheet by an open-generation counter (the
+      fix that worked for the browser's documents) -- it makes the DSL
+      instances new but does not move the renderer's per-index cache, so the
+      frame is still skipped. Kept anyway; it is correct in itself.
+      THE FIX AND ITS SECOND HALF: scene_render_invalidate() (added, documented,
+      unused) does make the second open paint -- at the WRONG GEOMETRY, the
+      search field landing top-left instead of centred. That misplaced layout
+      of a re-created Overlay/Glass subtree is the last thing to solve. Start
+      there, with the invalidate switched on so the fault is on screen.
+      Meanwhile the desktop lift is OFF, so the launcher behaves as it always
+      did (behind app windows) and the menu bar is never taken away.
 - [ ] The bar is covered while the launcher is up IF the layer is ever lifted
       again. Doing that properly means the bar's OPAQUE STRIP above and its
       dropdown canvas below -- a compositing change, not a z-order one.

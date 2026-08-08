@@ -137,6 +137,8 @@ static int   g_apps_open = 0;     /* is the launcher grid showing? */
 static int   g_apps_frames = 0;   /* debounce the click that opened it */
 static float g_apps_scroll = 0;   /* launcher grid scroll offset */
 static char  g_apps_q[40];        /* the launcher's search text */
+/* Bumped every time the launcher opens; the sheet is keyed by it. See below. */
+static unsigned g_apps_gen = 0;
 
 /* Enumerate /data/apps/<name>/, keeping those that hold a <name>.elf, and read
  * each one's presentation manifest. home's namespace grants `ro /data/apps`. */
@@ -225,23 +227,24 @@ static int g_full_present = 0;
 
 static void apps_set_open(int open) {
     if (open == g_apps_open) return;
-    if (open) { scan_apps(); g_apps_frames = 0; g_apps_scroll = 0; g_apps_q[0] = 0; }
+    if (open) { scan_apps(); g_apps_frames = 0; g_apps_scroll = 0; g_apps_q[0] = 0; g_apps_gen++; }
     g_apps_open = open;
     /* Render the new state BEFORE moving the layer when closing, and move it
      * before rendering when opening -- either way the compositor's recompose
      * must not be the one that shows a half-updated desktop. */
-    /* THE LIFT IS OFF. embk_win_desktop_front (syscall 92) works and the first
-     * open renders correctly through it; the second open does not, and the
-     * cause is now half-known rather than unknown. It is NOT the z: with the
-     * render cache invalidated on the toggle, the second open began painting
-     * again -- but at the wrong GEOMETRY, the search field landing at the top
-     * left corner instead of centred. So the remaining fault is in the layout
-     * of a re-created overlay subtree, not in the window order, and lifting
-     * the layer only makes that fault cover the whole screen and take the menu
-     * bar with it.
+    /* THE LIFT IS OFF, and it is not the bug. Isolated properly at last: open,
+     * close, open again with NO app ever launched, and the second one still
+     * paints nothing -- so this was never about window order, and my earlier
+     * note that it needed an app window on screen was simply an untested
+     * combination. Lifting the layer only made the same blank frame cover the
+     * whole screen and take the menu bar with it, which is why it looked
+     * catastrophic rather than merely broken.
      *
-     * Off until that is understood. The cost is what this OS always did: the
-     * launcher is drawn by the desktop, so it sits behind an app window. */
+     * What it IS: the renderer caches a rect per node index, the launcher's
+     * subtree is destroyed and rebuilt onto the same indices, and every node
+     * compares equal so nothing repaints. scene_render_invalidate() (added in
+     * eacd194) makes it paint again -- and at the wrong geometry, which is the
+     * remaining fault and the next thing to fix. */
     int rc = 0;  /* embk_win_desktop_front(open) -- see above */
     /* TELL THE RUNTIME THE TREE CHANGED SHAPE. The launcher is a whole subtree
      * that appears and disappears, and the renderer only repaints what it can
@@ -611,9 +614,22 @@ static void apps_grid(void) {
          * faint accent-tinted gradient gives the surface somewhere to catch
          * light, so it reads as glass over a dark room instead of as an
          * absence. */
+        /* KEYED BY A GENERATION, so each opening is a NEW subtree rather than
+         * the previous one rebuilt.
+         *
+         * Reconciliation matches children by position and the renderer caches
+         * a rect per NODE INDEX -- and indices are reused. Torn down and put
+         * back identically, the launcher landed on the same indices holding
+         * the same cached geometry, so the renderer decided nothing had
+         * changed and painted none of it: the desktop came up with no launcher
+         * on it, every time after the first. A key that differs per opening
+         * makes them genuinely different instances, which is the same fix, for
+         * the same reason, as the browser keying a document by load. */
+        char sheet[24];
+        snprintf(sheet, sizeof sheet, "apps%u", g_apps_gen);
         Glass(.width = g_sw, .height = g_sh, .align = Fill, .spacing = 0,
               .pt = 30, .pb = 70, .px = 36, .blur = 30,
-              .background = launch_tint()) {
+              .background = launch_tint(), .key = sheet) {
             /* SEARCH, centred, where Launchpad puts it -- and no title. The
              * word "Applications" over a screen of applications is a label for
              * something already obvious, and it was the thing overlapping the
