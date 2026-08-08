@@ -22,6 +22,14 @@ left to do.
       frame and then presents dirty rects, so whatever the new frame did not
       touch kept the old pixels. The frames either side of the flip present the
       whole surface.
+- [ ] The menu bar is COVERED while the launcher is up, rather than staying
+      above it the way a Mac's does. Lifting translucent bars one band above
+      the raised desktop was tried and reverted: the bar's window GROWS from
+      792x26 to 792x340 to hold its dropdowns, so above the launcher it became
+      a 340px sheet of mostly-empty canvas composited over it -- the launcher
+      opened, logged `OPEN`, and could not be seen. Doing it properly means the
+      bar's OPAQUE STRIP being above and its dropdown canvas not, which is a
+      compositing change rather than a z-order one.
 - [ ] 🐛 A black block sits where the menu bar is while the launcher is up.
       Two TRANSLUCENT full-screen layers now overlap: the desktop is composited
       per-pixel (`fb_blit_over`) because its canvas is genuinely transparent --
