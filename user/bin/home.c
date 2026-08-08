@@ -229,18 +229,30 @@ static void apps_set_open(int open) {
     /* Render the new state BEFORE moving the layer when closing, and move it
      * before rendering when opening -- either way the compositor's recompose
      * must not be the one that shows a half-updated desktop. */
-    embk_win_desktop_front(open);
+    int rc = embk_win_desktop_front(open);
     g_full_present = 3;
     g_dock_dirty = 1;
+    /* Say so on the serial console. The launcher is reachable only from the
+     * menu bar once an app covers the screen, and a synthesized click cannot
+     * work that button -- so when it misbehaves this line is the only way to
+     * tell "the request never arrived" from "it opened and something closed
+     * it again". */
+    { char b[96];
+      snprintf(b, sizeof b, "home: launcher %s (%d apps, desktop_front rc=%d)\n",
+               open ? "OPEN" : "close", g_all_n, rc);
+      embk_puts(1, b); }
 }
 
 static void poll_apps_request(void) {
     if (!g_apps_requested) return;
     g_apps_requested = 0;
-    /* The menu-bar button TOGGLES, which is what a button that is already lit
-     * should do -- pressing it again to dismiss is the first thing anyone
-     * tries. */
-    apps_set_open(!g_apps_open);
+    /* OPEN, not toggle. Toggling reads better and is wrong here: the signal is
+     * a bare IPC connect with no payload, so anything that produces two of them
+     * for one press -- a repeat, a reconnect, the bar's own 1Hz frame seeing
+     * the click twice -- opens the launcher and closes it again in the same
+     * breath, which looks exactly like a button that does nothing. Dismissing
+     * has three ways already: Esc, click-off, and launching something. */
+    apps_set_open(1);
 }
 
 static void open_item(struct app_item it) {

@@ -21,6 +21,7 @@ struct comp_window {
     int32_t   x, y;         /* window-frame top-left on screen (chrome incl.) */
     uint32_t  cw, ch;       /* content dimensions in px                       */
     int       z;            /* z-order: larger is nearer the front            */
+    int       z_saved;      /* z before the desktop layer was lifted in front  */
     int       visible;
     int       desktop;      /* 1 = chromeless full-screen back layer (the home) */
     int       chromeless;   /* 1 = floating window with NO kernel chrome: the app
@@ -1503,6 +1504,19 @@ int compositor_desktop_front(int pid, int on) {
         rc = 0;
         if (w->z != want) {
             w->z = want;
+            /* THE MENU BAR STAYS ON TOP. It is a window like any other, so a
+             * full-screen surface in front of every window is in front of it
+             * too -- and the bar simply vanished, which is not what a shell
+             * surface does on any system that has one. On a Mac the bar is
+             * above Launchpad; here that means the translucent bars ride one
+             * band higher than the lifted desktop, and go back where they were
+             * when it drops. */
+            for (int k = 0; k < COMP_MAX_WINDOWS; k++) {
+                struct comp_window *b = &g_wins[k];
+                if (!b->used || !b->translucent || b->desktop) continue;
+                if (on) { b->z_saved = b->z; b->z = DESKTOP_FRONT_Z + 1; }
+                else if (b->z == DESKTOP_FRONT_Z + 1) b->z = b->z_saved;
+            }
             /* Every window's meaning in the stack just changed -- what was in
              * front is now behind, or the reverse -- so the whole screen is
              * what has to be recomposed, not the layer's own rect. */
