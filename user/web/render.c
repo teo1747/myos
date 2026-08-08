@@ -544,6 +544,39 @@ static bool *check_slot(int node) {
     return 0;
 }
 
+/* --- <details> ------------------------------------------------------------ *
+ *
+ * A disclosure: the <summary> is always shown, everything else only when the
+ * element is open. It is real HTML, not a widget a page builds -- and leaving
+ * it unimplemented does not degrade gracefully, it renders every collapsed
+ * section expanded. MDN's CSS reference has 112 of them and came out 306780
+ * pixels tall, with the article somewhere in the middle of it.
+ *
+ * Whether a particular one is open is UI STATE, like a checkbox's: the document
+ * says where it starts (`open`), and the reader changes it from there. So it
+ * lives beside the checkbox table and for the same reason -- the DOM is what
+ * the page said, not what the reader has since done to it. */
+#define DETAILS_MAX 256
+static struct { int used; int node; bool open; } g_details[DETAILS_MAX];
+
+static bool *details_slot(struct html_doc *d, int node) {
+    for (int i = 0; i < DETAILS_MAX; i++)
+        if (g_details[i].used && g_details[i].node == node) return &g_details[i].open;
+    for (int i = 0; i < DETAILS_MAX; i++)
+        if (!g_details[i].used) {
+            g_details[i].used = 1; g_details[i].node = node;
+            g_details[i].open = d->nodes[node].open ? true : false;
+            return &g_details[i].open;
+        }
+    /* Out of slots: show it OPEN. A disclosure nobody can open is content the
+     * reader cannot reach at all, which is worse than one that will not shut. */
+    return 0;
+}
+
+/* One page's disclosures are not the next page's. Called where the other
+ * per-page UI state is dropped -- see render.h. */
+void vellum_reset_details(void) { memset(g_details, 0, sizeof g_details); }
+
 /* Turning one radio on turns the rest of its group off. The group is every
  * radio sharing a `name`, which is what makes a radio a radio -- without this
  * they are just checkboxes that look round. */
@@ -1030,6 +1063,67 @@ static void render_block(struct html_doc *d, int node, const struct vstyle *s,
 
 static void render_block_inner(struct html_doc *d, int node, const struct vstyle *s,
                                const char *href, int list_index) {
+    /* <svg> IS A REPLACED ELEMENT. Its children are a different rendering
+     * model -- paths, groups, defs -- and none of them is document content.
+     * Walking into them as if they were blocks is not a missing feature, it is
+     * a wrong answer with a size: MDN's 83x24 logo came out 3340 pixels tall,
+     * because every <path> in it became a block in the flow, and the page was
+     * 300000 pixels long with the article somewhere inside.
+     *
+     * Drawing the vector itself is a renderer this browser does not have. A
+     * box of the size the author stated is the honest stand-in: the page's
+     * layout is then right, and the space is reserved rather than filled. */
+    if (!strcmp(d->nodes[node].tag, "svg")) {
+        float w = d->nodes[node].img_w > 0 ? zpx(d->nodes[node].img_w) : 16.0f;
+        float h = d->nodes[node].img_h > 0 ? zpx(d->nodes[node].img_h) : 16.0f;
+        if (s->width  > 0) w = zpx(s->width);
+        if (s->height > 0) h = zpx(s->height);
+        HStack(.width = w, .height = h) { }
+        return;
+    }
+    /* A DISCLOSURE. The summary is a row you can click; the rest is there only
+     * when it is open. See the note above details_slot. */
+    if (!strcmp(d->nodes[node].tag, "details")) {
+        bool *open = details_slot(d, node);
+        bool is_open = open ? *open : true;
+        VStack(.spacing = 2, .align = Fill,
+               .pt = (float)s->margin_top, .pb = (float)s->margin_bottom) {
+            for (int c = d->nodes[node].first_child; c >= 0; c = d->nodes[c].next_sibling) {
+                int summary = (d->nodes[c].kind == HTML_ELEM &&
+                               !strcmp(d->nodes[c].tag, "summary"));
+                if (!summary && !is_open) continue;
+                struct vstyle cs;
+                if (d->nodes[c].kind == HTML_ELEM) {
+                    vstyle_for_node(d, c, s, g_sheet, &cs);
+                    if (cs.display == VD_NONE) continue;
+                    if (summary) {
+                        /* the marker a browser draws, and the hit target */
+                        em_flush();
+                        ui_box_begin(0xD57A0000ULL ^ (uint64_t)(uintptr_t)&d->nodes[c]);
+                        struct instance_handle self = ui_open();
+                        HStack(.spacing = 6, .align = Leading) {
+                            Text(is_open ? "\xE2\x96\xBE" : "\xE2\x96\xB8")
+                                .color(argb(PAGE_QUIET));
+                            VStack(.spacing = 0, .align = Fill, .grow = 1) {
+                                render_block(d, c, &cs, href, 0);
+                            }
+                        }
+                        em_flush();
+                        ui_box_end();
+                        if (ui_consume_click(self) && open) {
+                            *open = !*open;
+                            em_structure_changed();   /* rows below it move */
+                        }
+                        continue;
+                    }
+                    render_block(d, c, &cs, href, 0);
+                } else if (!is_blank_text(d, c)) {
+                    render_range(d, c, d->nodes[c].next_sibling, s, href, &list_index);
+                }
+            }
+        }
+        return;
+    }
     if (s->display == VD_LIST_ITEM) {
         /* [marker][content] as a ROW, so wrapped text hangs under itself
          * instead of sliding back under the bullet */

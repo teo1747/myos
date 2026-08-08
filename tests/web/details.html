@@ -1,0 +1,30 @@
+<html><head><title>Disclosure and replaced elements</title><style>
+body { color: #1b1b1b }
+</style></head><body>
+<!-- <details> is real HTML: the <summary> is always shown, the rest only when
+     the element is open. Rendering a collapsed one expanded is not a slightly
+     longer page -- MDN's CSS reference has 112 of them. -->
+<details><summary>CLOSEDSUM</summary><p>CLOSEDBODY must not appear</p></details>
+<details open><summary>OPENSUM</summary><p>OPENBODY must appear</p></details>
+
+<!-- `open` is a BOOLEAN attribute: it carries no value, so it has to be read
+     from the attribute NAME. Reading it in the branch that handles `name=value`
+     meant it never fired at all. -->
+
+<!-- <svg> is a REPLACED element. Its children are paths and groups, not
+     document content, and walking into them as blocks gave MDN's 83x24 logo a
+     height of 3340 pixels. -->
+<svg width="60" height="30"><title>SVGTITLE</title><path d="M0 0 L60 30"/></svg>
+<p>AFTERSVG</p>
+
+<!-- EXPECT-TEXT: CLOSEDSUM -->
+<!-- EXPECT-NO-TEXT: CLOSEDBODY -->
+<!-- EXPECT-TEXT: OPENSUM -->
+<!-- EXPECT-TEXT: OPENBODY -->
+<!-- ...and the open one's body sits under its own summary. -->
+<!-- EXPECT-BELOW: OPENBODY OPENSUM -->
+<!-- The svg contributes its stated box and nothing else -- no title text, no
+     path, and AFTERSVG only 30px below rather than thousands. -->
+<!-- EXPECT-NO-TEXT: SVGTITLE -->
+<!-- EXPECT-TEXT: AFTERSVG -->
+</body></html>

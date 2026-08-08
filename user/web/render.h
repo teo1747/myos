@@ -54,6 +54,10 @@ const char *vellum_hovered_link(void);
 
 /* Page zoom: 1.0 is unzoomed. Scales the document's text and the lengths its
  * author stated, and leaves the browser's own chrome alone. */
+/* Forget which <details> the reader had open. Belongs with form_reset and
+ * vsel_reset: it is UI state about the OLD document. */
+void  vellum_reset_details(void);
+
 void  vellum_set_zoom(float z);
 float vellum_zoom(void);
 

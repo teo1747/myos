@@ -1314,6 +1314,20 @@ columns.
 The corpus had a `position.html` that passed the entire time, because it only
 ever placed a box inside its direct parent. It covers the nested case now.
 
+**`<details>` and `<svg>`, from another look at the images.** A disclosure is
+real HTML, not a widget a page builds, and leaving it out does not degrade
+gracefully -- it renders every collapsed section expanded, and MDN's CSS
+reference has 112 of them. It works now, summary and toggle and all. Getting
+there turned up that BOOLEAN attributes were never read at all: `<details open>`
+carries no value, and the check for it sat inside the branch that only runs for
+`name=value`. And `<svg>` is a REPLACED element whose children are a different
+rendering model; walking into them as document blocks gave MDN's 83x24 logo a
+height of 3340 pixels.
+
+MDN is still 307000 pixels tall for a reason not yet found. What is established
+about it -- and what tool would have answered it -- is written down in TODO.md
+rather than guessed at.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

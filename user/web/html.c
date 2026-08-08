@@ -307,6 +307,7 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
         char klass[128]; klass[0] = 0;
         char eid[64];    eid[0] = 0;
         char sty[256];   sty[0] = 0;
+        int  aopen = 0;
         char alt[256];   alt[0] = 0;
         int  aw = 0, ah = 0;
         char fname[64];  fname[0] = 0;
@@ -326,6 +327,10 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
                 aname[k] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
             }
             aname[an] = 0;
+            /* BOOLEAN attributes carry no value: `<details open>` is the whole
+             * of it. Read from the name, before the branch that only runs when
+             * there is an `=` -- which is where this was, so it never fired. */
+            if (ieq(aname, "open")) aopen = 1;
             if (p < len && src[p] == '=') {
                 p++;
                 char q = 0;
@@ -515,6 +520,7 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
         if (ftype[0]) d->nodes[ni].type  = str_put(d, ftype, strlen(ftype));
         d->nodes[ni].img_w = (short)aw; d->nodes[ni].img_h = (short)ah;
         d->nodes[ni].tborder = (unsigned char)tbord;
+        d->nodes[ni].open = (unsigned char)aopen;
         if (!is_void(tag) && !self_closing) push(&st, ni);
         i = p;
     }

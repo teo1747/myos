@@ -143,6 +143,10 @@ void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {
      * words either side of it were welded: sqlite.org's tagline read
      * "Small. Fast. Reliable.Choose any three." */
     else if (ieq(tag,"br")) { o->display = VD_BLOCK; }
+    /* <details> and its <summary>: both blocks. What makes them a disclosure
+     * is render.c hiding everything that is not the summary -- see there. */
+    else if (ieq(tag,"details")) { o->display = VD_BLOCK; o->margin_top = 6; o->margin_bottom = 6; }
+    else if (ieq(tag,"summary")) { o->display = VD_BLOCK; o->bold = 1; }
     else if (ieq(tag,"td") || ieq(tag,"th")) { o->display = VD_BLOCK; if (ieq(tag,"th")) o->bold = 1; }
 
     /* --- never shown --- */

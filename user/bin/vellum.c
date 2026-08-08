@@ -247,6 +247,7 @@ static int install_document(size_t n) {
     imgcache_reset();          /* one page's pictures never leak into the next */
     vsel_reset();              /* ...nor does a selection: it indexed the OLD words */
     form_reset();              /* ...nor one page's typing into the next */
+    vellum_reset_details();    /* ...nor which disclosures it had open */
 
     /* A NEW WORLD per page: the engine is torn down and rebuilt, so a script
      * cannot outlive the document that wrote it, and one page's globals can

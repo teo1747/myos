@@ -2823,3 +2823,31 @@ not worth chasing.
 - [ ] Wikipedia's article body is still squeezed into a narrow column and its
       header overlaps itself, at 206ms a frame with the full stylesheet in.
       Not yet diagnosed; positioning was not the whole of it.
+
+### <details>, <svg>, and the MDN mystery
+
+Looking at the rendered images again found three real bugs and one thing I
+could not explain, which is written down here rather than guessed at.
+
+- [x] ~~`<details>` renders every collapsed section expanded~~ -- implemented.
+      A disclosure shows its <summary> always and the rest only when open, the
+      summary toggles it, and the open set is dropped with the rest of the
+      per-page UI state.
+- [x] ~~BOOLEAN attributes were never read~~ -- `<details open>` carries no
+      value, and the check for it sat inside the branch that only runs when
+      there is an `=`. It never fired for any boolean attribute.
+- [x] ~~`<svg>` children render as document blocks~~ -- it is a REPLACED
+      element; its paths and groups are a different rendering model. MDN's
+      83x24 logo came out 3340 pixels tall. It reserves its stated box now.
+      Drawing the vector is a renderer this browser does not have.
+- [ ] MDN'S PAGE IS STILL ~307000 PIXELS TALL and I do not know why. What is
+      established: rows in the sidebar are spaced exactly 3272.5px apart at
+      DOM depth 18; only ONE <details> marker renders on the whole page, so
+      the other 111 are not reaching the disclosure path at all; nested lists
+      and nested <details> both scale linearly in synthetic tests to depth 8;
+      and it is not the svg. The next step is a diagnostic that maps a laid-out
+      box back to its DOM element -- render.c only keys a box when a script is
+      listening to it, which is why TALL= found nothing.
+- [ ] A diagnostic that answers "which element owns this height" would have
+      ended this in minutes, the way HIDDEN= and GRID= did for their questions.
+      It needs render.c to key every block's box, not just listening ones.

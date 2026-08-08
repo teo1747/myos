@@ -59,6 +59,12 @@ struct html_node {
      * which for a table means NO rules -- the web's actual default, and what
      * `border="0"` says explicitly. */
     unsigned char tborder;
+    /* <details open>. Its own byte rather than another shared slot -- see the
+     * note on tborder. A <details> without it shows only its <summary>, which
+     * is the difference between MDN's page being 15000 pixels tall and being
+     * 300000: it collapses 112 sections, and rendering them all expanded is
+     * not a slightly-too-long page, it is an unusable one. */
+    unsigned char open;
     int   first_child, next_sibling, parent;   /* indices, -1 = none       */
 };
 

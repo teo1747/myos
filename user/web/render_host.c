@@ -179,6 +179,50 @@ static int subtree_text(struct html_doc *d, int node) {
     return n;
 }
 
+/* Height of the box render.c opened for `node`, or -1 if it opened none. */
+static float node_height(struct instance_handle h, struct scene_arena *sa,
+                         uint64_t want) {
+    struct instance *in = instance_resolve(h);
+    if (!in) return -1;
+    if (in->has_explicit_key && in->explicit_key == want) {
+        struct scene_node *sn = scene_resolve(sa, ui_scene_of(h));
+        return sn ? sn->height : -1;
+    }
+    for (struct instance_handle c = ui_first_child(h);
+         !instance_handle_is_null(c); c = ui_next_sibling(c)) {
+        float v = node_height(c, sa, want);
+        if (v >= 0) return v;
+    }
+    return -1;
+}
+
+static float g_tall_min = 2000;
+
+static void dump_tall(struct html_doc *d, struct scene_arena *sa) {
+    struct tall_ent { float h; int node; };
+    struct tall_ent top[12];
+    int n = 0;
+    for (int i = 0; i < d->n; i++) {
+        if (d->nodes[i].kind != HTML_ELEM) continue;
+        uint64_t key = 0xC11C0000ULL ^ (uint64_t)(uintptr_t)&d->nodes[i];
+        float hgt = node_height(ui_root(), sa, key);
+        if (hgt < 0) continue;
+        if (hgt < g_tall_min) continue;
+        int at = n < 12 ? n++ : 11;
+        top[at].h = hgt; top[at].node = i;
+        for (int k = at; k > 0 && top[k - 1].h < top[k].h; k--) {
+            struct tall_ent t = top[k - 1]; top[k - 1] = top[k]; top[k] = t;
+        }
+    }
+    for (int i = 0; i < n; i++) {
+        int k = top[i].node;
+        printf("TALL| %9.0f px  <%s%s%s%s%s>\n", top[i].h, d->nodes[k].tag,
+               d->nodes[k].id ? " id=" : "", d->nodes[k].id ? d->nodes[k].id : "",
+               d->nodes[k].klass ? " class=" : "",
+               d->nodes[k].klass ? d->nodes[k].klass : "");
+    }
+}
+
 static void dump_grids(struct html_doc *d, int node, const struct vstyle *parent,
                        int depth) {
     if (node < 0 || node >= d->n || depth > 40) return;
@@ -434,6 +478,13 @@ int main(int argc, char **argv) {
      * and named areas it got, and which of its children claimed one. "The
      * layout is stacked" is otherwise a guess about which of four things went
      * wrong. */
+    /* TALL=1 -- the elements that own the page's height, biggest first.
+     *
+     * "The page is 300000 pixels long" is a fact about the whole document and
+     * says nothing about which box did it. render.c keys every element's box
+     * by its DOM node's address, so the instance tree can be walked back to
+     * the element -- which turns a bisect into a list. */
+    if (getenv("TALL")) { g_tall_min = (float)atof(getenv("TALL")); dump_tall(&g_doc, &sa); }
     if (getenv("GRID")) {
         struct vstyle rs; vstyle_root(&rs);
         dump_grids(&g_doc, g_root, &rs, 0);
