@@ -638,6 +638,7 @@ TLS_LIB_OBJS := build/tls_sha256.o build/tls_hmac.o build/tls_aes.o \
                 build/tls_sha512.o build/tls_bignum.o build/tls_ecdsa.o build/tls_rsa.o \
                 build/tls_asn1.o build/tls_cert.o build/tls_trust.o \
                 build/tls_keysched.o build/tls_record.o build/tls_handshake.o build/tls_tls.o \
+                build/tls_prf12.o build/tls_record12.o build/tls_tls12.o \
                 build/tls_handle.o
 
 build/vellum.elf: build/crt0.o build/syscalls.o $(VELLUM_OBJS) $(VELLUM_JS) $(TLS_LIB_OBJS) build/libembk.so
@@ -797,6 +798,12 @@ build/tls_asn1.o: user/lib/tls/x509/asn1.c | $(BUILD)
 build/tls_cert.o: user/lib/tls/x509/cert.c | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(TLS_LIB_INC) -c $< -o $@
 build/tls_trust.o: user/lib/tls/x509/trust.c | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) $(TLS_LIB_INC) -c $< -o $@
+build/tls_prf12.o: user/lib/tls/prf12.c | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) $(TLS_LIB_INC) -c $< -o $@
+build/tls_record12.o: user/lib/tls/record12.c | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) $(TLS_LIB_INC) -c $< -o $@
+build/tls_tls12.o: user/lib/tls/tls12.c | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(TLS_LIB_INC) -c $< -o $@
 build/tls_keysched.o: user/lib/tls/keysched.c | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(TLS_LIB_INC) -c $< -o $@
@@ -2074,6 +2081,10 @@ test-tls-crypto:
 	    user/lib/tls/x509/asn1.c user/lib/tls/x509/cert.c user/lib/tls/x509/trust.c kernel/crypto/sha256.c \
 	    user/lib/tls/crypto/sha512.c user/lib/tls/crypto/bignum.c user/lib/tls/crypto/ecdsa.c user/lib/tls/crypto/rsa.c \
 	    tools/tls/test_chain.c -o /tmp/embk_test_chain && /tmp/embk_test_chain
+	@cc -w -Iuser/lib/tls -Iuser/lib/tls/kshim -Ikernel kernel/crypto/sha256.c kernel/crypto/hmac.c \
+	    user/lib/tls/prf12.c tools/tls/test_prf12.c -o /tmp/embk_test_prf12 && /tmp/embk_test_prf12
+	@cc -w -Iuser/lib/tls -Iuser/lib/tls/kshim -Ikernel kernel/crypto/aes.c user/lib/tls/crypto/gcm.c \
+	    user/lib/tls/record12.c tools/tls/test_record12.c -o /tmp/embk_test_rec12 && /tmp/embk_test_rec12
 	@cc -w -Iuser/lib/tls/kshim -Iuser/lib/tls/x509 -Iuser/lib/tls/crypto -Ikernel -Itools/tls \
 	    user/lib/tls/x509/asn1.c user/lib/tls/x509/cert.c user/lib/tls/x509/trust.c kernel/crypto/sha256.c \
 	    user/lib/tls/crypto/sha512.c user/lib/tls/crypto/bignum.c user/lib/tls/crypto/ecdsa.c user/lib/tls/crypto/rsa.c \

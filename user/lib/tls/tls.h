@@ -19,6 +19,13 @@
 struct tls_conn {
     int  fd;
     int  established;
+    /* 13 or 12 -- which half of the client is driving. The two share the
+     * socket, the certificate rules and the cipher, and nothing else.
+     *
+     * The 1.2 AEAD state deliberately does NOT live here: it belongs to
+     * tls12.c, and putting it in this header dragged the 1.2 record layer's
+     * types into every file that speaks TLS at all. */
+    int  version;
     struct tls_transcript tr;
     struct tls_keys rx, tx;             /* current read/write AEAD (hs -> app) */
     uint8_t hs_secret[32];              /* Handshake Secret (for the app keys) */

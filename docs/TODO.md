@@ -2917,9 +2917,16 @@ Still open:
 - [ ] WEBP IS 28 OF 138 IMAGES and decodes as nothing -- bbc serves 12, github
       16. It is the one missing format that matters; GIF is a single image in
       the whole sample and SVG needs a vector renderer, not a decoder.
-- [ ] TLS 1.2 IS NOT SPOKEN. xkcd.com negotiates only 1.2 and the handshake
-      fails with rc=-1 -- not a bug, a missing protocol version, and the one
-      that decides whether a site is reachable at all. Most of the web is 1.3.
+- [x] ~~TLS 1.2 IS NOT SPOKEN~~ -- it is now, alongside 1.3, in its own files
+      (prf12/record12/tls12). One ClientHello offers both; the server's choice
+      decides which half of the client runs. xkcd.com renders on the metal.
+      Scope: ECDHE + AES-128-GCM + SHA-256, RSA or ECDSA server key, full
+      certificate verification plus the ServerKeyExchange signature. No static
+      RSA, no CBC, no renegotiation, no resumption.
+- [ ] Navigating from one page to the next can leave the previous page's pixels
+      showing through -- visible loading example.com after xkcd. The incremental
+      repaint does not clear what the old layout occupied. A fresh load is
+      correct, so this is the navigate path specifically.
 - [ ] The trust set is 23 anchors and five of the listed roots are not in the
       host's bundle at all (DigiCert Global Root CA, High Assurance EV,
       Baltimore, GTS R2, Entrust G2) -- so the generator's list should be
@@ -2932,3 +2939,16 @@ Still open:
 - [ ] No revocation checking of any kind, and the trust set is compiled in.
       docs/TLS.md already logs both; the packaging story is where a
       user-growable, verified-boot-sealed root set belongs.
+
+### A ring-3 backtrace
+
+The kernel prints a symbolized backtrace on a KERNEL fault and stopped at the
+kernel's own .text, which is no help at all when the faulting code is an
+application -- and "RIP=0" says a call went through a null pointer without
+saying whose. It walks the user rbp chain now, through access_ok so a corrupt
+frame ends the walk rather than faulting the fault handler, and prints raw
+addresses; `nm build/<app>.elf` names them, and an ET_EXEC app loads at bias 0
+so they match directly.
+
+It found a bug in one boot that an afternoon of elimination had not:
+`gctr <- gcm_seal <- tls_record_seal <- tls_close <- vnet_fetch`.

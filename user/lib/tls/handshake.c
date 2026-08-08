@@ -56,12 +56,25 @@ int tls_build_client_hello(uint8_t *out, size_t cap,
         wbytes(&b, client_random, 32);
         w8(&b, 32); wbytes(&b, session_id, 32); /* legacy_session_id (middlebox compat) */
         size_t cs = open16(&b);                 /* cipher_suites */
-            w16(&b, TLS_SUITE_AES128_GCM);
+            w16(&b, TLS_SUITE_AES128_GCM);          /* 1.3 */
+            /* ...and the 1.2 suites, because a server that speaks only 1.2 is
+             * still a server someone wants to read. Both are ECDHE + AES-128-GCM
+             * + SHA-256; which one is chosen decides only how the
+             * ServerKeyExchange is signed. */
+            w16(&b, TLS_SUITE12_ECDHE_ECDSA_AES128_GCM);
+            w16(&b, TLS_SUITE12_ECDHE_RSA_AES128_GCM);
         close16(&b, cs);
         w8(&b, 1); w8(&b, 0);                   /* legacy_compression_methods: null */
         size_t ext = open16(&b);                /* extensions */
-            /* supported_versions (43) = [0x0304] */
-            w16(&b, 43); { size_t e = open16(&b); w8(&b, 2); w16(&b, TLS_VERSION_13); close16(&b, e); }
+            /* supported_versions (43) = [0x0304, 0x0303], best first. A server
+             * that understands the extension picks 1.3; one that does not
+             * ignores it and answers 1.2 from legacy_version, which is exactly
+             * how the two versions coexist on one ClientHello. */
+            w16(&b, 43); { size_t e = open16(&b); w8(&b, 4);
+                w16(&b, TLS_VERSION_13); w16(&b, TLS_VERSION_12); close16(&b, e); }
+            /* ec_point_formats (11) = [uncompressed]. 1.3 dropped it; plenty of
+             * 1.2 servers still refuse a ClientHello without it. */
+            w16(&b, 11); { size_t e = open16(&b); w8(&b, 1); w8(&b, 0); close16(&b, e); }
             /* supported_groups (10) = [x25519] */
             w16(&b, 10); { size_t e = open16(&b); size_t l = open16(&b);
                 w16(&b, TLS_GROUP_X25519); close16(&b, l); close16(&b, e); }
@@ -123,7 +136,14 @@ int tls_parse_server_hello(const uint8_t *msg, size_t len, uint8_t server_pub[32
     uint8_t sid_len = r8(&b); rskip(&b, sid_len);      /* legacy_session_id_echo */
     uint16_t suite = r16(&b);
     r8(&b);                                     /* legacy_compression_method */
-    if (b.err || suite != TLS_SUITE_AES128_GCM) return -1;
+    if (b.err) return -1;
+    /* A 1.2 SUITE IS THE ANSWER, not an error. A server that picked one has
+     * told us the version before any extension does -- and a 1.2 ServerHello
+     * may carry no extensions at all, so waiting to find (or not find)
+     * supported_versions means failing on the suite check first. */
+    if (suite == TLS_SUITE12_ECDHE_ECDSA_AES128_GCM ||
+        suite == TLS_SUITE12_ECDHE_RSA_AES128_GCM) return TLS_SH_IS_12;
+    if (suite != TLS_SUITE_AES128_GCM) return -1;
 
     uint16_t ext_total = r16(&b);
     size_t ext_end = b.pos + ext_total;
@@ -147,7 +167,12 @@ int tls_parse_server_hello(const uint8_t *msg, size_t len, uint8_t server_pub[32
         }
         b.pos = enext;                          /* skip any unconsumed ext bytes */
     }
-    if (b.err || !have_share || !version_ok) return -1;
+    if (b.err) return -1;
+    /* NO supported_versions extension means the server answered TLS 1.2, which
+     * is not an error -- it is the other half of the client. Say so distinctly
+     * so the caller can hand off rather than fail. */
+    if (!version_ok) return TLS_SH_IS_12;
+    if (!have_share) return -1;
     return 0;
 }
 

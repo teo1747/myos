@@ -1396,6 +1396,23 @@ are matched on the whole subject now. And xkcd.com speaks only TLS 1.2, which
 this stack does not: not a bug, a missing protocol version, and logged as the
 thing that decides reachability.
 
+**TLS 1.2, alongside 1.3.** A browser that speaks only 1.3 cannot open
+xkcd.com, and "most of the web has moved" is not the same as "the site you
+wanted". The two versions share the cipher and the certificate format and
+essentially nothing else -- different key schedule (PRF vs HKDF), different
+record framing (an explicit nonce on the wire, different additional data),
+different message flow, and a signature over the key exchange parameters rather
+than the transcript -- so 1.2 lives in its own files and tls.c dispatches on
+what the server chose. One ClientHello offers both. Certificates are verified
+by exactly the same code, plus the ServerKeyExchange signature, which is what
+binds the ephemeral key to the certificate.
+
+**And the kernel grew a RING-3 BACKTRACE**, which is what actually finished the
+job. Its existing backtrace stopped at the kernel's own .text, so an
+application fault printed `RIP=0` and nothing else. Walking the user rbp chain
+named the caller in one boot -- `gctr <- gcm_seal <- tls_record_seal <-
+tls_close` -- after an afternoon of ruling things out one at a time had not.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:
