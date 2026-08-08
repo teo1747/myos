@@ -2727,14 +2727,27 @@ it); whitespace-only text nodes between inline elements are a real space
 with one; bgcolor/align/color attributes map to CSS declarations; and a table
 cell paints its own background.
 
+Both follow-ups are DONE: every site has been looked at (`make web-real
+SHOTS=1`, and the fetcher lives in tools/web_real.py so the run is repeatable),
+and the corpus now compares each page against a stored reference image. Looking
+found the biggest fidelity bug yet -- the page was drawn with the DESKTOP's
+palette, so Wikipedia's own white background carried our light-grey text.
+
 Still open, from looking:
-- [ ] Only two pages have actually been LOOKED at (Hacker News, danluu). The
-      other fifteen have been rendered to images that nobody has opened. Do
-      that before assuming the list below is complete.
-- [ ] There is no visual regression check. The corpus asserts geometry through
-      EXPECT-X / EXPECT-ORDER, which caught none of the five above. A stored
-      reference image per corpus page, compared pixelwise, would -- and the
-      harness already renders one.
+- [ ] Wikipedia's chrome renders as full-width stacked rows instead of a
+      sidebar beside the article: its layout is flex/grid plus position, and
+      the article itself is below 900px of navigation. The single hardest
+      layout case in the set.
+- [ ] FORM CONTROLS still come from the theme, so a text field on a white page
+      is a dark rounded box. Same bug class as the palette one, one layer down:
+      a control inside a document should look like the document.
+- [ ] sqlite.org renders "Reliable.Choose any three." with no break -- two
+      block-level elements welded. Another inline/block boundary case.
+- [ ] The visual references are pixel-exact and the font comes from the host's
+      DejaVu, so a machine with a different build of it will see every page
+      differ. `make web-corpus BLESS=1` regenerates them; a font-independent
+      signature would be better and is not obviously worth the loss of
+      precision.
 - [ ] Presentational hints ride the INLINE style, so they beat author CSS
       instead of losing to it. Correct for the common case (a page that has
       the attribute and no rule) and wrong for a page whose stylesheet

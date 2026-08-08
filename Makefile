@@ -1972,6 +1972,14 @@ browser-render:
 # about itself (see tools/web_corpus.py). Pass CORPUS=<dir> to point it at
 # pages fetched from the real web instead; anything it finds there should come
 # back here as a page that reproduces the SHAPE.
+# web-real -- the same engine against pages nobody here wrote. Fetches into
+# build/webreal (gitignored, refetch by deleting it); SHOTS=1 also writes a PNG
+# of each so they can be LOOKED at, which is a different question from whether
+# they produced text. See tools/web_real.py.
+web-real:
+	@$(MAKE) --no-print-directory build/browser_render
+	@python3 tools/web_real.py
+
 CORPUS ?= tests/web
 web-corpus:
 	@$(MAKE) --no-print-directory build/browser_render
@@ -2018,7 +2026,7 @@ clean:
 	rm -f $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_ELF) $(KERNEL_BIN) $(IMG)
 	rm -rf $(BUILD)
 
-.PHONY: all run debug clean web-corpus scene-test backend-test html-test font-test layout-test reactive-test declare-test showcase run-ui run-smp run-bigmem run-kvm run-ahci run-fat run-all run-embkfs run-embkfs-tree run-embkfs-cow run-part-fat run-part-embkfs run-usb-embkfs run-multivol run-embkfs-encrypted
+.PHONY: all run debug clean web-real web-corpus scene-test backend-test html-test font-test layout-test reactive-test declare-test showcase run-ui run-smp run-bigmem run-kvm run-ahci run-fat run-all run-embkfs run-embkfs-tree run-embkfs-cow run-part-fat run-part-embkfs run-usb-embkfs run-multivol run-embkfs-encrypted
 # --- TLS crypto host tests (docs/TLS.md T1): the SAME crypto that runs on the OS,
 # compiled + vector-checked on the dev host (fast, no boot). Grows per primitive.
 .PHONY: test-tls-crypto

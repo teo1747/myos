@@ -1220,6 +1220,27 @@ One of these was an API defect rather than a browser one. EmProps uses 0 to
 mean "unset, take the theme's value", which left no way to ask for zero -- so
 `.px(0)` on a link word silently got 16px. `EmZero` says it explicitly.
 
+**And then the pages were drawn with the wrong palette, which looking found
+too.** A document is written against a white canvas with dark text -- that is
+not a preference, it is the initial value every page on the web assumes, and it
+is why a page can set a background and say nothing about colour. Drawing it on
+the desktop's dark surface with the desktop's light text produced Wikipedia as
+pale headings on the white background the page itself had set: our foreground
+over their background, readable in neither direction. The document now keeps a
+browser's palette (white canvas, near-black ink, the web's blue) and the
+chrome keeps the desktop's -- which is what a desktop browser does in dark
+mode, and the reason a page looks the same there as anywhere else.
+
+**The corpus now compares each page against a stored reference image**
+(`tests/web/refs`, 420KB gzipped; `make web-corpus BLESS=1` to regenerate).
+Every expectation before this was about words and where they are, and none of
+them caught any of the six defects that looking found -- each changed how a
+page LOOKED without changing which words existed or their order. The new check
+catches a one-pixel padding change on three pages. `make web-real` fetches
+seventeen real sites with their stylesheets and renders them; `SHOTS=1` writes
+a PNG of each, because "did it produce text" and "does it look right" are
+different questions and only the second one needed asking.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

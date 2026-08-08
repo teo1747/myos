@@ -16,7 +16,7 @@ the markup it is about instead of in a table somewhere else:
 Every check is against the RESOLVED render -- position and computed colour --
 not against the source, which is the only way to test a cascade.
 """
-import os, re, subprocess, sys
+import gzip, os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN  = os.path.join(ROOT, "build", "browser_render")
@@ -63,6 +63,70 @@ def find_count(path, needle, w=940, h=620):
         if line.startswith("FIND|"):
             return int(line.rsplit("|", 1)[1])
     return -1
+
+
+# --- the visual check ------------------------------------------------------
+#
+# Every expectation above is about words and where they are, and NONE of them
+# caught the five defects that turned up the first time a real page was
+# rendered to an image: centred table cells, gappy link text, welded words, an
+# unpainted header, light-on-light text. Each changed how the page LOOKED
+# without changing which words existed or their order.
+#
+# So the render is compared against a stored reference, pixel for pixel. A
+# reference is a promise that the page looked right when someone last looked
+# at it -- which is the only thing that can be checked automatically, and the
+# reason `bless` prints a warning rather than being a silent flag.
+REFS = os.path.join(ROOT, "tests", "web", "refs")
+SHOT_W, SHOT_H = 940, 700
+
+
+def render_ppm(path):
+    out = os.path.join(ROOT, "build", "corpus_shot.ppm")
+    if os.path.exists(out):
+        os.remove(out)
+    subprocess.run([BIN, path, str(SHOT_W), str(SHOT_H), "0", out],
+                   capture_output=True, text=True, errors="replace", cwd=ROOT)
+    return open(out, "rb").read() if os.path.exists(out) else None
+
+
+def check_visual(path, bless):
+    name = os.path.splitext(os.path.basename(path))[0]
+    ref  = os.path.join(REFS, name + ".ppm.gz")
+    got  = render_ppm(path)
+    if got is None:
+        print("      FAIL VISUAL: nothing rendered"); return 1
+    if bless or not os.path.exists(ref):
+        os.makedirs(REFS, exist_ok=True)
+        with gzip.open(ref, "wb", compresslevel=9) as f:
+            f.write(got)
+        print("      (visual reference %s -- LOOK AT IT before trusting it)"
+              % ("re-blessed" if bless else "created"))
+        return 0
+    with gzip.open(ref, "rb") as f:
+        want = f.read()
+    if want == got:
+        return 0
+    # Say WHERE, not just that. A count alone cannot tell a moved paragraph
+    # from a changed colour.
+    diff, top, bot = 0, None, None
+    hdr_g = got.index(b"255\n") + 4
+    hdr_w = want.index(b"255\n") + 4
+    for y in range(SHOT_H):
+        row = y * SHOT_W * 3
+        a = want[hdr_w + row: hdr_w + row + SHOT_W * 3]
+        b = got[hdr_g + row: hdr_g + row + SHOT_W * 3]
+        if a != b:
+            d = sum(1 for i in range(0, len(a), 3) if a[i:i+3] != b[i:i+3])
+            diff += d
+            if top is None: top = y
+            bot = y
+    bad = os.path.join(ROOT, "build", name + "-actual.ppm")
+    open(bad, "wb").write(got)
+    print("      FAIL VISUAL: %d px differ, rows %s-%s; actual written to %s"
+          % (diff, top, bot, os.path.relpath(bad, ROOT)))
+    print("      (if the change is intended: make web-corpus BLESS=1)")
+    return 1
 
 
 def check_page(path):
@@ -163,6 +227,8 @@ def check_page(path):
                           % (kind, parts[0], b[0]["x"], a[0]["x"])); fails += 1
         else:
             print("      FAIL: unknown expectation %s" % kind); fails += 1
+
+    fails += check_visual(path, os.environ.get("BLESS"))
 
     print("  %-22s %4dpx %3d runs, %2d expectations, %s"
           % (os.path.basename(path), width, len(runs), len(expects),

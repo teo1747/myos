@@ -132,6 +132,24 @@ struct vstyle {
 };
 
 /* The document root's style: everything inherits from this. */
+/* THE PAGE'S INITIAL VALUES -- a browser's, not the desktop's.
+ *
+ * A web page is written against a white canvas with dark text. That is not a
+ * preference, it is the initial value every page on the web assumes, and it is
+ * why a page can set a background and say nothing about colour. Rendering that
+ * page on the OS's dark surface with the OS's light text produced Wikipedia as
+ * pale grey headings on the white background the page DID set: our foreground
+ * over their background, readable in neither direction.
+ *
+ * So the document keeps its own palette and the browser's chrome keeps the
+ * desktop's -- which is exactly what a desktop browser does in dark mode, and
+ * the reason a page looks the same there as anywhere else. A page that states
+ * its own colours overrides all of this, as it always could. */
+#define PAGE_INK    0xFF1B1B1BU     /* text */
+#define PAGE_CANVAS 0xFFFFFFFFU     /* the paper under it */
+#define PAGE_LINK   0xFF1A0DABU     /* the web's blue */
+#define PAGE_QUIET  0xFF545454U     /* code, and anything meant to recede */
+
 void vstyle_root(struct vstyle *out);
 
 /* Compute an ELEMENT's style: the user-agent stylesheet, then the author's

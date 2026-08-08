@@ -64,6 +64,8 @@ static EmFont font_for(const struct vstyle *s) {
     return s->bold ? BodyBold : Body;
 }
 
+static Color argb(unsigned v);
+
 static Color color_for(const struct vstyle *s) {
     const struct ui_theme *t = ui_theme();
     /* An AUTHOR colour wins -- that is what the cascade decided. Absent one,
@@ -80,9 +82,13 @@ static Color color_for(const struct vstyle *s) {
         if (c.a <= 0.0f) c.a = 1.0f;
         return c;
     }
-    if (s->link) return t->accent;
-    if (s->mono) return t->text_secondary;   /* code reads as a quieter voice */
-    return t->text;
+    (void)t;
+    /* The PAGE's defaults, not the theme's. A document is written against a
+     * white canvas, so its unstated colours have to come from that same world
+     * or the two halves disagree -- see style.h. */
+    if (s->link) return argb(PAGE_LINK);
+    if (s->mono) return argb(PAGE_QUIET);    /* code reads as a quieter voice */
+    return argb(PAGE_INK);
 }
 
 /* One word of an inline run. A link's words are BUTTONS so each is clickable

@@ -18,6 +18,9 @@ void vstyle_root(struct vstyle *o) {
     memset(o, 0, sizeof *o);
     o->display = VD_BLOCK;
     o->size = 0;                       /* body */
+    /* The page's initial values, not the desktop's -- see style.h. */
+    o->color = PAGE_INK;
+    o->bg    = PAGE_CANVAS;
 }
 
 void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {

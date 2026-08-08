@@ -1,4 +1,11 @@
 <html><head><title>Selectors</title><style>
+/* This page sets LIGHT text, so it has to state the ground that goes under
+   it. The browser's canvas is white -- the initial value every page on the web
+   is written against -- and a document that assumes otherwise is a document
+   that only works in one browser's dark mode. Stating it here is what a real
+   page has to do, and it keeps every colour expectation below unchanged. */
+html, body { background: #16161c }
+
 /* A child combinator must NOT reach a grandchild. Parsed as a descendant --
    which is what this browser used to do -- the deep word turns red too. */
 nav > p          { color: #ff0000 }
@@ -54,6 +61,11 @@ a.styled         { color: #ff8000 }
      page inherits from body. -->
 <!-- EXPECT-COLOR: PLAINPROSE #d8d8e0 -->
 <!-- the theme's accent, NOT the inherited body colour -->
-<!-- EXPECT-COLOR: LINKKEEPSBLUE #7c82ff -->
+<!-- ...the user-agent's link colour, which is the WEB's blue and not the
+     desktop theme's accent: a document is drawn on its own white canvas with
+     its own palette, so its unstated colours have to come from that world.
+     This expectation used to name the theme's accent, and was asserting the
+     bug rather than the rule. -->
+<!-- EXPECT-COLOR: LINKKEEPSBLUE #1a0dab -->
 <!-- EXPECT-COLOR: LINKSTYLED #ff8000 -->
 </body></html>
