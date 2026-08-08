@@ -2734,10 +2734,24 @@ found the biggest fidelity bug yet -- the page was drawn with the DESKTOP's
 palette, so Wikipedia's own white background carried our light-grey text.
 
 Still open, from looking:
-- [ ] Wikipedia's chrome renders as full-width stacked rows instead of a
-      sidebar beside the article: its layout is flex/grid plus position, and
-      the article itself is below 900px of navigation. The single hardest
-      layout case in the set.
+- [ ] Wikipedia's chrome still renders as full-width stacked rows. Two things
+      were wrong and one is fixed. The first was not a layout bug at all:
+      entities were not decoded in ATTRIBUTE values, so its stylesheet URL
+      (`load.php?lang=en&amp;modules=...`) was requested literally and
+      MediaWiki replied "no modules were requested" -- 196 bytes instead of
+      216KB. The page really was unstyled. With the CSS in, what remains is
+      NAMED GRID AREAS: `.mw-page-container-inner` is
+      `grid-template-areas: 'siteNotice siteNotice' 'columnStart pageContent'
+      'footer footer'` and its children carry `grid-area: columnStart` etc.
+      Track SIZES now work; placement by name does not, so the children
+      auto-flow and stack. Measured across the seventeen sites:
+      grid-template-columns 363 uses / 6 sites (done), grid-area 361 / 3,
+      grid-template-areas 125 / 3. That is the next piece and it is bounded:
+      parse the area grid on the container, the name on the child, place.
+- [ ] python.org draws its no-JS fallback with every dropdown menu in flow and
+      overlapping the article -- `position: absolute` on menus that a real
+      browser also hides. Untangling which of those two is ours needs a
+      separate look.
 - [x] ~~FORM CONTROLS come from the theme~~ -- done: the kit takes a scoped
       control palette (ui_set_control_palette), which the browser opens around
       the document the way it opens the zoom bracket. Fields, buttons,

@@ -582,6 +582,35 @@ static void grid_col_widths(struct layout_arena *la, struct layout_node *n,
 
     float avail = content_w - cgap * (float)(cols - 1);
     if (avail < 0) avail = 0;
+
+    /* EXPLICIT TRACKS, when the author stated them. Fixed tracks take their
+     * width first; whatever is left is shared among the fr tracks by weight;
+     * an `auto` track keeps the content appetite computed above.
+     *
+     * This is what separates a page layout from a table. Sizing every track by
+     * its content is right for a <table> -- the columns should fit what is in
+     * them -- and wrong for `grid-template-columns: 12.25rem minmax(0,1fr)`,
+     * where the first number is a decision the author already made. Wikipedia
+     * builds its whole chrome that way, and content-sizing it put the sidebar
+     * and the article in two columns divided by how much text each held. */
+    if (n->grid_ntrack > 0) {
+        int nt = n->grid_ntrack < cols ? n->grid_ntrack : cols;
+        float fixed = 0, frsum = 0;
+        for (int i = 0; i < cols; i++) {
+            unsigned char m = i < nt ? n->grid_track_mode[i] : LT_AUTO;
+            if (m == LT_PX)      { out[i] = n->grid_track_val[i]; fixed += out[i]; }
+            else if (m == LT_FR) { out[i] = 0; frsum += n->grid_track_val[i]; }
+            else                 { out[i] = want[i]; fixed += out[i]; }
+        }
+        float left = avail - fixed;
+        if (left < 0) left = 0;
+        if (frsum > 0.0001f)
+            for (int i = 0; i < cols; i++)
+                if (i < nt && n->grid_track_mode[i] == LT_FR)
+                    out[i] = left * (n->grid_track_val[i] / frsum);
+        return;
+    }
+
     float sum = 0;
     for (int i = 0; i < cols; i++) sum += want[i];
     if (sum <= 0.01f) {                    /* nothing to go on: share equally */

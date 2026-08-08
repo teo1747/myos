@@ -422,6 +422,21 @@ static void open_box(const struct vstyle *s, EmProps bp) {
     }
     if (s->display == VD_GRID) {
         em_grid_(s->grid_cols > 0 ? s->grid_cols : 1, bp);
+        /* ...and the sizes the author stated for those tracks, if any. Without
+         * them every track is content-sized, which is a table's rule and not a
+         * page layout's -- see layout.h. */
+        if (s->grid_ntrack > 0) {
+            unsigned char mode[VSTYLE_TRACKS];
+            float val[VSTYLE_TRACKS];
+            for (int i = 0; i < s->grid_ntrack && i < VSTYLE_TRACKS; i++) {
+                mode[i] = s->grid_track_mode[i] == VT_PX ? LT_PX
+                        : s->grid_track_mode[i] == VT_FR ? LT_FR : LT_AUTO;
+                val[i]  = s->grid_track_mode[i] == VT_FR
+                        ? (float)s->grid_track_val[i] / 16.0f
+                        : (float)s->grid_track_val[i];
+            }
+            ui_set_grid_tracks(mode, val, s->grid_ntrack);
+        }
         return;
     }
     if (s->justify) bp.justify = em_of(s->justify, Leading);

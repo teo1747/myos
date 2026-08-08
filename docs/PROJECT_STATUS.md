@@ -1257,6 +1257,24 @@ Eight of the browser's own demo pages under `system/web/` were written when the
 canvas was dark and now declare the ground and ink they assume -- the same
 correction the corpus fixtures needed, and the same one a real page has to make.
 
+**Grid tracks are sizes now, and Wikipedia's "hardest layout bug" was an
+ampersand.** Before writing any layout code the page was checked, and its two
+stylesheets were 196 bytes each: MediaWiki answering "in this request, no
+modules were requested". Entities were decoded in text and not in ATTRIBUTE
+values, so `href="load.php?lang=en&amp;modules=..."` was fetched literally and
+the server read one parameter called `lang` with the rest of the query inside
+its value. Every `&` in a query string is written `&amp;` in HTML; this is not
+an edge case, and the page really was unstyled.
+
+With 216KB of CSS actually arriving, the remaining half is real. Grid tracks
+were sized from their content -- a table's rule, right for a table and wrong
+for `grid-template-columns: 12.25rem minmax(0,1fr)`, where the first number is
+a decision the author already made. Track sizes are parsed and honoured now
+(px/rem, fr, minmax→max, repeat, auto), which is 363 uses across six of the
+seventeen sites. What Wikipedia additionally needs is placement by NAME
+(`grid-template-areas` + `grid-area`), measured at 3 sites, and logged with
+that number rather than guessed at.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

@@ -49,6 +49,9 @@ void ui_set_text_gradient(const struct paint *paint);   /* one-shot: next ui_tex
 void ui_set_axis(enum layout_axis a);
 void ui_set_wrap(bool wrap);   /* flex-wrap: overflowing children flow onto new lines */
 void ui_set_grid(int cols, float col_gap, float row_gap);   /* container: 2D grid */
+/* Explicit track sizes for that grid -- see layout.h. Pass n == 0 (or never
+ * call it) to keep tracks sized from their content. */
+void ui_set_grid_tracks(const unsigned char *mode, const float *val, int n);
 void ui_set_grid_span(int span);                            /* child: columns to span */
 void ui_set_justify(enum layout_justify j);
 void ui_set_align(enum layout_align a);

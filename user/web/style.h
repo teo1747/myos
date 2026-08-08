@@ -53,8 +53,19 @@ enum { VM_NONE = 0, VM_BULLET, VM_DECIMAL };
  * left-aligning is what every browser did before it could justify. */
 enum { VA_LEFT = 0, VA_CENTER, VA_RIGHT };
 
+/* Mirrors layout.h's LT_* -- kept separate so style.h does not depend on the
+ * layout engine, and converted where the two meet in render.c. */
+enum { VT_AUTO = 0, VT_PX, VT_FR };
+#define VSTYLE_TRACKS 8
+
 struct vstyle {
     unsigned char display;
+    /* GRID TRACKS the author stated. Sizes, not just a count: see layout.h for
+     * why a page layout needs them and a table does not. grid_ntrack == 0
+     * means "no template" and the tracks are sized from their content. */
+    unsigned char grid_track_mode[VSTYLE_TRACKS];   /* VT_* */
+    unsigned char grid_ntrack;
+    short         grid_track_val[VSTYLE_TRACKS];    /* px, or fr weight x16 */
     unsigned char size;        /* 0 body, 1 caption, 2 title, 3 heading */
     unsigned char bold, italic, mono, underline, link, pre;
     unsigned char marker;      /* VM_* -- how a list item is bulleted   */

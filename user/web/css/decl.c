@@ -292,29 +292,84 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
             if (tok_eq(v, vn, "none")) { out->grow = 0; ok = 1; }
             else { out->grow = nonzero ? 1 : 0; ok = 1; }
         } else if (tok_eq(p, pn, "grid-template-columns")) {
-            /* The track COUNT is what this grid can honour: `repeat(3, 1fr)`
-             * and `1fr 1fr 1fr` are both three columns. Widths come from the
-             * content (see layout.c's automatic table layout), so a track list
-             * that states sizes is read for its length and not its values --
-             * which is right for the equal-fr case that dominates and
-             * approximate for anything else. */
-            int cols = 0;
+            /* Track SIZES, not just a count. `12.25rem minmax(0,1fr)` is a
+             * 196px sidebar beside everything else, and reading it as "two
+             * columns" and sizing both from their content is how a page's
+             * chrome ends up divided by how much text each side happens to
+             * hold.
+             *
+             * What each form becomes:
+             *   200px, 12.25rem, 3em  -> a fixed track
+             *   1fr, 2fr             -> a weighted track
+             *   minmax(a, b)         -> b, the maximum: that is the size it
+             *                           takes whenever there is room, and
+             *                           there usually is
+             *   auto, min/max-content, anything unrecognised -> content-sized,
+             *                           which is the old behaviour and a safe
+             *                           place to land
+             *   repeat(n, <one>)     -> n copies of it
+             */
+            unsigned char tm[VSTYLE_TRACKS];
+            short tv[VSTYLE_TRACKS];
+            int nt = 0, cols = 0;
             size_t k = 0;
+            int rep = 1;
             if (vn > 7 && (v[0]=='r'||v[0]=='R') && !strncmp(v + 1, "epeat", 5)) {
                 while (k < vn && v[k] != '(') k++;
                 k++;
-                int nrep = 0;
-                while (k < vn && v[k] >= '0' && v[k] <= '9') { nrep = nrep * 10 + (v[k] - '0'); k++; }
-                cols = nrep;
-            } else {
-                int in_tok = 0;
-                for (; k < vn; k++) {
-                    int ws = (v[k]==' '||v[k]=='\t');
-                    if (!ws && !in_tok) { cols++; in_tok = 1; }
-                    else if (ws) in_tok = 0;
+                rep = 0;
+                while (k < vn && v[k] >= '0' && v[k] <= '9') { rep = rep * 10 + (v[k] - '0'); k++; }
+                while (k < vn && (v[k] == ',' || v[k] == ' ')) k++;
+                if (rep < 1) rep = 1;
+            }
+            /* one pass over the track list, honouring nesting so a comma
+             * inside minmax() does not read as a track separator */
+            while (k < vn) {
+                while (k < vn && (v[k]==' '||v[k]=='\t')) k++;
+                if (k >= vn) break;
+                size_t ts = k; int depth = 0;
+                while (k < vn && !((v[k]==' '||v[k]=='\t') && depth == 0)) {
+                    if (v[k] == '(') depth++;
+                    else if (v[k] == ')') { if (depth) depth--; else break; }
+                    k++;
+                }
+                size_t tl = k - ts;
+                if (!tl) break;
+                const char *t = v + ts;
+                /* minmax(a,b) -> b */
+                if (tl > 7 && (t[0]=='m'||t[0]=='M') && !strncmp(t + 1, "inmax(", 6)) {
+                    size_t c2 = 0;
+                    while (c2 < tl && t[c2] != ',') c2++;
+                    if (c2 < tl) { t += c2 + 1; tl -= c2 + 1; }
+                    while (tl && (*t == ' ')) { t++; tl--; }
+                    while (tl && (t[tl-1] == ')' || t[tl-1] == ' ')) tl--;
+                }
+                cols++;
+                if (nt < VSTYLE_TRACKS) {
+                    if (tl > 2 && (t[tl-2]=='f'||t[tl-2]=='F') && (t[tl-1]=='r'||t[tl-1]=='R')) {
+                        float f = 0; size_t i2 = 0;
+                        while (i2 < tl - 2 && t[i2] >= '0' && t[i2] <= '9') { f = f*10 + (t[i2]-'0'); i2++; }
+                        if (f <= 0) f = 1;
+                        tm[nt] = VT_FR; tv[nt] = (short)(f * 16.0f);
+                    } else {
+                        int lok = 0; short px = len_px(t, tl, &lok);
+                        if (lok && px > 0) { tm[nt] = VT_PX; tv[nt] = px; }
+                        else               { tm[nt] = VT_AUTO; tv[nt] = 0; }
+                    }
+                    nt++;
                 }
             }
-            if (cols > 0 && cols <= 64) { out->grid_cols = (unsigned char)cols; ok = 1; }
+            if (rep > 1 && nt == 1) {           /* repeat(n, <one track>) */
+                cols = rep;
+                for (int i = 1; i < rep && i < VSTYLE_TRACKS; i++) { tm[i] = tm[0]; tv[i] = tv[0]; }
+                nt = rep < VSTYLE_TRACKS ? rep : VSTYLE_TRACKS;
+            }
+            if (cols > 0 && cols <= 64) {
+                out->grid_cols = (unsigned char)cols;
+                out->grid_ntrack = (unsigned char)nt;
+                for (int i = 0; i < nt; i++) { out->grid_track_mode[i] = tm[i]; out->grid_track_val[i] = tv[i]; }
+                ok = 1;
+            }
         } else if (tok_eq(p, pn, "width") || tok_eq(p, pn, "height")) {
             int is_w = tok_eq(p, pn, "width");
             short *dst_px  = is_w ? &out->width : &out->height;

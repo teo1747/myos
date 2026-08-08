@@ -54,6 +54,11 @@ struct layout_size {
                            * which is what calc(100% - 240px) reduces to. */
 };
 
+/* A grid track's sizing. AUTO is "as much as the content wants", which is the
+ * only mode there was before an author could state one. */
+enum { LT_AUTO = 0, LT_PX, LT_FR };
+#define LAYOUT_TRACKS 12
+
 struct layout_node {
     struct layout_handle self;
     struct layout_handle parent;
@@ -70,7 +75,16 @@ struct layout_node {
     float spacing;                     /* main-axis gap between children */
     bool  wrap;                        /* flex-wrap: overflowing children flow onto
                                         * new lines stacked on the cross axis */
-    int   grid_cols;                   /* >0 => 2D grid: N equal columns, auto-flow */
+    int   grid_cols;                   /* >0 => 2D grid: N columns, auto-flow */
+    /* EXPLICIT TRACK SIZES, when the author stated them
+     * (`grid-template-columns: 12.25rem minmax(0,1fr)`). Without these every
+     * track was sized from its content, which is right for a table and wrong
+     * for a page layout: a 196px sidebar next to a 1fr article came out as two
+     * columns sharing the width by how much text each held. Empty (n == 0)
+     * keeps the content-sized behaviour, which is what a <table> wants. */
+    unsigned char grid_track_mode[LAYOUT_TRACKS];   /* LT_* */
+    float         grid_track_val[LAYOUT_TRACKS];    /* px, or fr weight */
+    int           grid_ntrack;
     float grid_col_gap, grid_row_gap;  /* grid track gaps */
     int   grid_span;                   /* a grid CHILD spans this many columns (default 1) */
     float scroll_offset;               /* column scroll: children shift up by this many px */

@@ -24,6 +24,7 @@ That is not a rendering bug, and the run says so rather than counting it as
 one: an "enable JavaScript" interstitial parses to about forty nodes and would
 otherwise read as a catastrophic parse failure.
 """
+import html as htmlmod
 import os, re, subprocess, sys, glob
 from urllib.parse import urljoin
 
@@ -82,7 +83,12 @@ def fetch(name, url, root):
         h = re.search(r'href\s*=\s*["\']([^"\']+)["\']', tag, re.I)
         if not h:
             continue
-        css = get(urljoin(url, h.group(1)), 20)
+        # UNESCAPE the href. Every `&` in a query string is written `&amp;` in
+        # HTML, and requesting it literally gives the server one parameter with
+        # the rest of the query inside its value -- MediaWiki replies with an
+        # empty stylesheet, and the page renders unstyled for reasons that look
+        # nothing like a fetch problem.
+        css = get(urljoin(url, htmlmod.unescape(h.group(1))), 20)
         if not css:
             continue
         fn = "sheet%d.css" % n

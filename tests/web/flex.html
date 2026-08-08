@@ -6,6 +6,12 @@
 .grow  { flex: 1 }
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px }
 .card  { background: #232838; border: 1px solid #3a4258; border-radius: 8px; padding: 10px }
+
+/* Explicit TRACK SIZES, not just a track count. A stated width is a decision
+   the author already made; sizing the track from its content instead is a
+   table's rule, and it put a 200px sidebar and an article in two columns
+   divided by how much text each happened to hold. */
+.tracks { display: grid; grid-template-columns: 200px minmax(0,1fr); column-gap: 20px }
 </style></head><body>
 
 <nav class="bar"><a href="/a">NAVONE</a><a href="/b">NAVTWO</a><a href="/c">NAVTHREE</a></nav>
@@ -32,4 +38,13 @@
 <!-- EXPECT-LEFT-OF: GRIDA GRIDB -->
 <!-- EXPECT-LEFT-OF: GRIDB GRIDC -->
 <!-- EXPECT-TEXT: GROWER -->
+<div class="tracks"><div>GRIDTRACKSIDE</div><div>GRIDTRACKMAIN and a good deal more text than the sidebar holds</div></div>
+
+<!-- The fixed track is 200px wide, so the second column starts at the page
+     padding + 200 + the 20px gap, wherever the text inside it ends up. It must
+     NOT depend on how much text either side holds. -->
+<!-- EXPECT-X: GRIDTRACKSIDE 20 26 -->
+<!-- EXPECT-X: GRIDTRACKMAIN 240 246 -->
+<!-- ...and they are on the same row, which is what makes it a sidebar. -->
+<!-- EXPECT-LEFT-OF: GRIDTRACKSIDE GRIDTRACKMAIN -->
 </body></html>

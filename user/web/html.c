@@ -40,6 +40,39 @@ static char *str_put(struct html_doc *d, const char *s, size_t len) {
  * with two thousand names would be more spec-complete and no more useful; the
  * ones missing render as themselves, which is the failure a reader can see
  * through. */
+static int entity(const char *s, size_t len, size_t *used, char *out);
+
+/* Copy an attribute value, DECODING entities.
+ *
+ * They were decoded in text and not here, which is invisible until an
+ * attribute is a URL: Wikipedia links its stylesheet as
+ *
+ *     href="/w/load.php?lang=en&amp;modules=...&amp;only=styles"
+ *
+ * and requesting that literally gives a server one parameter called `lang`
+ * whose value happens to contain the word "modules". MediaWiki answered, quite
+ * correctly, with an empty stylesheet reading "no modules were requested" --
+ * so Wikipedia rendered as an unstyled column of blocks, and it looked for all
+ * the world like the hardest layout bug in the corpus. Every `&` in a query
+ * string is written `&amp;` in HTML; this is not an edge case.
+ */
+static void attr_copy(char *dst, size_t cap, const char *src, size_t len) {
+    size_t o = 0;
+    for (size_t i = 0; i < len && o + 1 < cap; ) {
+        if (src[i] == '&') {
+            char buf[8]; size_t used = 0;
+            int n = entity(src + i, len - i, &used, buf);
+            if (n) {
+                for (int k = 0; k < n && o + 1 < cap; k++) dst[o++] = buf[k];
+                i += used;
+                continue;
+            }
+        }
+        dst[o++] = src[i++];
+    }
+    dst[o] = 0;
+}
+
 static int entity(const char *s, size_t len, size_t *used, char *out) {
     static const struct { const char *name; const char *utf8; } tbl[] = {
         { "amp",  "&" }, { "lt",   "<" }, { "gt",   ">" }, { "quot", "\"" },
@@ -306,17 +339,13 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
                  * the same code path in url_resolve */
                 if ((ieq(aname,"href") || ieq(aname,"src") ||
                      ieq(aname,"action")) && !href[0]) {
-                    size_t c = vl < sizeof href - 1 ? vl : sizeof href - 1;
-                    memcpy(href, src + vs, c); href[c] = 0;
+                    attr_copy(href, sizeof href, src + vs, vl);
                 } else if (ieq(aname,"class") && !klass[0]) {
-                    size_t c = vl < sizeof klass - 1 ? vl : sizeof klass - 1;
-                    memcpy(klass, src + vs, c); klass[c] = 0;
+                    attr_copy(klass, sizeof klass, src + vs, vl);
                 } else if (ieq(aname,"id") && !eid[0]) {
-                    size_t c = vl < sizeof eid - 1 ? vl : sizeof eid - 1;
-                    memcpy(eid, src + vs, c); eid[c] = 0;
+                    attr_copy(eid, sizeof eid, src + vs, vl);
                 } else if (ieq(aname,"style") && !sty[0]) {
-                    size_t c = vl < sizeof sty - 1 ? vl : sizeof sty - 1;
-                    memcpy(sty, src + vs, c); sty[c] = 0;
+                    attr_copy(sty, sizeof sty, src + vs, vl);
                 } else if (ieq(aname,"bgcolor") || ieq(aname,"align") ||
                            ieq(aname,"color")) {
                     /* PRESENTATIONAL ATTRIBUTES, mapped into the node's style.
@@ -373,14 +402,11 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
                     }
                     if (ok && v > 0 && v <= 32 && ieq(aname,"colspan")) aw = v;
                 } else if (ieq(aname,"name") && !fname[0]) {
-                    size_t c = vl < sizeof fname - 1 ? vl : sizeof fname - 1;
-                    memcpy(fname, src + vs, c); fname[c] = 0;
+                    attr_copy(fname, sizeof fname, src + vs, vl);
                 } else if (ieq(aname,"value") && !fval[0]) {
-                    size_t c = vl < sizeof fval - 1 ? vl : sizeof fval - 1;
-                    memcpy(fval, src + vs, c); fval[c] = 0;
+                    attr_copy(fval, sizeof fval, src + vs, vl);
                 } else if ((ieq(aname,"type") || ieq(aname,"method")) && !ftype[0]) {
-                    size_t c = vl < sizeof ftype - 1 ? vl : sizeof ftype - 1;
-                    memcpy(ftype, src + vs, c); ftype[c] = 0;
+                    attr_copy(ftype, sizeof ftype, src + vs, vl);
                 } else if (ieq(aname,"border")) {
                     /* Presentational, ancient, and still the only thing that
                      * decides whether an old page's table has rules. */
@@ -391,8 +417,7 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
                     }
                     if (ok2) tbord = v2 > 255 ? 255 : v2;
                 } else if (ieq(aname,"rel") && !frel[0]) {
-                    size_t c = vl < sizeof frel - 1 ? vl : sizeof frel - 1;
-                    memcpy(frel, src + vs, c); frel[c] = 0;
+                    attr_copy(frel, sizeof frel, src + vs, vl);
                 } else if (ieq(aname,"alt") && !alt[0]) {
                     /* alt is not decoration: it is what the page SAYS when the
                      * picture cannot be shown, which for us is often. */

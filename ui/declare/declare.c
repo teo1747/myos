@@ -563,6 +563,17 @@ void ui_set_grid(int cols, float col_gap, float row_gap) {
     struct layout_node *ln = layout_resolve(g_la, b->layout_node);
     if (ln) { ln->grid_cols = cols; ln->grid_col_gap = col_gap; ln->grid_row_gap = row_gap; ln->dirty = true; }
 }
+void ui_set_grid_tracks(const unsigned char *mode, const float *val, int n) {
+    struct instance *b = cur_box(); if (!b) return;
+    struct layout_node *ln = layout_resolve(g_la, b->layout_node);
+    if (!ln) return;
+    if (n > LAYOUT_TRACKS) n = LAYOUT_TRACKS;
+    if (n < 0) n = 0;
+    for (int i = 0; i < n; i++) { ln->grid_track_mode[i] = mode[i]; ln->grid_track_val[i] = val[i]; }
+    ln->grid_ntrack = n;
+    ln->dirty = true;
+}
+
 void ui_set_grid_span(int span) {   /* on the CHILD box */
     struct instance *b = cur_box(); if (!b) return;
     struct layout_node *ln = layout_resolve(g_la, b->layout_node);
