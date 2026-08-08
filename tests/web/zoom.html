@@ -1,0 +1,30 @@
+<html><head><title>Page zoom</title><style>
+body    { color: #d8d8e0; padding: 0 }
+.panel  { background: #1a1a24; padding: 20px; width: 300px }
+h1      { color: #58a6ff }
+.small  { color: #808090 }
+</style></head><body>
+<!-- Page zoom scales the DOCUMENT: the text and the lengths the author stated.
+     Two renders of this one page, at 1.0 and at 2.0, are compared against each
+     other -- so the assertion is about the SCALE and not about any absolute
+     number, which is what makes it survive a font change. -->
+<div class="panel">
+  <h1>ZOOMHEAD</h1>
+  <p>ZOOMBODY at the browser's normal size.</p>
+  <p class="small">ZOOMSMALL is smaller, and stays proportionally smaller.</p>
+</div>
+
+<!-- EXPECT-TEXT: ZOOMHEAD -->
+<!-- Text scales with the zoom... -->
+<!-- EXPECT-ZOOM: ZOOMHEAD 2.0 -->
+<!-- EXPECT-ZOOM: ZOOMBODY 2.0 -->
+<!-- ...at every size, so the page keeps its own hierarchy rather than
+     flattening to one size. -->
+<!-- EXPECT-ZOOM: ZOOMSMALL 2.0 -->
+<!-- A third factor, because a scale that only ever worked at 2 would be a
+     doubling and not a zoom. -->
+<!-- EXPECT-ZOOM: ZOOMBODY 1.5 -->
+<!-- Unzoomed, the small text really is smaller than the heading -- the thing
+     the ratios above are preserving. -->
+<!-- EXPECT-BELOW: ZOOMSMALL ZOOMHEAD -->
+</body></html>

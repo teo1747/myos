@@ -11,6 +11,7 @@ the markup it is about instead of in a table somewhere else:
     <!-- EXPECT-ORDER: FIRST SECOND -->         FIRST's run comes before SECOND's
     <!-- EXPECT-LEFT-OF: RANK TITLE -->         RANK's run starts left of TITLE's
     <!-- EXPECT-BELOW: LASTMARKER Item -->      first arg's run sits below the last of the second
+    <!-- EXPECT-ZOOM: BIGTEXT 2.0 -->           at ZOOM=2 that run is ~2x taller and 2x further right
 
 Every check is against the RESOLVED render -- position and computed colour --
 not against the source, which is the only way to test a cascade.
@@ -39,6 +40,19 @@ def runs_for(path, w=940, h=620):
 
 def find(runs, needle):
     return [r for r in runs if needle in r["text"]]
+
+
+def runs_at_zoom(path, zoom, w=940, h=620):
+    env = dict(os.environ, TEXTDUMP="1", ZOOM=str(zoom))
+    r = subprocess.run([BIN, path, str(w), str(h), "0"],
+                       capture_output=True, text=True, env=env, cwd=ROOT)
+    runs = []
+    for line in r.stdout.splitlines():
+        if line.startswith("RUN|"):
+            _, x, y, rw, rh, col, bg, text = line.split("|", 7)
+            runs.append(dict(x=float(x), y=float(y), w=float(rw), h=float(rh),
+                             color=col, bg=bg, text=text))
+    return runs
 
 
 def find_count(path, needle, w=940, h=620):
@@ -124,6 +138,29 @@ def check_page(path):
                 if a[0]["y"] <= lowest:
                     print("      FAIL %s: %s at y=%.0f is not below %s (lowest y=%.0f)"
                           % (kind, parts[0], a[0]["y"], parts[1], lowest)); fails += 1
+        elif kind == "EXPECT-ZOOM":
+            # Render the SAME page twice at different zooms and compare. A
+            # single render can say nothing about a scale factor -- whatever
+            # zoom did, the numbers at 1.0 would look identical.
+            z = float(parts[1])
+            zr = runs_at_zoom(path, z, w=width)
+            a, b = find(runs, parts[0]), find(zr, parts[0])
+            if not a or not b:
+                print("      FAIL %s: no run contains %r at one of the zooms"
+                      % (kind, parts[0])); fails += 1
+            else:
+                got = b[0]["h"] / a[0]["h"] if a[0]["h"] else 0.0
+                # Glyph heights land on integers, so the ratio is close but not
+                # exact -- 10%% is tight enough to catch "zoom did nothing"
+                # (ratio 1.0) and loose enough to survive rounding.
+                if abs(got - z) > z * 0.10:
+                    print("      FAIL %s: %s scaled %.2fx, expected %.2fx"
+                          % (kind, parts[0], got, z)); fails += 1
+                # ...and the box around it grew too, or the page is big type
+                # in boxes that stayed small.
+                elif b[0]["x"] <= a[0]["x"] and a[0]["x"] > 2:
+                    print("      FAIL %s: %s at x=%.0f did not move right (was %.0f)"
+                          % (kind, parts[0], b[0]["x"], a[0]["x"])); fails += 1
         else:
             print("      FAIL: unknown expectation %s" % kind); fails += 1
 

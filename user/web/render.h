@@ -52,4 +52,9 @@ int  vellum_focused_field(void);
 /* The link under the pointer, for a status line. NULL when none. */
 const char *vellum_hovered_link(void);
 
+/* Page zoom: 1.0 is unzoomed. Scales the document's text and the lengths its
+ * author stated, and leaves the browser's own chrome alone. */
+void  vellum_set_zoom(float z);
+float vellum_zoom(void);
+
 #endif

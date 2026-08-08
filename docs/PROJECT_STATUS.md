@@ -1130,6 +1130,35 @@ write nothing. Frame render went 4946ms -> 170-483ms and scrolling ~4s ->
 1?" once per primitive instead of once per pixel, and a fixed-point stepper in
 the image blit. Every EmUI surface benefits, not just the browser.
 
+**It holds more than one page, and it zooms.** `user/web/tabs.c` is the tab
+model: a tab keeps its URL, title, scroll position, zoom and its own
+back/forward stack, plus the SOURCE BYTES it was built from. It does not keep a
+parsed document -- that arena is bounded at 8192 nodes precisely because a page
+can be hostile, and six of those is six times a bound chosen to be safe. So
+switching re-parses from the retained bytes: no network, no re-POST, and no
+chance of getting a different page than the one you left. The honest cost,
+stated in `tabs.h` rather than discovered later, is that a background tab's
+scripts stop and its DOM is rebuilt on return.
+
+Zoom is PAGE zoom, not UI zoom: `em_set_text_scale` is a bracket the browser
+opens around the document it emits, so the text and the author's stated lengths
+scale while the address bar does not. Bound to `+` / `-` / `0` as bare keys --
+not `Ctrl+=`, because the keyboard driver passes Ctrl+symbol through unchanged
+and binding a chord it cannot distinguish would be a lie about what was pressed.
+The corpus pins it by rendering one page at two zooms and comparing (`EXPECT-ZOOM`);
+a single render could say nothing about a scale factor.
+
+**A toolkit bug the browser made visible.** EmUI matched a container's children
+to last frame's by POSITION, so inserting a row displaced every sibling below
+it -- each adopting its neighbour's retained instance, and with it whatever size
+nobody restated that frame. The browser's find bar had been drawing over its
+address bar for this reason. `EmProps.key` gives a container a reconciliation
+identity, and the rule is to key the rows that STAY, not just the one that comes
+and goes: it is the stable rows that get displaced. `declare-test` T5b pins both
+halves, including an unkeyed control that demonstrates the displacement
+(`48 30 12 0` for rows declared `48 20 30 12`) -- an earlier version of that test
+restated every size each frame and passed while the browser was visibly broken.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

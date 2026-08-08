@@ -332,6 +332,14 @@ static Color argb(unsigned v) {
     return c;
 }
 
+/* The page's zoom. Lengths the AUTHOR stated -- a 240px sidebar, 16px of
+ * padding -- scale with the text, or a zoomed page is large type inside boxes
+ * that did not grow. */
+static float g_zoom = 1.0f;
+void vellum_set_zoom(float z) { g_zoom = (z > 0.2f && z < 6.0f) ? z : 1.0f; }
+float vellum_zoom(void) { return g_zoom; }
+static float zpx(short v) { return (float)v * g_zoom; }
+
 /* justify-content / align-items in the toolkit's spelling. */
 static EmAlign em_of(unsigned char vj, EmAlign dflt) {
     switch (vj) {
@@ -357,7 +365,7 @@ static EmAlign em_of(unsigned char vj, EmAlign dflt) {
 static int g_flex_item;
 
 static void open_box(const struct vstyle *s, EmProps bp) {
-    if (s->gap > 0) bp.spacing = (float)s->gap;
+    if (s->gap > 0) bp.spacing = (float)s->gap * g_zoom;
     if (s->display == VD_FLEX) {
         bp.justify = em_of(s->justify, Leading);
         /* align-items DEFAULTS to stretch in CSS, which is Fill here -- and is
@@ -945,10 +953,10 @@ static void render_block_inner(struct html_doc *d, int node, const struct vstyle
      * margin outside it, which is why they stopped sharing a field once a
      * background could be seen. */
     EmProps bp = { .spacing = 2, .align = Fill,
-                   .pt = (float)(s->margin_top + s->pad_top),
-                   .pb = (float)(s->margin_bottom + s->pad_bottom),
-                   .pl = (float)(s->indent + s->pad_left),
-                   .pr = (float)s->pad_right };
+                   .pt = zpx((short)(s->margin_top + s->pad_top)),
+                   .pb = zpx((short)(s->margin_bottom + s->pad_bottom)),
+                   .pl = zpx((short)(s->indent + s->pad_left)),
+                   .pr = zpx(s->pad_right) };
     if (s->bg)           bp.background = argb(s->bg);
     if (s->border_width) { bp.border = (float)s->border_width;
                            bp.border_color = argb(s->border_color ? s->border_color
@@ -957,8 +965,8 @@ static void render_block_inner(struct html_doc *d, int node, const struct vstyle
     /* flex-grow is a property of the CHILD, and this is where the child is
      * emitted -- so it is read here rather than by whatever contains us. */
     if (s->grow) bp.grow = 1;
-    if (s->width  > 0) bp.width  = (float)s->width;
-    if (s->height > 0) bp.height = (float)s->height;
+    if (s->width  > 0) bp.width  = zpx(s->width);
+    if (s->height > 0) bp.height = zpx(s->height);
 
     int was_item = g_flex_item;
     /* An absolutely positioned box leaves the flow entirely: it stops being a
@@ -1004,7 +1012,11 @@ const char *vellum_render_sized(struct html_doc *d, int root,
     g_sheet = sheet;
     struct vstyle rs;
     vstyle_root(&rs);
+    /* Open the zoom bracket around the DOCUMENT only. The chrome is emitted by
+     * the app outside this call and keeps its own size. */
+    em_set_text_scale(g_zoom);
     if (root >= 0) render_block(d, root, &rs, 0, 0);
+    em_set_text_scale(1.0f);
     g_sheet = 0;
     return g_pending;
 }

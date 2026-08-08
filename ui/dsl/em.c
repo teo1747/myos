@@ -64,6 +64,20 @@ static void utf8_enc(int cp, char *out) {
     else { out[0] = 0xF0 | (c >> 18); out[1] = 0x80 | ((c >> 12) & 0x3F); out[2] = 0x80 | ((c >> 6) & 0x3F); out[3] = 0x80 | (c & 0x3F); out[4] = 0; }
 }
 
+/* PAGE ZOOM, not UI zoom.
+ *
+ * The toolkit's theme scale moves everything, chrome included -- which is what
+ * you want when the whole desktop is too small, and NOT what a browser means
+ * by zoom. A browser scales the DOCUMENT and leaves its own address bar alone.
+ *
+ * So the scale is a bracket the caller opens around the content it is
+ * emitting, rather than a global setting: the browser turns it on before
+ * rendering the page and off afterwards, and the chrome emitted outside those
+ * brackets never sees it. */
+static float g_text_scale = 1.0f;
+void em_set_text_scale(float s) { g_text_scale = (s > 0.05f && s < 20.0f) ? s : 1.0f; }
+float em_text_scale(void) { return g_text_scale; }
+
 static void em_resolve_font(EmFont role, uint32_t *fh, float *sz) {
     const struct ui_theme *t = TH;
     switch (role) {
@@ -74,6 +88,7 @@ static void em_resolve_font(EmFont role, uint32_t *fh, float *sz) {
         case BodyBold: *fh = t->font_bold;    *sz = t->text_body;    break;
         default:       *fh = t->font_regular; *sz = t->text_body;    break;
     }
+    *sz *= g_text_scale;
 }
 static enum layout_align  map_align(EmAlign a) {
     switch (a) { case Leading: return ALIGN_START; case Center: return ALIGN_CENTER;
@@ -182,8 +197,8 @@ void em_flush(void);
 
 /* ---- containers (flush the pending leaf, then open) -------------------- */
 
-void em_vstack_(EmProps p) { em_flush(); ui_begin_vstack(0); em_apply_box(p); }
-void em_hstack_(EmProps p) { em_flush(); ui_begin_hstack(0); if (!p.align) ui_set_align(ALIGN_CENTER); em_apply_box(p); }
+void em_vstack_(EmProps p) { em_flush(); ui_begin_vstack(em_key_hash(p.key)); em_apply_box(p); }
+void em_hstack_(EmProps p) { em_flush(); ui_begin_hstack(em_key_hash(p.key)); if (!p.align) ui_set_align(ALIGN_CENTER); em_apply_box(p); }
 /* Flow: a horizontal stack whose children wrap onto new lines (flex-wrap). */
 /* Flow FILLS its width, like Grid right below it. A wrap container sized to
  * its content has nothing to wrap against -- the sum of the children IS its
@@ -284,7 +299,7 @@ void em_navbar_(const char *title, EmProps p) {
     }
     ui_spacer();
 }
-void em_scroll_(float *scroll_y, float viewport_h, EmProps p) { em_flush(); ui_scroll_begin(0, viewport_h, scroll_y); em_apply_box(p); }
+void em_scroll_(float *scroll_y, float viewport_h, EmProps p) { em_flush(); ui_scroll_begin(em_key_hash(p.key), viewport_h, scroll_y); em_apply_box(p); }
 void em_scroll_end_(void) { em_flush(); ui_scroll_end(); }
 
 /* ======================================================================= */
@@ -582,7 +597,29 @@ EmV em_search_field(char *buf, size_t cap, const char *ph){ EmV v = stage(PK_SEA
 EmV em_spinner(void){ return stage(PK_SPINNER); }
 EmV em_dropdown(const char *const *labels, int count, int *sel){ EmV v = stage(PK_DROPDOWN); P.labels = labels; P.count = count; P.bind = sel; return v; }
 void em_spacer_(void){ em_flush(); ui_spacer(); }
+
+/* A key string to the integer the declare layer matches on. FNV-1a, and never
+ * zero -- zero is how ui_begin_* spells "no key", so a string that hashed to it
+ * would silently go back to positional matching. */
+uint64_t em_key_hash(const char *k) {
+    if (!k || !k[0]) return 0;
+    uint64_t h = 1469598103934665603ULL;
+    for (const unsigned char *p = (const unsigned char *)k; *p; p++) {
+        h ^= *p; h *= 1099511628211ULL;
+    }
+    return h ? h : 1;
+}
 void em_divider_(void){ em_flush(); ui_divider(); }
+void em_divider_k_(const char *key) {
+    if (!key || !key[0]) { em_divider_(); return; }
+    /* A divider is a one-pixel box, so it is the easiest thing in a column for
+     * an inserted row to be mistaken for. Wrapping it in a keyed box is what
+     * stops that. */
+    em_flush();
+    ui_box_begin(em_key_hash(key));
+    ui_divider();
+    ui_box_end();
+}
 
 /* ======================================================================= */
 /* emitters                                                                */

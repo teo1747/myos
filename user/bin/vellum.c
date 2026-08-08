@@ -38,6 +38,7 @@
 #include "cookie.h"
 #include "find.h"
 #include "history.h"
+#include "tabs.h"
 #include "store.h"
 
 /* One document at a time, in fixed arenas. A browser that can be handed a
@@ -46,7 +47,11 @@
 #define NODE_MAX  8192
 #define STR_MAX   (256 * 1024)
 
-static char             g_src[SRC_MAX];      /* the document being DISPLAYED */
+/* The bytes of the page being DISPLAYED. They live in the current TAB rather
+ * than in one buffer here, because a background tab has to keep its own -- see
+ * tabs.h for why the tab keeps its source and not its parsed document. */
+#define g_src      (tab_src(tab_current()))
+#define G_SRC_MAX  TAB_SRC_MAX
 /* ...and a second buffer for the one being FETCHED. They cannot be the same
  * buffer: html_parse stores pointers INTO the source, so every text node of
  * the page on screen points into g_src. A worker writing the next response
@@ -134,12 +139,15 @@ static void update_status(void) {
 static float g_scroll = 0;
 
 /* Back/forward, the same shape Files uses -- "back" alone is half a history. */
-static char g_back[24][512]; static int g_back_n;
-static char g_fwd[24][512];  static int g_fwd_n;
+/* Back and forward belong to the TAB -- see tabs.c. A shared stack would make
+ * "back" in one tab go to a page you were reading in another. */
 
 /* A navigation requested by a click, acted on AFTER the frame: the href lives
  * in the arena the load is about to overwrite. */
 static char g_goto[512] = "";
+/* Tab clicks, deferred to the top of the next frame -- see where they are
+ * acted on. */
+static int  g_switch_to = -1, g_close_tab = -1, g_new_tab = 0;
 static void on_link(const char *href) { (void)href; }
 
 /* A script's output has to go SOMEWHERE a person can see, or console.log is a
@@ -198,7 +206,7 @@ static void on_console(const char *line) {
  * you cannot debug -- so failures are DOCUMENTS, and go through exactly the
  * same parse/style/render path as any other page. */
 static void load_error(const char *url, const char *why) {
-    snprintf(g_src, sizeof g_src,
+    snprintf(g_src, G_SRC_MAX,
              "<h1>Cannot open this page</h1>"
              "<p>%s</p><p><b>%s</b></p>"
              "<p>Vellum reads documents from the filesystem in this build. "
@@ -209,6 +217,42 @@ static void load_error(const char *url, const char *why) {
     imgcache_reset();
     vsel_reset();
     snprintf(g_status, sizeof g_status, "%s", why);
+}
+
+/* Make the current tab's retained bytes the LIVE document: parse them, build
+ * the cascade, and give the page a fresh JS world.
+ *
+ * Two callers, and the fact that they are the same code is the point. One is a
+ * fetch landing. The other is a TAB SWITCH -- a tab keeps its source rather
+ * than its parsed document (tabs.h says why), so returning to one runs exactly
+ * the pipeline the page ran when it first arrived, with no second path that
+ * could disagree about what the page means.
+ *
+ * Returns 0, or -1 having already shown the error page. */
+static int install_document(size_t n) {
+    g_root = html_parse(&g_doc, g_src, n, g_nodes, NODE_MAX, g_strs, STR_MAX);
+    if (g_root < 0) { load_error(g_url, "The document could not be parsed."); return -1; }
+    /* the author's stylesheet, borrowed from the document arena (which is why
+     * it is parsed here, once, and not per frame) */
+    cssref_start(&g_doc, g_url);
+    rebuild_sheet();
+    imgcache_reset();          /* one page's pictures never leak into the next */
+    vsel_reset();              /* ...nor does a selection: it indexed the OLD words */
+    form_reset();              /* ...nor one page's typing into the next */
+
+    /* A NEW WORLD per page: the engine is torn down and rebuilt, so a script
+     * cannot outlive the document that wrote it, and one page's globals can
+     * never be read by the next. Then run what the page brought. */
+    g_console[0] = 0;
+    jsdom_set_console(on_console);
+    jsdom_set_url(g_url);
+    if (jsdom_open(&g_doc, &g_sheet) == 0 && g_doc.n_js > 0) {
+        int failed = jsdom_run_scripts();
+        jsdom_take_dirty();     /* the first render happens anyway */
+        if (failed && !g_console[0])
+            snprintf(g_console, sizeof g_console, "%d script(s) threw", failed);
+    }
+    return 0;
 }
 
 /* Starting a load no longer BLOCKS. A TLS handshake to a real host is several
@@ -251,31 +295,11 @@ static void finish_load(const struct vnet_result *res) {
 
     /* Now, and only now, is it safe: the fetch is done, so nothing is writing
      * g_incoming and nothing is reading the old g_src any more. */
-    size_t n = res->len < sizeof g_src - 1 ? res->len : sizeof g_src - 1;
+    size_t n = res->len < G_SRC_MAX - 1 ? res->len : G_SRC_MAX - 1;
     memcpy(g_src, g_incoming, n);
     g_src[n] = 0;
-    g_root = html_parse(&g_doc, g_src, n, g_nodes, NODE_MAX, g_strs, STR_MAX);
-    if (g_root < 0) { load_error(g_url, "The document could not be parsed."); return; }
-    /* the author's stylesheet, borrowed from the document arena (which is why
-     * it is parsed here, once, and not per frame) */
-    cssref_start(&g_doc, g_url);
-    rebuild_sheet();
-    imgcache_reset();          /* one page's pictures never leak into the next */
-    vsel_reset();              /* ...nor does a selection: it indexed the OLD words */
-    form_reset();              /* ...nor one page's typing into the next */
-
-    /* A NEW WORLD per page: the engine is torn down and rebuilt, so a script
-     * cannot outlive the document that wrote it, and one page's globals can
-     * never be read by the next. Then run what the page brought. */
-    g_console[0] = 0;
-    jsdom_set_console(on_console);
-    jsdom_set_url(g_url);
-    if (jsdom_open(&g_doc, &g_sheet) == 0 && g_doc.n_js > 0) {
-        int failed = jsdom_run_scripts();
-        jsdom_take_dirty();     /* the first render happens anyway */
-        if (failed && !g_console[0])
-            snprintf(g_console, sizeof g_console, "%d script(s) threw", failed);
-    }
+    tab_set_src_len(tab_current(), n);
+    if (install_document(n) != 0) return;
 
     /* A response may have set a cookie, so the jar is written after a load
      * rather than on a timer: the moment it can have changed is the moment
@@ -294,6 +318,10 @@ static void finish_load(const struct vnet_result *res) {
             }
         hist_add(g_url, t, embk_now_unix());
         hist_save();
+        /* ...and name the TAB with the same title, so the strip says what the
+         * page is rather than where it came from. */
+        tab_set_title(tab_current(), t);
+        tab_set_url(tab_current(), g_url);
     }
     g_st.status = res->status;
     snprintf(g_st.via, sizeof g_st.via, "%s", res->via);
@@ -335,25 +363,128 @@ static int about_page(const char *url) {
 
 static void navigate(const char *url) {
     if (!url || !url[0]) return;
-    if (g_url[0]) {
-        if (g_back_n == 24) { memmove(g_back, g_back + 1, sizeof g_back - sizeof g_back[0]); g_back_n--; }
-        snprintf(g_back[g_back_n++], sizeof g_back[0], "%s", g_url);
-    }
-    g_fwd_n = 0;
+    if (g_url[0]) tab_hist_push(tab_current(), g_url);
     load(url);
 }
 
 static void go_back(void) {
-    if (!g_back_n) return;
-    if (g_fwd_n < 24) snprintf(g_fwd[g_fwd_n++], sizeof g_fwd[0], "%s", g_url);
-    char to[512]; snprintf(to, sizeof to, "%s", g_back[--g_back_n]);
-    load(to);
+    char to[512];
+    if (tab_hist_back(tab_current(), g_url, to, sizeof to) == 0) load(to);
 }
 static void go_fwd(void) {
-    if (!g_fwd_n) return;
-    if (g_back_n < 24) snprintf(g_back[g_back_n++], sizeof g_back[0], "%s", g_url);
-    char to[512]; snprintf(to, sizeof to, "%s", g_fwd[--g_fwd_n]);
-    load(to);
+    char to[512];
+    if (tab_hist_fwd(tab_current(), g_url, to, sizeof to) == 0) load(to);
+}
+
+/* --- tabs ---------------------------------------------------------------- *
+ *
+ * Switching is: put down what this tab was holding, pick up what that one was,
+ * and rebuild its document from the bytes it kept. Everything a tab remembers
+ * is written back BEFORE the switch, because after it the globals belong to
+ * somebody else.
+ */
+static void tab_stash(void) {
+    int c = tab_current();
+    tab_set_url(c, g_url);
+    tab_set_scroll(c, g_scroll);
+    tab_set_zoom(c, vellum_zoom());
+    /* The page's own title, so the tab is named by what it IS. */
+    for (int i = 0; i < g_doc.n; i++)
+        if (g_doc.nodes[i].kind == HTML_ELEM && !strcmp(g_doc.nodes[i].tag, "title")) {
+            int k = g_doc.nodes[i].first_child;
+            if (k >= 0 && g_doc.nodes[k].text) tab_set_title(c, g_doc.nodes[k].text);
+            break;
+        }
+}
+
+/* Pick up tab `i`'s state as the live one. Assumes it is ALREADY current --
+ * separate from show_tab so that closing the tab you are looking at can land
+ * on its neighbour without pretending to switch away from a tab that is gone.
+ */
+/* Where this tab was, and how many frames to keep insisting on it.
+ *
+ * ScrollView clamps the offset to the content height it measured LAST frame --
+ * a one-frame lag that is invisible while a page stays put and exactly wrong
+ * when the document is swapped underneath it. Returning from a short page to a
+ * long one, the saved offset was clamped against the SHORT page's extents and
+ * came back as zero, so every tab you went back to had forgotten where you
+ * were. Re-asserting it for a few frames outlives the lag. */
+static float g_want_scroll; static int g_want_frames;
+
+static void adopt_tab(int i) {
+    snprintf(g_url, sizeof g_url, "%s", tab_url(i));
+    snprintf(g_bar, sizeof g_bar, "%s", tab_url(i));
+    vellum_set_zoom(tab_zoom(i));
+    find_close();              /* a find belongs to the page it was run against */
+
+    size_t n = tab_src_len(i);
+    if (n) {
+        install_document(n);
+        /* AFTER the parse: install_document resets the view, and the scroll
+         * offset is the one thing about this tab that must survive it. */
+        g_scroll = g_want_scroll = tab_scroll(i);
+        g_want_frames = 3;
+        /* The status line describes THIS page. Leaving the previous tab's
+         * numbers there is a line that lies about the document on screen --
+         * and "new tab, 167 bytes" under a 2384-byte page is exactly the kind
+         * of small lie that costs an hour later. What is honestly known here
+         * is the size and where the bytes came from. */
+        memset(&g_st, 0, sizeof g_st);
+        g_st.status = 200; g_st.bytes = n;
+        snprintf(g_st.via, sizeof g_st.via, "this tab");
+    } else if (g_url[0]) {
+        load(g_url);           /* a tab opened but never visited */
+    } else {
+        /* An empty new tab still has to be a document, because everything
+         * downstream of here renders one. */
+        snprintf(g_src, G_SRC_MAX,
+                 "<html><head><title>New tab</title></head><body>"
+                 "<h1>New tab</h1><p>Type an address above, or open "
+                 "<a href=\"/system/web/index.html\">the start page</a>.</p>"
+                 "</body></html>");
+        size_t sn = strlen(g_src);
+        tab_set_src_len(i, sn);
+        install_document(sn);
+        g_scroll = 0;
+        /* ...and it is not the previous page's response, so the status line
+         * must stop reporting that page's size and origin. */
+        memset(&g_st, 0, sizeof g_st);
+        g_st.status = 200; g_st.bytes = sn;
+        snprintf(g_st.via, sizeof g_st.via, "new tab");
+    }
+    update_status();
+    em_request_frame();
+}
+
+static void show_tab(int i) {
+    if (i == tab_current() || i < 0 || i >= TAB_MAX) return;
+    /* A fetch in flight writes into g_incoming and finishes into whatever tab
+     * is current when it lands -- which would be the WRONG tab. Refusing is
+     * honest and momentary; the alternative is a page appearing in a tab you
+     * were not looking at. */
+    if (fetchjob_busy()) {
+        snprintf(g_status, sizeof g_status, "Still loading -- one page at a time");
+        return;
+    }
+    tab_stash();
+    if (tab_select(i) != 0) return;
+    adopt_tab(i);
+}
+
+static void new_tab(const char *url) {
+    int i = tab_open(url);
+    if (i < 0) { snprintf(g_status, sizeof g_status, "No room for another tab"); return; }
+    show_tab(i);
+}
+
+static void close_tab(int i) {
+    if (tab_count() <= 1) return;      /* the last tab stays; see tabs.c */
+    int was = tab_current();
+    int landed = tab_close(i);
+    /* Closing a BACKGROUND tab changes nothing on screen, and must not
+     * re-parse -- otherwise closing tab 3 would visibly reload tab 1. */
+    if (i != was) return;
+    adopt_tab(landed);
 }
 
 /* Keyboard paging: Space a page down, 'b' a page up -- every browser's oldest
@@ -424,6 +555,36 @@ static void selection_tick(void) {
 static char g_find_buf[96];
 
 static int vellum_key(int ch) {
+    /* ZOOM: + and - and 0, as BARE keys while nothing has focus -- the same
+     * rule Space and b already follow for paging.
+     *
+     * Not Ctrl+= as every desktop browser uses, because the keyboard driver
+     * turns Ctrl+letter into a control byte and passes Ctrl+SYMBOL through
+     * unchanged (keyboard.c is explicit about that, so Ctrl+digit does not
+     * become a stray control code). Ctrl+= and plain = are therefore the same
+     * byte here, and binding "Ctrl+=" would be a lie about what was pressed.
+     * Teaching the driver to report modifiers with symbols is the real fix and
+     * belongs in the driver; see docs/TODO.md.
+     *
+     * The page scales; the address bar does not -- see vellum_set_zoom. */
+    if (!ui_any_focus()) {
+        if (ch == '=' || ch == '+') { vellum_set_zoom(vellum_zoom() * 1.2f); em_request_frame(); return 1; }
+        if (ch == '-' || ch == '_') { vellum_set_zoom(vellum_zoom() / 1.2f); em_request_frame(); return 1; }
+        if (ch == '0')              { vellum_set_zoom(1.0f);                 em_request_frame(); return 1; }
+    }
+    /* Tabs. Ctrl+T / Ctrl+W are letters, so the driver DOES give them as
+     * control bytes -- unlike the zoom keys above, which is why these two get
+     * the shortcut everyone already knows and those do not. */
+    if (ch == 0x14) { new_tab("");   return 1; }   /* Ctrl+T */
+    if (ch == 0x17) { close_tab(tab_current()); return 1; }   /* Ctrl+W */
+    if (ch == '\t' && !ui_any_focus()) {          /* cycle, wrapping */
+        int n = tab_current();
+        for (int k = 1; k <= TAB_MAX; k++) {
+            int c = (n + k) % TAB_MAX;
+            if (c != n && tab_is_open(c)) { show_tab(c); break; }
+        }
+        return 1;
+    }
     if (ch == 0x06) {                     /* Ctrl+F */
         find_open();
         em_request_frame();
@@ -476,6 +637,7 @@ static void app(void) {
     if (first) {
         first = false;
         em_set_key_hook(vellum_key);
+        tab_init();                  /* one tab, before anything can load into it */
         /* The jar's clock. cookie.c takes no syscall dependency of its own, so
          * the app is what tells it what time it is. */
         cookie_set_clock(embk_now_unix);
@@ -585,6 +747,25 @@ static void app(void) {
 
     selection_tick();
 
+    if (g_want_frames > 0) { g_want_frames--; g_scroll = g_want_scroll; em_request_frame(); }
+
+    /* Tab actions from LAST frame's clicks, before this one is built. Same
+     * reason as g_goto below, only sharper: switching tabs replaces the whole
+     * document, and doing that while the view is walking it frees the nodes
+     * out from under the walk. */
+    if (g_switch_to >= 0) { int t = g_switch_to; g_switch_to = -1; show_tab(t); }
+    if (g_close_tab >= 0) { int t = g_close_tab; g_close_tab = -1; close_tab(t); }
+    if (g_new_tab)        { g_new_tab = 0; new_tab(""); }
+    /* The strip APPEARS at two tabs and disappears at one, and either way every
+     * row below it moves. The runtime's incremental repaint would paint the new
+     * layout over the old pixels -- which is what a second tab looked like the
+     * first time: the address bar drawn on top of the title bar. A structural
+     * frame clears first. The find bar has the same shape and gets the same
+     * treatment, for the same reason. */
+    { static int last_rows = -1;
+      int rows = (tab_count() > 1 ? 1 : 0) | (find_is_open() ? 2 : 0);
+      if (rows != last_rows) { last_rows = rows; em_structure_changed(); } }
+
     /* act on last frame's click before building this one */
     if (g_goto[0]) {
         /* Resolve against where we ARE. A relative href in a page fetched over
@@ -606,15 +787,57 @@ static void app(void) {
                 navigate("about:history");
         }
 
+        /* THE TAB STRIP, above the address bar -- because the address belongs
+         * to the tab, and a bar that sits above the thing it describes reads
+         * as belonging to the window instead. Only when there is more than one
+         * tab: a strip showing a single tab is a row of chrome that tells you
+         * nothing, and this window is not tall. */
+        if (tab_count() > 1) {
+            /* KEYED, along with every other row below. Rows that come and go
+             * -- this strip, the find bar -- are otherwise matched to last
+             * frame's by position, so the moment one appears every row after it
+             * adopts its neighbour's retained instance and the whole chrome is
+             * laid out as something else. See EmProps.key. */
+            HStack(.spacing = 4, .align = Center, .px = 10, .py = 4, .key = "tabstrip") {
+                /* .id() is a reconciliation KEY and takes a string. Stable
+                 * per SLOT rather than per label, so a tab whose title arrives
+                 * later is still the same widget and does not inherit the
+                 * geometry of whatever last held that position. */
+                static const char *KEY[TAB_MAX]   = { "t0","t1","t2","t3","t4","t5" };
+                static const char *KEYX[TAB_MAX]  = { "x0","x1","x2","x3","x4","x5" };
+                for (int i = 0; i < TAB_MAX; i++) {
+                    if (!tab_is_open(i)) continue;
+                    char lbl[28];
+                    snprintf(lbl, sizeof lbl, "%.24s", tab_label(i));
+                    /* The current tab is the SOLID one. Which tab you are on
+                     * has to be readable without counting. */
+                    if (i == tab_current()) {
+                        Button(lbl).primary().font(Caption).py(2).id(KEY[i]);
+                    } else if (Button(lbl).ghost().font(Caption).py(2).id(KEY[i]).clicked()) {
+                        g_switch_to = i;
+                    }
+                    if (Button("x").ghost().font(Caption).py(2).px(4).id(KEYX[i]).clicked())
+                        g_close_tab = i;
+                }
+                if (Button("+").ghost().font(Caption).py(2).id("tnew").clicked()) g_new_tab = 1;
+                /* No Spacer here on purpose. It has no key, and it sits AFTER
+                 * a variable number of tab buttons -- so opening a third tab
+                 * shifted it a position and the grow landed on a button, which
+                 * showed up as a ragged gap in the middle of the strip. The
+                 * row is left-aligned without one. */
+            }
+            Divider("tabsep");
+        }
+
         /* the address row: the widest thing in the chrome, as it should be */
-        HStack(.spacing = 8, .align = Center, .px = 12, .py = 6) {
+        HStack(.spacing = 8, .align = Center, .px = 12, .py = 6, .key = "urlrow") {
             if (TextField(g_bar, sizeof g_bar, "Path or URL").focused()) { }
             if (Button("Open").primary().font(Caption).py(2).clicked()) navigate(g_bar);
         }
         /* The find bar, only when it is open -- a browser that shows one
          * always has given up a line of the page for something you use once. */
         if (find_is_open()) {
-            HStack(.spacing = 8, .align = Center, .px = 12, .py = 4) {
+            HStack(.spacing = 8, .align = Center, .px = 12, .py = 4, .key = "findrow") {
                 Text("Find").caption().tertiary();
                 if (TextField(g_find_buf, sizeof g_find_buf, "text on this page").focused()) { }
                 char n[48];
@@ -626,7 +849,7 @@ static void app(void) {
                 if (Button("Next").ghost().font(Caption).py(2).clicked()) find_step(1);
                 if (Button("Done").ghost().font(Caption).py(2).clicked()) find_close();
             }
-            Divider();
+            Divider("findsep");
             /* The field is the truth; the module is told what it says. Polling
              * beats a change callback here because the toolkit edits the buffer
              * in place -- the same reason 'input' events are a poll. */
@@ -642,9 +865,16 @@ static void app(void) {
             }
         }
 
-        Divider();
+        Divider("chromesep");
 
-        ScrollView(&g_scroll, em_viewport_height() - (find_is_open() ? 168.0f : 132.0f)) {
+        /* What the chrome costs, counted rather than guessed: the base rows,
+         * plus each optional one. Guessing it (a single 132/168 constant) is
+         * what made the tab strip push the document off the bottom the moment
+         * a second tab existed. */
+        float chrome = 132.0f;
+        if (find_is_open())  chrome += 36.0f;
+        if (tab_count() > 1) chrome += 36.0f;
+        ScrollView(&g_scroll, em_viewport_height() - chrome, .key = "page") {
             /* Fill, not Leading: this is the block every other block inherits
              * its width from. Left it Leading and the whole document sizes to
              * its longest line instead of to the window, so nothing wraps. */
@@ -660,8 +890,8 @@ static void app(void) {
             }
         }
 
-        Divider();
-        HStack(.spacing = 10, .align = Center, .px = 12, .py = 4) {
+        Divider("statussep");
+        HStack(.spacing = 10, .align = Center, .px = 12, .py = 4, .key = "statusrow") {
             /* what the PAGE said outranks what the browser has to say: a
              * script's output is the thing the reader is waiting for. */
             const char *h = vellum_hovered_link();

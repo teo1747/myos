@@ -12,6 +12,7 @@
 #include "style.h"
 #include "css.h"
 #include "cookie.h"
+#include "tabs.h"
 #include "png.h"
 #include "png_fixtures.h"
 #include "form.h"
@@ -885,6 +886,79 @@ static void t21_jpeg(void) {
     CHECK(ok, "every truncation either refuses or decodes at the right size");
 }
 
+/* --- t24: tabs ----------------------------------------------------------- *
+ *
+ * The tab model is bookkeeping with no syscalls in it, which is exactly the
+ * kind of thing that is worth testing here: every rule below ("closing the
+ * last tab is refused", "a new place clears forward") is a rule someone will
+ * otherwise discover by losing a page.
+ */
+static void t24_tabs(void) {
+    printf("\n-- t24: tabs --\n");
+    tab_init();
+    CHECK(tab_count() == 1 && tab_current() == 0, "a browser starts with one tab");
+
+    tab_set_url(0, "http://a.example/one");
+    int b = tab_open("http://b.example/two");
+    CHECK(b == 1 && tab_count() == 2, "opening gives a second tab");
+    CHECK(tab_current() == 0, "...and does NOT steal focus: opening in the "
+                              "background is the common case");
+
+    /* Each tab keeps its own place. This is the whole feature. */
+    tab_set_scroll(0, 640.0f);
+    tab_set_scroll(1, 20.0f);
+    tab_set_zoom(1, 1.44f);
+    CHECK(tab_select(1) == 0, "switching reports that it changed");
+    CHECK(tab_select(1) == -1, "...and reports that it did not, when it did not");
+    CHECK(tab_scroll(0) == 640.0f && tab_scroll(1) == 20.0f,
+          "each tab keeps its own scroll position");
+    CHECK(tab_zoom(1) > 1.4f && tab_zoom(0) == 1.0f, "...and its own zoom");
+
+    /* The retained source: what makes a background tab re-showable without
+     * going back to the network. */
+    tab_set_src(0, "<h1>ONE</h1>", 12);
+    tab_set_src(1, "<h1>TWO</h1>", 12);
+    CHECK(tab_src_len(0) == 12 && !memcmp(tab_src(0), "<h1>ONE</h1>", 12),
+          "a background tab keeps the bytes it was built from");
+    CHECK(tab_src(0) != tab_src(1), "...in its own buffer, not a shared one");
+
+    /* Per-tab history. Tab 1's back stack must not see tab 0's pages. */
+    tab_hist_push(0, "http://a.example/one");
+    tab_set_url(0, "http://a.example/deeper");
+    CHECK(tab_can_back(0) && !tab_can_back(1), "history is per tab, not global");
+    char out[TAB_URL_MAX];
+    CHECK(tab_hist_back(0, tab_url(0), out, sizeof out) == 0 &&
+          !strcmp(out, "http://a.example/one"), "back goes where it went");
+    CHECK(tab_can_fwd(0), "...and leaves a forward");
+    tab_hist_push(0, "http://a.example/one");
+    CHECK(!tab_can_fwd(0), "a new destination CLEARS forward -- you branched");
+
+    /* Labels: a tab with no title is still clickable. */
+    CHECK(!strcmp(tab_label(1), "two"), "a titleless tab is named from its URL");
+    tab_set_title(1, "Second page");
+    CHECK(!strcmp(tab_label(1), "Second page"), "...and by its title once it has one");
+    int t2 = tab_open("http://c.example/");
+    CHECK(!strcmp(tab_label(t2), "c.example"),
+          "a trailing slash names the tab after the host, not nothing");
+
+    /* Closing. */
+    CHECK(tab_select(t2) == 0, "");
+    int now = tab_close(t2);
+    CHECK(now == 1, "closing the current tab lands on its left neighbour");
+    CHECK(tab_count() == 2, "...and the count drops");
+    CHECK(tab_scroll(1) == 20.0f, "the tab you land on still knows where it was");
+
+    tab_close(1);
+    CHECK(tab_count() == 1 && tab_current() == 0, "closing down to one works");
+    int before = tab_current();
+    CHECK(tab_close(0) == before && tab_count() == 1,
+          "closing the LAST tab is refused -- a browser with no tabs shows nothing");
+
+    /* Bounded, like everything else a page can drive. */
+    while (tab_open("http://x/") >= 0) { }
+    CHECK(tab_count() == TAB_MAX, "tabs are capped, and opening past the cap refuses");
+}
+
 int main(void) {
     printf("=== html-test ===\n");
     t1_structure(); t2_implicit_close(); t3_void_and_attrs(); t4_entities();
@@ -895,6 +969,7 @@ int main(void) {
     t17b_image_sizing(); t17c_forms(); t18_png_basics(); t19_png_palette_and_filters(); t20_png_hostile();
     t22_linkcss();
     t23_cookies();
+    t24_tabs();
     t21_jpeg();
     printf("=== html-test: %s (%d failures) ===\n", failures ? "FAIL" : "OK", failures);
     return failures ? 1 : 0;

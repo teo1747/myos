@@ -614,6 +614,8 @@ build/web_find.o: user/web/find.c user/web/find.h user/web/select.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(UIDEMO_INC) -Iuser/web -c $< -o $@
 build/web_history.o: user/web/history.c user/web/history.h user/web/store.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
+build/web_tabs.o: user/web/tabs.c user/web/tabs.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
 build/web_select.o: user/web/select.c user/web/select.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(UIDEMO_INC) -Iuser/web -c $< -o $@
 build/web_cssref.o: user/web/cssref.c user/web/cssref.h user/web/html.h | $(BUILD)
@@ -622,7 +624,7 @@ VELLUM_OBJS := build/vellum.o build/web_html.o build/web_style.o build/web_rende
                build/web_url.o build/web_net.o build/web_fetchjob.o \
                build/web_css_decl.o build/web_css_sel.o build/web_css_sheet.o build/web_css_vars.o build/web_css_media.o build/web_css_calc.o \
                build/web_png.o build/web_jpeg.o build/web_imgcache.o build/pkg_inflate.o \
-               build/web_form.o build/web_select.o build/web_cssref.o build/web_cookie.o build/web_store.o build/web_find.o build/web_history.o
+               build/web_form.o build/web_select.o build/web_cssref.o build/web_cookie.o build/web_store.o build/web_find.o build/web_history.o build/web_tabs.o
 VELLUM_JS := $(if $(HAVE_QJS),build/web_jsdom.o $(QJS_OBJS),)
 build/vellum.elf: build/crt0.o build/syscalls.o $(VELLUM_OBJS) $(VELLUM_JS) $(TLS_LIB_OBJS) build/libembk.so
 	$(USER_CC) $(NEWLIB_DYN_LDFLAGS) build/crt0.o build/syscalls.o $(VELLUM_OBJS) \
@@ -1865,7 +1867,7 @@ html-test:
 	    user/web/html.c user/web/url.c user/web/style.c \
 	    user/web/css/decl.c user/web/css/sel.c user/web/css/sheet.c user/web/css/vars.c user/web/css/media.c user/web/css/calc.c \
 	    user/web/png.c user/web/jpeg.c user/lib/inflate.c user/web/form.c \
-	    user/web/cookie.c user/web/store.c user/web/find.c \
+	    user/web/cookie.c user/web/store.c user/web/tabs.c \
 	    user/web/html_test.c -o $(BUILD)/html_test
 	$(BUILD)/html_test
 
@@ -1996,6 +1998,7 @@ BROWSER_RENDER_SRCS := $(V2_SRC) user/web/html.c user/web/style.c user/web/rende
                        user/web/url.c user/web/png.c user/web/jpeg.c user/lib/inflate.c \
                        user/web/form.c user/web/select.c user/web/cookie.c \
                        user/web/store.c user/web/find.c user/web/history.c \
+                       user/web/tabs.c \
                        user/web/render_host.c \
                        $(BROWSER_RENDER_JS)
 BROWSER_RENDER_HDRS := $(wildcard user/web/*.h) $(wildcard user/web/css/*.h) \
@@ -2063,3 +2066,4 @@ test-tls-crypto:
 	    user/lib/tls/x509/asn1.c user/lib/tls/x509/cert.c user/lib/tls/x509/trust.c kernel/crypto/sha256.c \
 	    user/lib/tls/crypto/sha512.c user/lib/tls/crypto/bignum.c user/lib/tls/crypto/ecdsa.c user/lib/tls/crypto/rsa.c \
 	    tools/tls/test_constraints.c -o /tmp/embk_test_constraints && /tmp/embk_test_constraints
+

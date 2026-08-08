@@ -95,6 +95,26 @@ typedef struct {
     /* variants */
     EmStyle style;
     EmTone  tone;
+
+    /* RECONCILIATION KEY. Optional, and only matters for a container whose
+     * PRESENCE varies -- a bar that appears when you open it, a row that shows
+     * up when there are two of something.
+     *
+     * Instances are otherwise matched to last frame's by POSITION, which is
+     * right until a row is inserted: then every sibling after it adopts its
+     * neighbour's retained instance, and since a reused instance keeps the
+     * size nobody restated, the whole panel comes back wearing the wrong
+     * geometry. (This is exactly what a browser's find bar and tab strip did:
+     * one appeared and the rows below it were laid out as each other.)
+     *
+     * A key makes the match by identity instead. Give one to every child of a
+     * container that some sibling can be inserted into -- the STABLE rows as
+     * much as the optional one, since it is the stable rows that get displaced.
+     *
+     * ADDED AT THE END on purpose: EmProps is passed by value across
+     * libembk.so, and a field inserted in the middle silently reinterprets
+     * every positional initializer that already exists. */
+    const char *key;
 } EmProps;
 
 /* ------------------------------------------------------------------------- */
@@ -239,7 +259,10 @@ struct EmV {
 #define PasswordField(...) em_password_field(__VA_ARGS__)
 #define Segmented(...)   em_segmented(__VA_ARGS__)
 #define Spacer()         em_spacer_()
-#define Divider()        em_divider_()
+/* Divider() as before; Divider("key") when it sits among rows that come and
+ * go -- see EmProps.key. The concatenation makes the no-argument form pass an
+ * empty key, so every existing call is unchanged. */
+#define Divider(...)     em_divider_k_("" __VA_ARGS__)
 
 EmV em_text(const char *s);
 EmV em_icon(int codepoint);
@@ -260,6 +283,8 @@ EmV em_password_field(char *buf, size_t cap, const char *placeholder);
 EmV em_segmented(const char *const *labels, int count, int *bind);
 void em_spacer_(void);
 void em_divider_(void);
+void em_divider_k_(const char *key);
+uint64_t em_key_hash(const char *key);
 
 /* --- richer components --- */
 /* Chart: a mini bar chart (values scaled to the max; last bar emphasised). */
@@ -604,6 +629,13 @@ void em_set_idle_hook(void (*fn)(void));
  * produced yet. That is exactly what a text SELECTION needs: where the words
  * ended up, in time to mark the selected ones. NULL = off. */
 void em_set_post_layout_hook(void (*fn)(void));
+
+/* PAGE ZOOM. A bracket the caller opens around the content it emits, not a
+ * global setting -- so a browser can scale the document and leave its own
+ * chrome alone, which is the difference between page zoom and UI zoom. 1.0 is
+ * off; set it back when the content ends. */
+void  em_set_text_scale(float s);
+float em_text_scale(void);
 
 /* ---- desktop widgets (V5) ----------------------------------------------- *
  * A widget is a small always-on-desktop window: chromeless, z-banded ABOVE

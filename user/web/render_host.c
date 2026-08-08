@@ -307,6 +307,11 @@ int main(int argc, char **argv) {
      * the document is laid out at, so `(min-width: N)` means what the page
      * thinks it means */
     css_media_set((float)W, (float)H, 1);
+    /* ZOOM=1.5 renders the page as if the user had pressed + twice. The corpus
+     * uses it to render one page at two zooms and compare the geometry, which
+     * is the only way to test a scale: a single render at 1.0 would pass no
+     * matter what zoom did. */
+    if (getenv("ZOOM")) vellum_set_zoom((float)atof(getenv("ZOOM")));
     cssref_start(&g_doc, g_doc_base);
     {
         static char allcss[320 * 1024];

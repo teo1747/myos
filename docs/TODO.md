@@ -2626,3 +2626,35 @@ Encrypt/RSA), `test wget https`, `test pypi`.
       unaffected either way. Verify by pressing Space in Vellum with the URL
       bar unfocused; if it does not page, instrument vellum_key with a serial
       print first.
+
+### Browser: tabs and zoom (shipped; the parts deliberately left out)
+
+- [ ] A background tab's SCRIPTS do not run and its DOM is rebuilt from source
+      when you return to it -- so a clock in a background tab is not ticking,
+      and what a script wrote into the DOM (or what you typed into a form)
+      is gone on return. This is the stated design in `user/web/tabs.h`, not an
+      oversight: one bounded document arena is shared by whichever tab is on
+      screen. Lifting it means a document arena per tab, which is the real
+      work behind "tabs stay alive".
+- [ ] Tabs do not persist across a restart, unlike the cookie jar and
+      localStorage. The machinery to do it exists (`store_put_blob`); what is
+      missing is a decision about whether restoring a session should re-fetch.
+- [ ] TAB_MAX is 6, and each slot reserves a 512KB source buffer up front --
+      3MB of the browser's BSS. A tab pool that allocated on demand would cost
+      nothing for the common one-or-two-tab case.
+- [ ] Switching tabs while a fetch is in flight is REFUSED (the status line
+      says so) because the worker's bytes would land in whichever tab is
+      current when they arrive. A per-tab fetch slot would remove the refusal.
+- [ ] No tab reordering (drag), no "reopen closed tab", no middle-click to
+      open a link in a background tab -- `tab_open` deliberately does not steal
+      focus, so the model is ready for that; nothing calls it that way yet.
+- [ ] Zoom is bound to bare `+`/`-`/`0` rather than `Ctrl+=`/`Ctrl+-`/`Ctrl+0`
+      because the keyboard driver turns Ctrl+LETTER into a control byte and
+      passes Ctrl+SYMBOL through unchanged (`keyboard.c` is explicit about
+      this). The real fix is a driver that reports modifiers alongside symbol
+      keys; then the zoom keys can be the chord everyone already knows.
+- [ ] Zoom scales text and stated lengths, and is NOT persisted per site --
+      every browser remembers zoom per origin, this one remembers it per tab
+      for the life of the process.
+- [ ] Image and border-width lengths do not scale with zoom; only text and the
+      box lengths render.c states (padding, margin, width/height, gap).

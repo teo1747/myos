@@ -173,6 +173,122 @@ static void t5_keyed_reorder(void) {
     done();
 }
 
+/* ---- T5b: a row that APPEARS must not displace its siblings ------------- *
+ *
+ * The failure this pins down cost a browser two evenings. Its chrome is a
+ * column of rows, one of which -- a find bar -- appears when you open it.
+ * Unkeyed children are matched to last frame's by POSITION, so the moment that
+ * row was inserted every row below it adopted its neighbour's retained
+ * instance, and since a reused instance keeps whatever size nobody restated,
+ * the whole window came back laid out as something else: the find bar drawn
+ * over the address bar, the document's viewport wearing the divider's height.
+ *
+ * It looked like a repaint bug for as long as it was only ever LOOKED at.
+ *
+ * The rule the fix rests on: give a key to the rows that STAY, not only to the
+ * one that comes and goes -- it is the stable rows that get displaced.
+ */
+static int g_t5b_extra;
+static int g_t5b_keys = 1;
+
+/* A row whose size is RETAINED rather than restated every frame.
+ *
+ * That is what makes the displacement visible, and it is not contrived: the
+ * toolkit's box only writes a size when a prop asks for one, so a row that
+ * settled at a height keeps it until something says otherwise. A test whose
+ * rows restate their size every frame cannot see this bug at all -- the first
+ * version of this test did exactly that and passed while the browser on the
+ * other screen was visibly broken. */
+static int g_t5b_state_sizes = 1;
+
+static void row(uint64_t key, float h) {
+    ui_box_begin(key);
+    if (g_t5b_state_sizes)
+        ui_set_size((struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 200 },
+                    (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = h });
+    ui_box_end();
+}
+
+static void app_optional_row(void) {
+    ui_begin_vstack(0);
+    row(g_t5b_keys ? 0xA1 : 0, 48);              /* header */
+    if (g_t5b_extra) row(g_t5b_keys ? 0xEE : 0, 20);   /* the row that comes and goes */
+    row(g_t5b_keys ? 0xB2 : 0, 30);              /* body   */
+    row(g_t5b_keys ? 0xC3 : 0, 12);              /* footer */
+    ui_end_stack();
+}
+
+static struct instance_handle child_by_key(struct instance_handle parent, uint64_t key) {
+    for (struct instance_handle c = ui_first_child(parent); !instance_handle_is_null(c); c = ui_next_sibling(c)) {
+        struct instance *ci = instance_resolve(c);
+        if (ci && ci->explicit_key == key) return c;
+    }
+    return INSTANCE_HANDLE_NULL;
+}
+
+static void t5b_inserted_row(void) {
+    printf("T5b an inserted row does not displace keyed siblings:\n");
+    fresh();
+    g_t5b_extra = 0;
+    ui_frame_begin(); app_optional_row(); ui_frame_end();
+    ui_run_layout(400, 300);
+    struct instance_handle col = ui_first_child(ui_root());
+    struct instance_handle h0 = child_by_key(col, 0xA1);
+    struct instance_handle b0 = child_by_key(col, 0xB2);
+    struct instance_handle f0 = child_by_key(col, 0xC3);
+    struct scene_node *bn = scene_resolve(&SA, ui_scene_of(b0));
+    float body_h = bn ? bn->height : -1;
+    CHECK(body_h == 30, "the body starts at the height it asked for");
+
+    /* ...now the row appears, which is the whole test */
+    g_t5b_extra = 1; g_t5b_state_sizes = 0;
+    ui_frame_begin(); app_optional_row(); ui_frame_end();
+    ui_run_layout(400, 300);
+    col = ui_first_child(ui_root());
+    CHECK(heq(child_by_key(col, 0xA1), h0) &&
+          heq(child_by_key(col, 0xB2), b0) &&
+          heq(child_by_key(col, 0xC3), f0),
+          "every stable row keeps its own instance when a row is inserted above it");
+
+    struct scene_node *hn = scene_resolve(&SA, ui_scene_of(child_by_key(col, 0xA1)));
+    struct scene_node *b2 = scene_resolve(&SA, ui_scene_of(child_by_key(col, 0xB2)));
+    struct scene_node *f2 = scene_resolve(&SA, ui_scene_of(child_by_key(col, 0xC3)));
+    CHECK(hn && hn->height == 48, "the header is still 48 tall, not the inserted row's 20");
+    CHECK(b2 && b2->height == 30, "the body is still 30 -- not its neighbour's height");
+    CHECK(f2 && f2->height == 12, "and the footer is still 12");
+
+    /* the inserted row is really there, or the checks above prove nothing */
+    CHECK(!instance_handle_is_null(child_by_key(col, 0xEE)), "the new row was actually inserted");
+    done();
+
+    /* THE CONTROL. The same column with no keys at all, to show that the keys
+     * above are what is doing the work rather than the layout happening to be
+     * right anyway. Unkeyed rows match by position, so the footer inherits the
+     * body's instance and comes back 30 tall instead of 12 -- and a test that
+     * did not demonstrate this would be asserting nothing. */
+    fresh();
+    g_t5b_extra = 0; g_t5b_keys = 0; g_t5b_state_sizes = 1;
+    ui_frame_begin(); app_optional_row(); ui_frame_end();
+    ui_run_layout(400, 300);
+    g_t5b_extra = 1; g_t5b_state_sizes = 0;
+    ui_frame_begin(); app_optional_row(); ui_frame_end();
+    ui_run_layout(400, 300);
+    col = ui_first_child(ui_root());
+    float hs[8]; int n = 0;
+    for (struct instance_handle c = ui_first_child(col);
+         !instance_handle_is_null(c) && n < 8; c = ui_next_sibling(c)) {
+        struct scene_node *sn = scene_resolve(&SA, ui_scene_of(c));
+        hs[n++] = sn ? sn->height : -1;
+    }
+    CHECK(n == 4, "unkeyed: four rows, as declared");
+    printf("      (unkeyed heights: %.0f %.0f %.0f %.0f -- declared 48 20 30 12)\n",
+           hs[0], hs[1], hs[2], hs[3]);
+    CHECK(!(n == 4 && hs[0] == 48 && hs[1] == 20 && hs[2] == 30 && hs[3] == 12),
+          "unkeyed: the rows are DISPLACED -- this is the bug the keys exist for");
+    g_t5b_keys = 1; g_t5b_state_sizes = 1;
+    done();
+}
+
 /* ---- T6: hit-test clip-awareness --------------------------------------- */
 static void t6_hit_clip(void) {
     printf("T6 hit-test clip-awareness:\n");
@@ -328,6 +444,7 @@ int main(void) {
     t3_fine_grained();
     t4_props_change();
     t5_keyed_reorder();
+    t5b_inserted_row();
     t6_hit_clip();
     t6b_hit_layers();
     t7_button_pulse();
