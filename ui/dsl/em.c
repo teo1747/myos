@@ -803,7 +803,13 @@ static void em_checkbox_impl(const char *label, bool *bind, EmProps p) {
     ui_begin_hstack(0); ui_set_align(ALIGN_CENTER); ui_set_spacing(TH->sp3);
     em_apply_box(p);
     if (ui_checkbox(bind ? *bind : false) && bind) *bind = !*bind;
-    if (label && label[0]) { EmProps tp = { .font = Body }; em_text_impl(label, tp); }
+    /* The label takes the caller's colour when it gave one. Without this a
+     * checkbox inside a rendered document kept the DESKTOP's text colour and
+     * its label vanished into the page's white canvas. */
+    if (label && label[0]) {
+        EmProps tp = { .font = Body, .color = p.color };
+        em_text_impl(label, tp);
+    }
     ui_spacer();
     ui_end_stack();
 }
@@ -2073,16 +2079,21 @@ static bool em_dropdown_impl(const char *const *labels, int count, int *sel, boo
     struct instance_handle self = ui_open();
     bool hov = ui_is_hovered(), pressed = ui_is_pressed();
     if (out_hov) *out_hov = hov;
-    ui_set_paint(solid(pressed ? shade(t->surface_alt, 0.94f) : hov ? t->surface_alt : t->surface));
+    /* Through the control palette, so a <select> inside a rendered document
+     * is a page control and not a piece of the desktop -- see kit.h. */
+    { struct color face = ui_ctl_color_(UI_CTL_SURFACE, t->surface);
+      ui_set_paint(solid(pressed ? shade(face, 0.94f) : hov ? shade(face, 1.06f) : face)); }
     ui_set_corner_radius(t->radius_md);
-    ui_set_border(1.0f, is_open ? t->accent : t->border);
+    ui_set_border(1.0f, is_open ? ui_ctl_color_(UI_CTL_FOCUS, t->accent)
+                                : ui_ctl_color_(UI_CTL_BORDER, t->border));
     ui_set_padding(t->sp2 + 1, t->sp3, t->sp2 + 1, t->sp3);
     ui_set_align(ALIGN_CENTER);
     ui_set_spacing(t->sp2);
     ui_set_size(sz_grow(), sz_intrinsic());
-    { EmProps vp = { .font = Body, .color = t->text }; em_text_impl(count > 0 ? labels[cur] : "", vp); }
+    { EmProps vp = { .font = Body, .color = ui_ctl_color_(UI_CTL_TEXT, t->text) };
+      em_text_impl(count > 0 ? labels[cur] : "", vp); }
     ui_spacer();
-    { EmProps cp = { .font = Body, .color = t->text_secondary };
+    { EmProps cp = { .font = Body, .color = ui_ctl_color_(UI_CTL_PLACEHOLDER, t->text_secondary) };
       em_icon_impl(is_open ? IconChevronU : IconChevronD, cp); }
     ui_end_stack();
     if (ui_consume_click(self)) {

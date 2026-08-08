@@ -1,4 +1,11 @@
 <html><head><title>Boxes</title><style>
+/* Written when the browser's canvas was the desktop's dark surface. It is
+   white now -- the initial value every page on the web is written against --
+   so this page states the dark ground it assumes, and the ink that goes with
+   it. Declaring one without the other leaves anything the page does not
+   colour explicitly using the browser's dark default, on a dark ground. */
+html, body { background: #14141a; color: #d8d8e0 }
+
 body { background: #14141c }
 .card { background: #1e2230; border: 2px solid #4a6fd0; border-radius: 10px;
         padding: 16px; margin-bottom: 14px }

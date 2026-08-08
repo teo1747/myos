@@ -32,6 +32,7 @@
 #include "css.h"
 #include "imgcache.h"
 #include "form.h"
+#include "kit.h"
 #include "render.h"
 
 static void (*g_on_link)(const char *href);
@@ -538,7 +539,7 @@ static void emit_check(struct html_doc *d, int n, const struct vstyle *st, int r
     bool before = *on;
 
     const char *label = d->nodes[n].alt ? d->nodes[n].alt : "";
-    Checkbox(label, on);
+    Checkbox(label, on).color(argb(PAGE_INK));
     em_flush();                       /* the click lands here, not later */
 
     if (*on != before) {
@@ -630,7 +631,11 @@ static void emit_button(struct html_doc *d, int n, const struct vstyle *st) {
     }
     (void)st;
     HStack(.py = 2) {
-        if (Button(label).primary().id(label).clicked()) {
+        /* A page's submit button, not a desktop primary action: the web's
+         * button is a light face with dark text and a thin border. */
+        if (Button(label).id(label)
+                .bg(argb(0xFFEFEFEFU)).color(argb(PAGE_INK))
+                .border(1).clicked()) {
             /* A listener wins over submission: a script that took the click
              * asked to handle it, and firing both would submit a form the page
              * meant to intercept. */
@@ -1079,11 +1084,24 @@ const char *vellum_render_sized(struct html_doc *d, int root,
     vstyle_cache_reset();
     struct vstyle rs;
     vstyle_root(&rs);
-    /* Open the zoom bracket around the DOCUMENT only. The chrome is emitted by
-     * the app outside this call and keeps its own size. */
+    /* Open the brackets around the DOCUMENT only -- the app emits its chrome
+     * outside this call and keeps the desktop's size and colours.
+     *
+     * The controls need one for the same reason the text does: a page is drawn
+     * on its own white canvas, so a text field taking the theme's dark surface
+     * and the desktop's accent was the browser's chrome leaking into the page.
+     * A form on a document should look like part of the document. */
+    { struct ui_ctl_palette page = {
+          .surface     = argb(PAGE_CANVAS),
+          .border      = argb(0xFF767676U),   /* the web's own control grey */
+          .focus       = argb(PAGE_LINK),
+          .text        = argb(PAGE_INK),
+          .placeholder = argb(PAGE_QUIET) };
+      ui_set_control_palette(&page); }
     em_set_text_scale(g_zoom);
     if (root >= 0) render_block(d, root, &rs, 0, 0);
     em_set_text_scale(1.0f);
+    ui_set_control_palette(0);
     g_sheet = 0;
     return g_pending;
 }

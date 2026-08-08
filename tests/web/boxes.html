@@ -3,8 +3,12 @@
    it. The browser's canvas is white -- the initial value every page on the web
    is written against -- and a document that assumes otherwise is a document
    that only works in one browser's dark mode. Stating it here is what a real
-   page has to do, and it keeps every colour expectation below unchanged. */
-html, body { background: #16161c }
+   page has to do, and it keeps every colour expectation below unchanged.
+
+   The GROUND and the INK go together: declaring one without the other leaves
+   everything the page did not colour explicitly -- a table cell, a list item --
+   still using the browser's dark default, unreadable on this dark ground. */
+html, body { background: #16161c; color: #d8d8e0 }
 
 body { background: #14141c }
 .card { background: #1e2230; border: 2px solid #4a6fd0; border-radius: 10px;

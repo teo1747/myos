@@ -1,4 +1,11 @@
 <html><head><title>Selectors</title><style>
+/* Written when the browser's canvas was the desktop's dark surface. It is
+   white now -- the initial value every page on the web is written against --
+   so this page states the dark ground it assumes, and the ink that goes with
+   it. Declaring one without the other leaves anything the page does not
+   colour explicitly using the browser's dark default, on a dark ground. */
+html, body { background: #14141a; color: #d8d8e0 }
+
 /* A child combinator must NOT reach a grandchild. Parsed as a descendant --
    which is what this browser used to do -- the deep word turns red too. */
 nav > p          { color: #ff0000 }

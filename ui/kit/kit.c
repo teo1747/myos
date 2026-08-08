@@ -8,6 +8,12 @@
 
 #define TH (ui_theme())
 
+/* One colour from the control palette, or the theme's when unset. Declared up
+ * here because ui_field is above the palette's storage. */
+static struct ui_ctl_palette g_ctl;
+static int g_ctl_on;
+#define CP(field, dflt) ((g_ctl_on && g_ctl.field.a > 0) ? g_ctl.field : (dflt))
+
 static struct layout_size sz_fixed(float v) { return (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = v }; }
 static struct layout_size sz_grow(void)     { return (struct layout_size){ .mode = SIZE_FLEX, .flex_grow = 1 }; }
 static struct layout_size sz_flex(float w)  { return (struct layout_size){ .mode = SIZE_FLEX, .flex_grow = w }; }
@@ -176,12 +182,14 @@ bool ui_checkbox(bool on) {
     ui_begin_hstack(0);
     struct instance_handle self = ui_open();
     bool hov = ui_is_hovered(), press = ui_is_pressed();
-    struct color fill = on ? (press ? shade(t->accent, 0.86f) : t->accent)
-                           : (hov  ? shade(t->surface_alt, 1.15f) : t->surface_alt);
+    struct color acc  = CP(focus, t->accent);
+    struct color surf = CP(surface, t->surface_alt);
+    struct color fill = on ? (press ? shade(acc, 0.86f) : acc)
+                           : (hov  ? shade(surf, 1.15f) : surf);
     ui_set_paint(solid(fill));
     ui_set_corner_radius(t->radius_sm);
     ui_set_size(sz_fixed(20), sz_fixed(20));
-    if (!on) ui_set_border(1.0f, hov ? t->accent : t->border_strong);
+    if (!on) ui_set_border(1.0f, hov ? acc : CP(border, t->border_strong));
     ui_set_align(ALIGN_CENTER);
     ui_set_justify(JUSTIFY_CENTER);
     if (on) text_role(t->font_bold, t->text_caption, t->on_accent, "\xE2\x9C\x93");  /* U+2713 check */
@@ -194,15 +202,16 @@ bool ui_radio(bool selected) {
     ui_begin_hstack(0);
     struct instance_handle self = ui_open();
     bool hov = ui_is_hovered();
-    ui_set_paint(solid(selected ? t->accent_soft : t->surface_alt));
+    ui_set_paint(solid(selected ? t->accent_soft : CP(surface, t->surface_alt)));
     ui_set_corner_radius(t->radius_pill);
     ui_set_size(sz_fixed(20), sz_fixed(20));
-    ui_set_border(1.5f, selected ? t->accent : (hov ? t->accent : t->border_strong));
+    ui_set_border(1.5f, selected ? CP(focus, t->accent)
+                                 : (hov ? CP(focus, t->accent) : CP(border, t->border_strong)));
     ui_set_align(ALIGN_CENTER);
     ui_set_justify(JUSTIFY_CENTER);
     if (selected) {
         ui_box_begin(0);
-        ui_set_paint(solid(t->accent));
+        ui_set_paint(solid(CP(focus, t->accent)));
         ui_set_corner_radius(t->radius_pill);
         ui_set_size(sz_fixed(10), sz_fixed(10));
         ui_box_end();
@@ -364,9 +373,10 @@ static bool ui_field(char *buf, unsigned long cap, const char *placeholder, bool
     }
 
     /* the input well */
-    ui_set_paint(solid(t->surface_alt));
+    ui_set_paint(solid(CP(surface, t->surface_alt)));
     ui_set_corner_radius(t->radius_md);
-    ui_set_border(focused ? 1.5f : 1.0f, focused ? t->accent : t->border_strong);
+    ui_set_border(focused ? 1.5f : 1.0f,
+                  focused ? CP(focus, t->accent) : CP(border, t->border_strong));
     ui_set_padding(t->sp2 + 1, t->sp3, t->sp2 + 1, t->sp3);
     ui_set_size(sz_grow(), sz_intrinsic());
     ui_set_align(ALIGN_CENTER);
@@ -375,7 +385,7 @@ static bool ui_field(char *buf, unsigned long cap, const char *placeholder, bool
     ui_set_align(ALIGN_CENTER);
     ui_set_spacing(1);
     if (buf[0] == 0 && !focused) {
-        text_role(t->font_regular, t->text_body, t->text_tertiary, placeholder);
+        text_role(t->font_regular, t->text_body, CP(placeholder, t->text_tertiary), placeholder);
     } else {
         char hidden[128];
         const char *shown = buf;
@@ -386,10 +396,10 @@ static bool ui_field(char *buf, unsigned long cap, const char *placeholder, bool
             hidden[n] = 0;
             shown = hidden;
         }
-        text_role(t->font_regular, t->text_body, t->text, shown);
+        text_role(t->font_regular, t->text_body, CP(text, t->text), shown);
         if (focused) {                    /* caret */
             ui_box_begin(0);
-            ui_set_paint(solid(t->accent));
+            ui_set_paint(solid(CP(focus, t->accent)));
             ui_set_size(sz_fixed(2), sz_fixed(t->text_body));
             ui_box_end();
         }
@@ -398,6 +408,20 @@ static bool ui_field(char *buf, unsigned long cap, const char *placeholder, bool
     ui_end_stack();
     ui_box_end();
     return focused;
+}
+
+void ui_set_control_palette(const struct ui_ctl_palette *p) {
+    if (p) { g_ctl = *p; g_ctl_on = 1; } else g_ctl_on = 0;
+}
+
+struct color ui_ctl_color_(int which, struct color dflt) {
+    if (!g_ctl_on) return dflt;
+    struct color c = which == UI_CTL_SURFACE     ? g_ctl.surface
+                   : which == UI_CTL_BORDER      ? g_ctl.border
+                   : which == UI_CTL_FOCUS       ? g_ctl.focus
+                   : which == UI_CTL_TEXT        ? g_ctl.text
+                                                 : g_ctl.placeholder;
+    return c.a > 0 ? c : dflt;
 }
 
 bool ui_text_field(char *buf, unsigned long cap, const char *placeholder) {

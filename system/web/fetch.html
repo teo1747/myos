@@ -1,6 +1,13 @@
 <!doctype html>
 <html><head><title>Fetch</title>
-<style> h1{color:#88c0d0} .out{color:#a3be8c} .muted{color:#7b8394;font-size:13px} </style></head>
+<style>
+/* Written when the browser's canvas was the desktop's dark surface. It is
+   white now -- the initial value every page on the web is written against --
+   so this page states the dark ground it assumes, and the ink that goes with
+   it. Declaring one without the other leaves anything the page does not
+   colour explicitly using the browser's dark default, on a dark ground. */
+html, body { background: #14141a; color: #d8d8e0 }
+ h1{color:#88c0d0} .out{color:#a3be8c} .muted{color:#7b8394;font-size:13px} </style></head>
 <body>
 <h1>fetch() over our own stack</h1>
 <p class="muted">A script asks for a URL; the browser fetches it on the same

@@ -1241,6 +1241,22 @@ seventeen real sites with their stylesheets and renders them; `SHOTS=1` writes
 a PNG of each, because "did it produce text" and "does it look right" are
 different questions and only the second one needed asking.
 
+**Controls follow the page too, and a <br> is a line break.** The palette fix
+had a layer under it: the kit's controls take their colours from the theme,
+which is right for an application and wrong inside a rendered document, so a
+text field on a white page was a dark rounded box with the desktop's accent.
+The kit now takes a scoped CONTROL PALETTE that the browser opens around the
+document exactly as it opens the zoom bracket -- fields, buttons, checkboxes,
+radios and selects all follow it, and a form on a page looks like part of the
+page. And `<br>` had no style at all, so it rendered as nothing and welded the
+lines either side ("Small. Fast. Reliable.Choose any three." on sqlite.org); it
+is a block with nothing in it now, which splits the inline run and is the only
+line-breaking machinery there is.
+
+Eight of the browser's own demo pages under `system/web/` were written when the
+canvas was dark and now declare the ground and ink they assume -- the same
+correction the corpus fixtures needed, and the same one a real page has to make.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

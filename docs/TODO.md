@@ -2738,11 +2738,18 @@ Still open, from looking:
       sidebar beside the article: its layout is flex/grid plus position, and
       the article itself is below 900px of navigation. The single hardest
       layout case in the set.
-- [ ] FORM CONTROLS still come from the theme, so a text field on a white page
-      is a dark rounded box. Same bug class as the palette one, one layer down:
-      a control inside a document should look like the document.
-- [ ] sqlite.org renders "Reliable.Choose any three." with no break -- two
-      block-level elements welded. Another inline/block boundary case.
+- [x] ~~FORM CONTROLS come from the theme~~ -- done: the kit takes a scoped
+      control palette (ui_set_control_palette), which the browser opens around
+      the document the way it opens the zoom bracket. Fields, buttons,
+      checkboxes, radios and selects all follow it.
+- [x] ~~sqlite.org welds "Reliable.Choose any three."~~ -- it was a <br>, which
+      had no style at all and rendered as nothing. It is a block with nothing
+      in it now, so it splits the inline run, which is the only line-breaking
+      machinery there is.
+- [ ] The kit's remaining controls (toggle, slider, stepper, segmented,
+      progress) do not consult the control palette. Nothing in a document
+      reaches them yet -- <input type=range> is not implemented -- so this is
+      a gap that will matter when one does, not a visible bug.
 - [ ] The visual references are pixel-exact and the font comes from the host's
       DejaVu, so a machine with a different build of it will see every page
       differ. `make web-corpus BLESS=1` regenerates them; a font-independent

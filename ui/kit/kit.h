@@ -68,6 +68,29 @@ void ui_avatar(const char *initials);
  * is the app-owned edit buffer; click to focus, then typed keys (fed via
  * ui_input_char in the loop) edit it in place. Draws a caret when focused and a
  * placeholder when empty+unfocused. Returns true while focused. */
+/* A CONTROL PALETTE, for controls that are not part of the desktop.
+ *
+ * The kit's controls take their colours from the theme, which is right for an
+ * application and wrong inside a rendered document: a web page is drawn on its
+ * own white canvas, so a text field on it came out as a dark rounded box with
+ * the desktop's accent -- the browser's chrome leaking into the page, which is
+ * the same mistake as drawing the page's text in the desktop's ink.
+ *
+ * Set it around content that owns its own look and clear it afterwards, the
+ * way a browser brackets the document it emits. NULL restores the theme. An
+ * unset entry (alpha 0) falls back to the theme, so a caller can override one
+ * colour without restating them all. */
+struct ui_ctl_palette {
+    struct color surface, border, focus, text, placeholder;
+};
+void ui_set_control_palette(const struct ui_ctl_palette *p);
+
+/* One colour from it, or `dflt` when the palette is unset or leaves that entry
+ * transparent. For controls built OUTSIDE the kit (the DSL's Dropdown) that
+ * still have to follow it. */
+enum { UI_CTL_SURFACE, UI_CTL_BORDER, UI_CTL_FOCUS, UI_CTL_TEXT, UI_CTL_PLACEHOLDER };
+struct color ui_ctl_color_(int which, struct color dflt);
+
 bool ui_text_field(char *buf, unsigned long cap, const char *placeholder);
 bool ui_password_field(char *buf, unsigned long cap, const char *placeholder);
 

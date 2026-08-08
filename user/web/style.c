@@ -137,6 +137,12 @@ void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {
     else if (ieq(tag,"code") || ieq(tag,"kbd") || ieq(tag,"samp") || ieq(tag,"tt")) o->mono = 1;
     else if (ieq(tag,"a"))  { o->link = 1; o->underline = 1; }
     else if (ieq(tag,"small")) o->size = 1;
+    /* <br> is a LINE BREAK, and the only machinery here that breaks a line is
+     * the one that ends an inline run when a block begins -- so it is a block
+     * with nothing in it. Without this it rendered as nothing at all and the
+     * words either side of it were welded: sqlite.org's tagline read
+     * "Small. Fast. Reliable.Choose any three." */
+    else if (ieq(tag,"br")) { o->display = VD_BLOCK; }
     else if (ieq(tag,"td") || ieq(tag,"th")) { o->display = VD_BLOCK; if (ieq(tag,"th")) o->bold = 1; }
 
     /* --- never shown --- */
