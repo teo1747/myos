@@ -179,34 +179,23 @@ static int subtree_text(struct html_doc *d, int node) {
     return n;
 }
 
-/* Height of the box render.c opened for `node`, or -1 if it opened none. */
-static float node_height(struct instance_handle h, struct scene_arena *sa,
-                         uint64_t want) {
-    struct instance *in = instance_resolve(h);
-    if (!in) return -1;
-    if (in->has_explicit_key && in->explicit_key == want) {
-        struct scene_node *sn = scene_resolve(sa, ui_scene_of(h));
-        return sn ? sn->height : -1;
-    }
-    for (struct instance_handle c = ui_first_child(h);
-         !instance_handle_is_null(c); c = ui_next_sibling(c)) {
-        float v = node_height(c, sa, want);
-        if (v >= 0) return v;
-    }
-    return -1;
-}
-
 static float g_tall_min = 2000;
+
+/* node -> the instance box render.c gave it, filled by the box hook. */
+static struct { unsigned idx, gen; } g_box[NODE_MAX];
+static void box_hook(int node, unsigned idx, unsigned gen) {
+    if (node >= 0 && node < NODE_MAX) { g_box[node].idx = idx; g_box[node].gen = gen; }
+}
 
 static void dump_tall(struct html_doc *d, struct scene_arena *sa) {
     struct tall_ent { float h; int node; };
     struct tall_ent top[12];
     int n = 0;
     for (int i = 0; i < d->n; i++) {
-        if (d->nodes[i].kind != HTML_ELEM) continue;
-        uint64_t key = 0xC11C0000ULL ^ (uint64_t)(uintptr_t)&d->nodes[i];
-        float hgt = node_height(ui_root(), sa, key);
-        if (hgt < 0) continue;
+        if (d->nodes[i].kind != HTML_ELEM || !g_box[i].idx) continue;
+        struct instance_handle h = { g_box[i].idx, g_box[i].gen };
+        struct scene_node *sn = scene_resolve(sa, ui_scene_of(h));
+        float hgt = sn ? sn->height : -1;
         if (hgt < g_tall_min) continue;
         int at = n < 12 ? n++ : 11;
         top[at].h = hgt; top[at].node = i;
@@ -484,7 +473,6 @@ int main(int argc, char **argv) {
      * says nothing about which box did it. render.c keys every element's box
      * by its DOM node's address, so the instance tree can be walked back to
      * the element -- which turns a bisect into a list. */
-    if (getenv("TALL")) { g_tall_min = (float)atof(getenv("TALL")); dump_tall(&g_doc, &sa); }
     if (getenv("GRID")) {
         struct vstyle rs; vstyle_root(&rs);
         dump_grids(&g_doc, g_root, &rs, 0);
@@ -525,8 +513,14 @@ int main(int argc, char **argv) {
     ui_init(&sa, &la);
 
     em_set_viewport((float)W, (float)H);
+    if (getenv("TALL")) vellum_set_box_hook(box_hook);
     ui_frame_begin(); em_new_frame(); app(); em_flush(); ui_frame_end();
     ui_run_layout((float)W, (float)H);
+
+    /* AFTER layout: the whole point is how big things ENDED UP. It was
+     * running before the frame was even built, which is a diagnostic that can
+     * only ever report nothing. */
+    if (getenv("TALL")) { g_tall_min = (float)atof(getenv("TALL")); dump_tall(&g_doc, &sa); }
 
     printf("\n--- resolved tree (depth <= %d) ---\n", maxdepth);
     dump(ui_scene_of(ui_root()), 0, 0, 0, maxdepth);

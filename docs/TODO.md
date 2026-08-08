@@ -2840,14 +2840,19 @@ could not explain, which is written down here rather than guessed at.
       element; its paths and groups are a different rendering model. MDN's
       83x24 logo came out 3340 pixels tall. It reserves its stated box now.
       Drawing the vector is a renderer this browser does not have.
-- [ ] MDN'S PAGE IS STILL ~307000 PIXELS TALL and I do not know why. What is
-      established: rows in the sidebar are spaced exactly 3272.5px apart at
-      DOM depth 18; only ONE <details> marker renders on the whole page, so
-      the other 111 are not reaching the disclosure path at all; nested lists
-      and nested <details> both scale linearly in synthetic tests to depth 8;
-      and it is not the svg. The next step is a diagnostic that maps a laid-out
-      box back to its DOM element -- render.c only keys a box when a script is
-      listening to it, which is why TALL= found nothing.
-- [ ] A diagnostic that answers "which element owns this height" would have
-      ended this in minutes, the way HIDDEN= and GRID= did for their questions.
-      It needs render.c to key every block's box, not just listening ones.
+- [ ] MDN'S TEXT IS PLACED OUTSIDE ITS BOXES. The diagnostic now works
+      (`TALL=<px>`, via a box hook render.c offers) and it reframed the
+      question: the DOCUMENT'S OWN BOX IS 14781px TALL, which is right for that
+      page, while text runs land at y up to 307394. So nothing is "too tall" --
+      boxes are placed far outside the parents that measured them, and the
+      measure and arrange passes disagree by twenty times.
+      Established by elimination, each tested by disabling the feature and
+      re-measuring: NOT grid (307634 with display:grid off), NOT position
+      (307742 with absolute/fixed/relative off), NOT svg, NOT <details>, and
+      nested lists and nested details are both linear to depth 8 synthetically.
+      The scene chain shows each nested level offset from its parent by a whole
+      multiple of the subtree's own height -- 2x, then 8x, then 13x -- which is
+      the shape of a cursor advancing over the same subtree repeatedly, or of a
+      child measuring as tall as its parent. Several elements report the
+      identical height (10163px) including an <h1>, which cannot be right.
+      That is where to look next.

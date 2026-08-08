@@ -376,6 +376,10 @@ static Color argb(unsigned v) {
     return c;
 }
 
+/* Told about every block's box as it is emitted -- see vellum_set_box_hook. */
+static void (*g_box_hook)(int node, unsigned idx, unsigned gen);
+void vellum_set_box_hook(void (*fn)(int, unsigned, unsigned)) { g_box_hook = fn; }
+
 /* The grid whose named areas the children being emitted right now belong to,
  * or NULL. A child states `grid-area: columnStart`; only its PARENT knows
  * where columnStart is, so the parent leaves itself here while its children
@@ -1174,6 +1178,15 @@ static void render_block_inner(struct html_doc *d, int node, const struct vstyle
      * flex item, and its siblings must lay out as if it were not there. */
     int out_of_flow = (s->position == VP_ABSOLUTE || s->position == VP_FIXED);
     open_box(s, bp);
+    /* Hand the box back to whoever is asking, so a laid-out rectangle can be
+     * traced to the element that made it. ui_open() only reads the cursor, so
+     * this costs nothing and changes no geometry -- which matters, because the
+     * alternative (keying every block the way a listening one is keyed) would
+     * make every div a hit target and break links and selection. */
+    if (g_box_hook) {
+        struct instance_handle bh = ui_open();
+        g_box_hook(node, bh.index, bh.generation);
+    }
     if (out_of_flow) ui_set_overlay(true);
     /* Any non-static box is a containing block for its positioned descendants
      * -- which is the entire reason a page writes `position: relative` on a

@@ -649,8 +649,8 @@ static void grid_col_widths(struct layout_arena *la, struct layout_node *n,
  * behaviour anything here depends on. */
 static int grid_places(struct layout_arena *la, struct layout_node *n, int cols,
                        struct layout_handle *kid, int nk,
-                       unsigned char *r, unsigned char *c,
-                       unsigned char *rs, unsigned char *cs) {
+                       unsigned short *r, unsigned short *c,
+                       unsigned short *rs, unsigned short *cs) {
     (void)n;
     int flow_r = 0, flow_c = 0, rows = 0;
     for (int i = 0; i < nk; i++) {
@@ -660,14 +660,23 @@ static int grid_places(struct layout_arena *la, struct layout_node *n, int cols,
         if (span > cols) span = cols;
         int rspan = k->grid_rowspan > 0 ? k->grid_rowspan : 1;
         if (k->grid_row >= 0 && k->grid_col >= 0) {
-            r[i] = (unsigned char)k->grid_row;
-            c[i] = (unsigned char)(k->grid_col < cols ? k->grid_col : cols - 1);
+            int gr = k->grid_row < GRID_MAX_ROWS ? k->grid_row : GRID_MAX_ROWS - 1;
+            r[i] = (unsigned short)gr;
+            c[i] = (unsigned short)(k->grid_col < cols ? k->grid_col : cols - 1);
         } else {
             if (flow_c > 0 && flow_c + span > cols) { flow_r++; flow_c = 0; }
-            r[i] = (unsigned char)flow_r; c[i] = (unsigned char)flow_c;
+            /* CLAMPED, and the type is wide enough to hold it. A one-column
+             * grid of a thousand items reaches row 1000, and an unsigned char
+             * turns that into row 232 -- the item is then placed in a row that
+             * already has one, its height lands on the wrong row, and the
+             * measure and arrange passes stop agreeing about how tall the grid
+             * is. That is not an off-by-one: it put boxes 300000 pixels down a
+             * page whose own height was 14781. */
+            if (flow_r > GRID_MAX_ROWS - 1) flow_r = GRID_MAX_ROWS - 1;
+            r[i] = (unsigned short)flow_r; c[i] = (unsigned short)flow_c;
             flow_c += span;
         }
-        rs[i] = (unsigned char)rspan; cs[i] = (unsigned char)span;
+        rs[i] = (unsigned short)rspan; cs[i] = (unsigned short)span;
         if (r[i] + rspan > rows) rows = r[i] + rspan;
     }
     return rows;
@@ -705,8 +714,8 @@ static float measure_grid_height(struct layout_arena *la, struct scene_arena *sa
         kid[nk++] = c;
         c = cn->next_sibling;
     }
-    unsigned char pr[GRID_MEASURE_KIDS], pc[GRID_MEASURE_KIDS],
-                  prs[GRID_MEASURE_KIDS], pcs[GRID_MEASURE_KIDS];
+    unsigned short pr[GRID_MEASURE_KIDS], pc[GRID_MEASURE_KIDS],
+                   prs[GRID_MEASURE_KIDS], pcs[GRID_MEASURE_KIDS];
     int nrows = grid_places(la, n, cols, kid, nk, pr, pc, prs, pcs);
     if (nrows > GRID_MAX_ROWS) nrows = GRID_MAX_ROWS;
     float rowh[GRID_MAX_ROWS];
@@ -900,8 +909,8 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
         float colw[GRID_MAX_COLS];
         grid_col_widths(la, n, grid_w, colw);
         /* The SAME placement the measure pass used -- see grid_places. */
-        unsigned char pr[GRID_MEASURE_KIDS], pc[GRID_MEASURE_KIDS],
-                      prs[GRID_MEASURE_KIDS], pcs[GRID_MEASURE_KIDS];
+        unsigned short pr[GRID_MEASURE_KIDS], pc[GRID_MEASURE_KIDS],
+                       prs[GRID_MEASURE_KIDS], pcs[GRID_MEASURE_KIDS];
         int nplace = nk < GRID_MEASURE_KIDS ? nk : GRID_MEASURE_KIDS;
         int nrows = grid_places(la, n, cols, kids, nplace, pr, pc, prs, pcs);
         if (nrows > GRID_MAX_ROWS) nrows = GRID_MAX_ROWS;

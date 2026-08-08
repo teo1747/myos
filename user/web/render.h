@@ -58,6 +58,14 @@ const char *vellum_hovered_link(void);
  * vsel_reset: it is UI state about the OLD document. */
 void  vellum_reset_details(void);
 
+/* DIAGNOSTIC: be told which instance box each element got, as it is emitted.
+ * The pair is an instance handle (index, generation); resolve it after layout
+ * to ask how big the element ended up. Exists because "the page is 300000
+ * pixels tall" is a fact about the document that says nothing about which box
+ * did it -- and the obvious way to find out, keying every block, would make
+ * every div a hit target. NULL to stop. */
+void  vellum_set_box_hook(void (*fn)(int node, unsigned idx, unsigned gen));
+
 void  vellum_set_zoom(float z);
 float vellum_zoom(void);
 
