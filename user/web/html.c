@@ -458,6 +458,23 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
             }
         }
 
+        /* <link rel=icon>: the page's favicon. Unlike the stylesheet match
+         * above this is an EXACT token, bounded by spaces -- "shortcut icon"
+         * must match and "apple-touch-icon" must not, because the latter is a
+         * different and much larger picture that happens to end in the same
+         * five letters. First one wins; pages list several sizes. */
+        if (ieq(tag, "link") && href[0] && !d->iconref) {
+            for (size_t k2 = 0; frel[k2]; k2++) {
+                if (k2 && frel[k2 - 1] != ' ') continue;
+                char c0 = frel[k2], c1 = frel[k2+1], c2 = frel[k2+2], c3 = frel[k2+3];
+                if ((c0|32)=='i' && (c1|32)=='c' && (c2|32)=='o' && (c3|32)=='n' &&
+                    (frel[k2+4] == 0 || frel[k2+4] == ' ')) {
+                    d->iconref = str_put(d, href, strlen(href));
+                    break;
+                }
+            }
+        }
+
         if (closing) {
             FLUSH();
             close_tag(d, &st, tag);

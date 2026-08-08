@@ -360,8 +360,29 @@ static bool g_field_submit;
 
 bool ui_text_field_submitted(void) { bool s = g_field_submit; g_field_submit = false; return s; }
 
+/* An emphasised span inside the next field's value, drawn when it is NOT being
+ * edited: the span in the normal text colour, everything around it dimmed.
+ *
+ * It exists for one job -- an address bar has to make the HOST legible and let
+ * the scheme and path recede, because the host is the part that says who you
+ * are actually talking to, and the part a hostile URL pads out to hide. A field
+ * that renders its value in one flat colour cannot say that.
+ *
+ * One-shot, like the submit edge: set immediately before the field, consumed by
+ * it. While focused the value is drawn plain, because what you are editing is
+ * the whole string and dimming two thirds of it would be lying about that. */
+static unsigned g_emph_start, g_emph_len;
+static bool     g_emph_on;
+
+void ui_text_field_emphasis(unsigned start, unsigned len) {
+    g_emph_start = start; g_emph_len = len; g_emph_on = (len > 0);
+}
+
 static bool ui_field(char *buf, unsigned long cap, const char *placeholder, bool masked) {
     const struct ui_theme *t = TH;
+    bool     emph  = g_emph_on;
+    unsigned emph_s = g_emph_start, emph_n = g_emph_len;
+    g_emph_on = false;                    /* consumed, whether or not it is used */
     ui_box_begin(0);
     struct instance_handle self = ui_open();
     if (ui_consume_click(self)) ui_request_focus(self);
@@ -394,9 +415,38 @@ static bool ui_field(char *buf, unsigned long cap, const char *placeholder, bool
 
     ui_begin_hstack(0);
     ui_set_align(ALIGN_CENTER);
-    ui_set_spacing(1);
+    /* The runs of an emphasised value must sit flush; the 1px is the gap the
+     * caret needs and there is no caret when this draws. */
+    unsigned long emph_fits = 0;
+    if (emph && !focused && !masked) {
+        emph_fits = strlen(buf);
+        if (emph_s >= emph_fits || emph_s + emph_n > emph_fits) emph_fits = 0;
+    }
+    ui_set_spacing(emph_fits ? 0 : 1);
     if (buf[0] == 0 && !focused) {
         text_role(t->font_regular, t->text_body, CP(placeholder, t->text_tertiary), placeholder);
+    } else if (emph_fits) {
+        /* dim head, bright span, dim tail -- up to three runs, any of which
+         * may be empty and is then simply not emitted */
+        char part[256];
+        struct color dim = CP(placeholder, t->text_tertiary);
+        struct color lit = CP(text, t->text);
+        if (emph_s) {
+            unsigned n = emph_s < sizeof part - 1 ? emph_s : (unsigned)sizeof part - 1;
+            memcpy(part, buf, n); part[n] = 0;
+            text_role(t->font_regular, t->text_body, dim, part);
+        }
+        {
+            unsigned n = emph_n < sizeof part - 1 ? emph_n : (unsigned)sizeof part - 1;
+            memcpy(part, buf + emph_s, n); part[n] = 0;
+            text_role(t->font_regular, t->text_body, lit, part);
+        }
+        if (emph_s + emph_n < emph_fits) {
+            const char *tail = buf + emph_s + emph_n;
+            snprintf(part, sizeof part, "%s", tail);
+            text_role(t->font_regular, t->text_body, dim, part);
+        }
+        ui_flex_spacer();
     } else {
         char hidden[128];
         const char *shown = buf;

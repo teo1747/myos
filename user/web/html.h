@@ -101,6 +101,11 @@ struct html_doc {
      * later sheet outranks an earlier one at equal specificity. */
     char  *cssref[8];
     int    n_cssref;
+    /* <link rel="icon"> -- the page's own name for its favicon, which is not
+     * always /favicon.ico and on some sites is the only one that exists. The
+     * token is matched EXACTLY: "shortcut icon" contains it, "apple-touch-icon"
+     * is a different token and a different (much larger) picture. */
+    char  *iconref;
 };
 
 /* Replace an element's text content. Allocates from the document's own string

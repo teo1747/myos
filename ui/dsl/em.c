@@ -602,6 +602,7 @@ EmV em_toggle(const char *l, bool *b){ EmV v = stage(PK_TOGGLE); P.str = l; P.bi
 EmV em_checkbox(const char *l, bool *b){ EmV v = stage(PK_CHECK); P.str = l; P.bind = b; return v; }
 EmV em_slider(float *b){ EmV v = stage(PK_SLIDER); P.bind = b; return v; }
 EmV em_stepper(const char *l, int *b, int lo, int hi){ EmV v = stage(PK_STEPPER); P.str = l; P.bind = b; P.lo = lo; P.hi = hi; return v; }
+void em_field_emphasis(unsigned start, unsigned len){ em_flush(); ui_text_field_emphasis(start, len); }
 EmV em_text_field(char *buf, size_t cap, const char *ph){ EmV v = stage(PK_FIELD); P.buf = buf; P.cap = cap; P.str = ph; return v; }
 EmV em_password_field(char *buf, size_t cap, const char *ph){ EmV v = stage(PK_PASSWORD); P.buf = buf; P.cap = cap; P.str = ph; return v; }
 EmV em_segmented(const char *const *labels, int count, int *b){ EmV v = stage(PK_SEGMENTED); P.labels = labels; P.count = count; P.bind = b; return v; }

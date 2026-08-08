@@ -8,13 +8,30 @@ left to do.
 
 ## Browser chrome -- what is still missing
 
-- [ ] The address field shows the whole URL in one weight. Real browsers dim
-      the scheme and path and leave the HOST legible, which is the part that
-      says who you are actually talking to -- and the part a phishing URL
-      lies about. The security dot beside it is the honest half of this; the
-      other half is typography the field does not support yet.
-- [ ] No favicon anywhere. The tab identifies a page by title alone, so two
-      pages from one site are told apart only by reading.
+- [x] ~~The address field shows the whole URL in one weight~~ -- the host is
+      emphasised and the scheme and path recede, via a one-shot span the kit's
+      field draws when it is not being edited. Plain again while editing: what
+      you are editing is the whole string.
+- [x] ~~No favicon anywhere~~ -- one per ORIGIN, cached across navigation,
+      downsampled to 32px and drawn at 14. Needed an .ico decoder, because
+      that is what the web actually serves: of nine sites checked, six answer
+      /favicon.ico with an .ico container holding DIBs at 32, 8 and 4 bits per
+      pixel, or a whole PNG.
+- [ ] A site whose ONLY icon is an SVG shows none. Both candidates are tried
+      (declared link, then /favicon.ico) and an SVG declaration is skipped
+      rather than fetched-and-failed, so this only bites a site with no .ico
+      at all.
+- [ ] The search engine is compiled in (`SEARCH_URL` in vellum.c). It should be
+      a setting. Google is not the default and the reason is measured, not
+      chosen: it answers a scriptless browser with a 302 to a consent page, and
+      DuckDuckGo with a CAPTCHA. Mojeek answers with results.
+- [ ] The address bar has no completion -- no history matching, no suggestions.
+      Every visit is fully typed.
+- [ ] Wikipedia still renders badly on the metal (its article body was already
+      logged as squeezed). One measured contributor: the "Operating system"
+      article is 666KB and TAB_SRC_MAX is 512KB, so the response cannot fit and
+      is truncated before the parser sees it. Whether that alone accounts for
+      the near-blank page has NOT been established.
 - [ ] The status line still reports node and rule counts -- developer
       telemetry as a permanent resting state. Useful here, but not what a
       reader wants the bottom of the window to say.

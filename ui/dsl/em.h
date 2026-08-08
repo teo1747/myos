@@ -276,6 +276,9 @@ struct EmV {
 #define Slider(...)      em_slider(__VA_ARGS__)
 #define Stepper(...)     em_stepper(__VA_ARGS__)
 #define TextField(...)   em_text_field(__VA_ARGS__)
+/* Emphasise a span of the next TextField's value while it is not being edited.
+ * See ui_text_field_emphasis. */
+void em_field_emphasis(unsigned start, unsigned len);
 #define PasswordField(...) em_password_field(__VA_ARGS__)
 #define Segmented(...)   em_segmented(__VA_ARGS__)
 #define Spacer()         em_spacer_()

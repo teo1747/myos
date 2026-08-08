@@ -606,6 +606,12 @@ build/web_jpeg.o: user/web/jpeg.c user/web/jpeg.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
 build/web_imgcache.o: user/web/imgcache.c user/web/imgcache.h user/web/png.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
+# .ico -- the format the web's favicons are actually in, and the cache that
+# keeps one per SITE rather than per page.
+build/web_ico.o: user/web/ico.c user/web/ico.h user/web/png.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
+build/web_favicon.o: user/web/favicon.c user/web/favicon.h user/web/ico.h user/web/png.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
 build/web_cookie.o: user/web/cookie.c user/web/cookie.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
 build/web_store.o: user/web/store.c user/web/store.h | $(BUILD)
@@ -624,6 +630,7 @@ VELLUM_OBJS := build/vellum.o build/web_html.o build/web_style.o build/web_rende
                build/web_url.o build/web_net.o build/web_fetchjob.o \
                build/web_css_decl.o build/web_css_sel.o build/web_css_sheet.o build/web_css_vars.o build/web_css_media.o build/web_css_calc.o \
                build/web_png.o build/web_jpeg.o build/web_imgcache.o build/pkg_inflate.o \
+               build/web_ico.o build/web_favicon.o \
                build/web_form.o build/web_select.o build/web_cssref.o build/web_cookie.o build/web_store.o build/web_find.o build/web_history.o build/web_tabs.o
 VELLUM_JS := $(if $(HAVE_QJS),build/web_jsdom.o $(QJS_OBJS),)
 # DEFINED BEFORE ITS FIRST USE, and that is not style. Make expands a rule's
@@ -1917,6 +1924,15 @@ reactive-test:
 # Seven of them were not, and nothing anywhere would have said so: a missing
 # glyph is not a build error and not a run-time error either -- it is a box on
 # screen, in whichever app happened to ask for that icon.
+# The .ico decoder, against fixtures the test builds itself -- including the
+# malformed ones, which are the point: a favicon is bytes from a stranger and
+# every field in its directory is an offset into somewhere else.
+ico-test:
+	$(HOSTCC) -std=c11 -Wall -Wextra -O2 -Iuser/web -Iuser/lib \
+	    user/web/ico.c user/web/png.c user/lib/inflate.c user/web/ico_test.c \
+	    -o $(BUILD)/ico_test
+	$(BUILD)/ico_test
+
 icon-check:
 	python3 tools/checkicons.py
 

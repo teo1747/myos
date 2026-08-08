@@ -100,6 +100,12 @@ bool ui_password_field(char *buf, unsigned long cap, const char *placeholder);
  * page forever. One field holds focus, so one flag is the whole state. */
 bool ui_text_field_submitted(void);
 
+/* Emphasise a span of the NEXT field's value while it is not being edited: that
+ * span in the text colour, the rest dimmed. One-shot, consumed by the field.
+ * An address bar uses it to make the host legible and let the scheme and path
+ * recede -- the host being the part that says who you are talking to. */
+void ui_text_field_emphasis(unsigned start, unsigned len);
+
 /* --- scroll view --- */
 /* A fixed-height viewport that clips + vertically scrolls its children. `scroll_y`
  * is the app-owned scroll position (px from top); the wheel over the view and a

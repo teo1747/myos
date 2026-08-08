@@ -1446,6 +1446,28 @@ asked for it. `make icon-check` now fails the build for a codepoint the font
 cannot draw, because nothing else ever would: a missing glyph is not a compile
 error and not a run-time error either.
 
+**The address bar became one that behaves like a browser's.** Return
+navigates; `example.com` is understood without a scheme; and anything that is
+not host-shaped is a SEARCH, which is the one thing the field could not do
+before. The engine is Mojeek, and that was measured rather than preferred:
+Google answers a scriptless browser with a 302 to a consent page, DuckDuckGo
+with a CAPTCHA ("select all squares containing a duck"), searx with a browser
+check, Bing with 600KB and fourteen scripts. Mojeek answers with 20KB of
+results. The host is drawn in the text colour with the scheme and path dimmed,
+which is the half of anti-phishing the security dot does not cover.
+
+**Tabs have favicons**, one per ORIGIN rather than per page, cached across
+navigation and downsampled to 32px on arrival -- Hacker News's is 256x256, a
+quarter of a megabyte to hold something drawn fourteen pixels wide. Getting
+there meant writing an .ico decoder, because that is what the web serves: of
+nine sites checked, six answer /favicon.ico with an .ico container, holding
+DIBs at 32, 8 or 4 bits per pixel or an entire PNG. Two details in that format
+are silent when wrong -- the header claims double the real height, and below 32
+bits the packed AND mask is the only transparency there is. `make ico-test`
+builds its own fixtures, malformed ones included, because a favicon is bytes
+from a stranger and every field in its directory is an offset into somewhere
+else.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

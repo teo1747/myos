@@ -28,6 +28,7 @@
 #include "render.h"
 #include "css.h"
 #include "imgcache.h"
+#include "favicon.h"
 #include "jsdom.h"
 #include "form.h"
 
@@ -416,6 +417,44 @@ static void navigate(const char *url) {
  * no error, just an address bar that had apparently ignored you. A leading '/'
  * still means a path on this machine, which is the other thing that gets typed
  * here and must keep working. */
+/* Where a search goes. One line to change it, and the query is the only thing
+ * appended -- no client id, no session, nothing this browser has no business
+ * sending.
+ *
+ * Which engine was MEASURED, not chosen on principle. What each one answers a
+ * browser with no JavaScript and an honest User-Agent:
+ *
+ *     Google      302 -> consent.google.com, and the results behind it are
+ *                 built by script. Every search would land on a wall.
+ *     DuckDuckGo  200, and a CAPTCHA: "select all squares containing a duck".
+ *                 The lite endpoint is clean HTML and still gates on it.
+ *     searx.be    200, "Verifying your browser..."
+ *     Bing        200, 600KB, 14 scripts.
+ *     Mojeek      200, 20KB, no gate, real results. An independent index.
+ *
+ * So Mojeek, until this browser looks enough like the others to be served like
+ * them -- which is a JavaScript problem, not a search problem. */
+#define SEARCH_URL "https://www.mojeek.com/search?q="
+
+/* Percent-encode a query. Unreserved characters (RFC 3986) pass through and a
+ * space becomes '+', which is what a search form sends. */
+static void query_escape(const char *in, char *out, size_t cap) {
+    static const char HEX[] = "0123456789ABCDEF";
+    size_t o = 0;
+    for (; *in && o + 4 < cap; in++) {
+        unsigned char c = (unsigned char)*in;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~')
+            out[o++] = (char)c;
+        else if (c == ' ')
+            out[o++] = '+';
+        else {
+            out[o++] = '%'; out[o++] = HEX[c >> 4]; out[o++] = HEX[c & 15];
+        }
+    }
+    out[o] = 0;
+}
+
 static void navigate_typed(const char *what) {
     while (*what == ' ') what++;
     if (!*what) return;
@@ -429,8 +468,37 @@ static void navigate_typed(const char *what) {
     int has_scheme = alpha > 0 && !strncmp(what + alpha, "://", 3);
     if (!has_scheme && !strncmp(what, "about:", 6)) has_scheme = 1;
     if (has_scheme || what[0] == '/') { navigate(what); return; }
-    char u[512];
-    snprintf(u, sizeof u, "https://%s", what);
+
+    /* URL OR SEARCH. The address bar is one field doing two jobs, and which
+     * job it is doing is decided here rather than by making the reader say.
+     *
+     * A host has a dot in it and no spaces. That is the whole test, and it is
+     * the test every browser uses, because "what people type that is not a URL"
+     * has no shape worth pattern-matching -- it is a sentence. Anything failing
+     * it is a query, which is why "how do i mount a disk" searches and
+     * "kernel.org" does not.
+     *
+     * localhost is the exception a dot-based rule always has: it is a real host
+     * with no dot, and it is the one people type most on a machine like this. */
+    int host_like = 0;
+    if (!strncmp(what, "localhost", 9) &&
+        (what[9] == 0 || what[9] == '/' || what[9] == ':')) {
+        host_like = 1;
+    } else {
+        for (const char *p = what; *p && *p != '/'; p++) {
+            if (*p == ' ') { host_like = 0; break; }
+            if (*p == '.' && p[1] && p[1] != '/') host_like = 1;
+        }
+    }
+
+    char u[1024];
+    if (host_like) {
+        snprintf(u, sizeof u, "https://%s", what);
+    } else {
+        char q[768];
+        query_escape(what, q, sizeof q);
+        snprintf(u, sizeof u, "%s%s", SEARCH_URL, q);
+    }
     navigate(u);
 }
 
@@ -779,6 +847,9 @@ static void app(void) {
     /* ...and the page's pictures, one at a time on the same worker. Each one
      * that lands changes the page, so ask for a frame. */
     if (!cssref_pending() && imgcache_pump()) em_request_frame();
+    /* The tab's icon: last in the queue behind the document, its sheets and its
+     * pictures, because it is decoration and they are the page. */
+    if (!cssref_pending() && !imgcache_pending() && favicon_pump()) em_request_frame();
     /* One pump for everything the engine owes the page: due timers, a landed
      * fetch, and the microtask queue promises resolve onto. Before the dirty
      * check, because a handler is the most likely thing to have changed the
@@ -800,7 +871,7 @@ static void app(void) {
     if (jsdom_next_timer() || jsdom_busy()) em_app_set_refresh(60);
     else if (!fetchjob_busy() && !imgcache_pending() && !cssref_pending())
         em_app_set_refresh(-1);
-    if (imgcache_pending() || cssref_pending()) em_app_set_refresh(200);
+    if (imgcache_pending() || cssref_pending() || favicon_pending()) em_app_set_refresh(200);
 
     /* While a fetch is in flight the view has to keep being built, or the
      * runtime -- which draws on input by design -- would never poll again and
@@ -910,12 +981,28 @@ static void app(void) {
                  * over a transparent background: a button's DEFAULT style is
                  * the filled accent, so "no background" fell through to it and
                  * every tab you were NOT on came out bright blue. */
-                /* The tab is the CONTAINER, and the label and the ✕ are two
-                 * transparent controls inside it. Made of two chips instead,
-                 * a tab and its close button read as two separate things that
-                 * happen to be adjacent -- which is what they were. */
+                /* The site's icon. Asked for every frame because an origin
+                 * already known is a string compare; only the CURRENT tab can
+                 * offer the page's declared <link rel=icon>, which is fine --
+                 * a background tab's origin was looked up while it was in
+                 * front, and the cache is keyed by origin precisely so that
+                 * survives. */
+                struct favicon *fv = favicon_want(tab_url(i),
+                                                  cur ? g_doc.iconref : 0);
+                /* The tab is the CONTAINER, and the icon, the label and the ✕
+                 * are three things inside it. Made of separate chips instead,
+                 * a tab and its close button read as two things that happen to
+                 * be adjacent -- which is what they were. */
                 HStack(.spacing = 0, .align = Center, .px = 3, .corner = 8,
                        .background = cur ? TAB_ON : TAB_OFF, .key = KEY[i]) {
+                    if (fv && fv->state == FAV_READY && fv->px) {
+                        /* Keyed by the pixel pointer, which is stable per slot
+                         * -- so the icon appearing does not shift the label and
+                         * the ✕ onto each other's retained instances. */
+                        em_flush();
+                        ui_image_sized((uint64_t)(uintptr_t)fv->px, fv->px,
+                                       fv->w, fv->h, 14, 14);
+                    }
                     EmV tb = Button(lbl).ghost().font(Caption).py(3).px(7).id(KEYL[i]);
                     tb.color(cur ? TAB_TEXT_ON : TAB_TEXT_OFF);
                     if (tb.clicked() && !cur) g_switch_to = i;
@@ -966,6 +1053,21 @@ static void app(void) {
              * the single loudest element in the chrome, for an action nobody
              * clicks, because a text field that could not submit left no other
              * way out. See EmV.submitted. */
+            /* Make the HOST the legible part. "https://" and everything after
+             * the host recede, because the host is what says who you are
+             * actually talking to -- and it is what a hostile URL buries under
+             * a long, plausible-looking path. The field draws it plain again
+             * the moment you start editing: what you are editing is the whole
+             * string, and dimming two thirds of it would misrepresent that. */
+            { unsigned hs = 0, hn = 0;
+              const char *p = strstr(g_bar, "://");
+              if (p) {
+                  hs = (unsigned)(p - g_bar) + 3;
+                  const char *e = g_bar + hs;
+                  while (*e && *e != '/' && *e != '?' && *e != '#') e++;
+                  hn = (unsigned)(e - (g_bar + hs));
+              }
+              em_field_emphasis(hs, hn); }
             if (TextField(g_bar, sizeof g_bar, "Search or enter address").submitted())
                 navigate_typed(g_bar);
 
