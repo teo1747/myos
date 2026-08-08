@@ -2923,10 +2923,15 @@ Still open:
       Scope: ECDHE + AES-128-GCM + SHA-256, RSA or ECDSA server key, full
       certificate verification plus the ServerKeyExchange signature. No static
       RSA, no CBC, no renegotiation, no resumption.
-- [ ] Navigating from one page to the next can leave the previous page's pixels
-      showing through -- visible loading example.com after xkcd. The incremental
-      repaint does not clear what the old layout occupied. A fresh load is
-      correct, so this is the navigate path specifically.
+- [x] ~~Navigating from one page to the next leaves the previous page showing
+      through~~ -- and it was not a repaint problem at all, which is what the
+      first two attempted fixes assumed. The view was being RECONCILED against
+      the page that had been there: a reused instance keeps whatever size
+      nobody restated, so the second document came out with the right boxes and
+      the previous page's text positions. The document's container is keyed by
+      a per-load counter now, so a new page is a new subtree. A fresh load was
+      always correct, which is exactly why only the second navigation showed
+      it.
 - [ ] The trust set is 23 anchors and five of the listed roots are not in the
       host's bundle at all (DigiCert Global Root CA, High Assurance EV,
       Baltimore, GTS R2, Entrust G2) -- so the generator's list should be

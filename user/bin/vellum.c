@@ -158,6 +158,9 @@ static float g_scroll = 0;
 /* A navigation requested by a click, acted on AFTER the frame: the href lives
  * in the arena the load is about to overwrite. */
 static char g_goto[512] = "";
+/* Bumped per document; the view's root container is keyed by it. See
+ * install_document. */
+static unsigned g_doc_gen;
 /* Tab clicks, deferred to the top of the next frame -- see where they are
  * acted on. */
 static int  g_switch_to = -1, g_close_tab = -1, g_new_tab = 0;
@@ -254,6 +257,10 @@ static int install_document(size_t n) {
     vsel_reset();              /* ...nor does a selection: it indexed the OLD words */
     form_reset();              /* ...nor one page's typing into the next */
     vellum_reset_details();    /* ...nor which disclosures it had open */
+    /* A NEW DOCUMENT means the view is REBUILT rather than reconciled against
+     * the page that was there before -- see the key on the document's
+     * container below. */
+    g_doc_gen++;
 
     /* A NEW WORLD per page: the engine is torn down and rebuilt, so a script
      * cannot outlive the document that wrote it, and one page's globals can
@@ -895,7 +902,9 @@ static void app(void) {
             /* Fill, not Leading: this is the block every other block inherits
              * its width from. Left it Leading and the whole document sizes to
              * its longest line instead of to the window, so nothing wraps. */
-            VStack(.spacing = 0, .align = Fill, .padding = 22, .grow = 1) {
+            char dockey[24];
+            snprintf(dockey, sizeof dockey, "doc%u", g_doc_gen);
+            VStack(.spacing = 0, .align = Fill, .padding = 22, .grow = 1, .key = dockey) {
                 const char *clicked = vellum_render_sized(&g_doc, g_root, &g_sheet, g_url,
                                                          em_viewport_width() - 44.0f);
                 /* A DRAG that happens to end on a link is a selection, not a

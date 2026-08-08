@@ -1413,6 +1413,15 @@ application fault printed `RIP=0` and nothing else. Walking the user rbp chain
 named the caller in one boot -- `gctr <- gcm_seal <- tls_record_seal <-
 tls_close` -- after an afternoon of ruling things out one at a time had not.
 
+**And a second page loaded in one session came out wearing the first page's
+layout.** It looked like stale pixels and was not: the view was being
+reconciled against the document that had been there, and a reused instance
+keeps whatever size nobody restated -- so the boxes were right and the text sat
+where the previous page's text had. The document's container is keyed by a
+per-load counter now, which makes a new page a new subtree rather than a diff
+against the old one. It is the same reconciliation rule the browser's own
+chrome needed, one level up.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:
