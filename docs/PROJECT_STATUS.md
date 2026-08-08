@@ -1360,6 +1360,22 @@ Wikipedia is now under six milliseconds, and Wikipedia's remaining cost is
 layout rather than style. Interactive restyling is verified on the metal:
 `/system/web/restyle.html` sets a class on click and the box restyles.
 
+**C9: the OS is on the live web.** Everything up to here was verified against a
+host harness rendering saved pages. Vellum now fetches and renders real sites
+on the metal over this OS's own TLS, its own X.509, its own HTML and CSS
+engine: example.com and Hacker News both come up authenticated with current
+content.
+
+Three things were in the way. The trust store held four roots, transcribed by
+hand as hex arrays, which is why there were four -- `tools/mkroots.py`
+generates them from the host's CA bundle now, and adding a root is adding a
+line (22 anchors). example.com turned out to chain to SSL.com, not DigiCert,
+which one `openssl s_client` established in a second after a guess had already
+been implemented. And a MAKEFILE ORDERING BUG had been shipping a stale
+browser: `TLS_LIB_OBJS` was defined after the rule that lists it, and make
+expands prerequisites when it reads the rule, so it expanded to nothing --
+changing a trust anchor rebuilt the object and never relinked the binary.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

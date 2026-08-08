@@ -626,6 +626,20 @@ VELLUM_OBJS := build/vellum.o build/web_html.o build/web_style.o build/web_rende
                build/web_png.o build/web_jpeg.o build/web_imgcache.o build/pkg_inflate.o \
                build/web_form.o build/web_select.o build/web_cssref.o build/web_cookie.o build/web_store.o build/web_find.o build/web_history.o build/web_tabs.o
 VELLUM_JS := $(if $(HAVE_QJS),build/web_jsdom.o $(QJS_OBJS),)
+# DEFINED BEFORE ITS FIRST USE, and that is not style. Make expands a rule's
+# PREREQUISITES when the rule is read, so a := variable defined later expands
+# to NOTHING there -- build/vellum.elf listed $(TLS_LIB_OBJS) and depended on
+# none of it. Changing a trust anchor rebuilt the object and never relinked the
+# browser, so the OS kept refusing a site the host verifier accepted, and the
+# binary under test was not the binary just built. That is the same trap the
+# image drift guard exists for, one level down.
+TLS_LIB_OBJS := build/tls_sha256.o build/tls_hmac.o build/tls_aes.o \
+                build/tls_hkdf.o build/tls_gcm.o build/tls_x25519.o \
+                build/tls_sha512.o build/tls_bignum.o build/tls_ecdsa.o build/tls_rsa.o \
+                build/tls_asn1.o build/tls_cert.o build/tls_trust.o \
+                build/tls_keysched.o build/tls_record.o build/tls_handshake.o build/tls_tls.o \
+                build/tls_handle.o
+
 build/vellum.elf: build/crt0.o build/syscalls.o $(VELLUM_OBJS) $(VELLUM_JS) $(TLS_LIB_OBJS) build/libembk.so
 	$(USER_CC) $(NEWLIB_DYN_LDFLAGS) build/crt0.o build/syscalls.o $(VELLUM_OBJS) \
 	    $(VELLUM_JS) $(TLS_LIB_OBJS) build/libembk.so -lc -lm -lgcc $(NEWLIB_DYN_WL) -o $@
@@ -660,12 +674,6 @@ build/udptest.elf: build/crt0.o build/syscalls.o build/udptest.o user/lib/newlib
 # -Ikernel so include/{types,kstring,kprintf}.h resolve to the shims. Defined
 # BEFORE the consumers (wget, tlstest) so their prerequisite lists see it.
 TLS_LIB_INC  := -Iuser/lib/tls/kshim -Ikernel -Iuser/lib/tls/crypto -Iuser/lib/tls -Iuser/lib/tls/x509
-TLS_LIB_OBJS := build/tls_sha256.o build/tls_hmac.o build/tls_aes.o \
-                build/tls_hkdf.o build/tls_gcm.o build/tls_x25519.o \
-                build/tls_sha512.o build/tls_bignum.o build/tls_ecdsa.o build/tls_rsa.o \
-                build/tls_asn1.o build/tls_cert.o build/tls_trust.o \
-                build/tls_keysched.o build/tls_record.o build/tls_handshake.o build/tls_tls.o \
-                build/tls_handle.o
 
 # wget -- a real HTTP/HTTPS downloader (networking + TLS meets the filesystem).
 # Links libtls so https:// does an authenticated TLS 1.3 fetch. Auto-packed.

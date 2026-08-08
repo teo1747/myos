@@ -1,38 +1,22 @@
-/* Bundled trust anchors. One for now -- GTS Root R4 (P-384) -- which Cloudflare,
- * Google, and a large fraction of the web chain to. Adding a root is adding an
- * entry here; the SDK/packaging story (docs) will later let /system carry a
- * curated, verified-boot-sealed set the user can grow. */
+/* Bundled trust anchors -- see roots.h, which is GENERATED.
+ *
+ * Adding a root is adding a line to tools/mkroots.py and re-running it. It used
+ * to mean transcribing a subject name and a public key as hex arrays by hand,
+ * which is why there were four of them and the browser could not open
+ * example.com: a four-root browser reaches the fraction of the web that
+ * happens to chain to those four.
+ *
+ * Still a fixed set compiled in. The packaging story (docs) will later let
+ * /system carry a curated, verified-boot-sealed set the user can grow, which
+ * is the difference between a browser that trusts what it was built with and
+ * one whose owner decides. */
 #include "trust.h"
 #include "cert.h"
-#include "roots.h"     /* GTS_R4_SUBJECT, GTS_R4_POINT (0x04||X||Y, P-384) */
+#include "roots.h"     /* GENERATED -- see tools/mkroots.py */
 #include <string.h>
 
-/* GTS_R4_POINT is the uncompressed point 0x04 || X(48) || Y(48). */
 static const struct trust_anchor ANCHORS[] = {
-    {   /* GTS Root R4 -- EC P-384 (Cloudflare / Google) */
-        GTS_R4_SUBJECT, sizeof GTS_R4_SUBJECT,
-        X509_KEY_EC, X509_CURVE_P384,
-        GTS_R4_POINT + 1, GTS_R4_POINT + 1 + 48, 48,
-        NULL, 0, NULL, 0,
-    },
-    {   /* ISRG Root X1 -- RSA-4096 (Let's Encrypt, much of the web) */
-        ISRG_X1_SUBJECT, sizeof ISRG_X1_SUBJECT,
-        X509_KEY_RSA, X509_CURVE_NONE,
-        NULL, NULL, 0,
-        ISRG_X1_N, sizeof ISRG_X1_N, ISRG_X1_E, sizeof ISRG_X1_E,
-    },
-    {   /* GlobalSign Root R3 -- RSA-2048 (pypi.org / files.pythonhosted.org) */
-        GS_R3_SUBJECT, sizeof GS_R3_SUBJECT,
-        X509_KEY_RSA, X509_CURVE_NONE,
-        NULL, NULL, 0,
-        GS_R3_N, sizeof GS_R3_N, GS_R3_E, sizeof GS_R3_E,
-    },
-    {   /* USERTrust ECC -- EC P-384 (Sectigo; github.com chains here) */
-        USERTRUST_ECC_SUBJECT, sizeof USERTRUST_ECC_SUBJECT,
-        X509_KEY_EC, X509_CURVE_P384,
-        USERTRUST_ECC_POINT + 1, USERTRUST_ECC_POINT + 1 + 48, 48,
-        NULL, 0, NULL, 0,
-    },
+    EMBK_TLS_ROOTS_TABLE
 };
 #define N_ANCHORS (int)(sizeof ANCHORS / sizeof ANCHORS[0])
 

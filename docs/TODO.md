@@ -2879,3 +2879,37 @@ misses by construction. Verified interactively on the metal
       BSS to the arena size. Both grow together if the arena does.
 - [ ] github still parses 5711 rules of a 6.9MB stylesheet. It renders; nobody
       has looked at whether it renders RIGHT.
+
+### C9: the real web, on the machine
+
+Everything before this was verified on a host harness. Vellum now fetches and
+renders LIVE SITES on the metal over the OS's own TLS: example.com and Hacker
+News both render authenticated, with current content.
+
+Three things were in the way, and only one of them was TLS.
+
+- [x] ~~The trust store had four hand-transcribed roots~~ -- tools/mkroots.py
+      generates roots.h from the host's CA bundle, so adding a root is adding a
+      line. 22 anchors now. Four roots means a browser reaches the fraction of
+      the web that happens to chain to those four.
+- [x] ~~example.com refused~~ -- and NOT for the reason assumed. It chains to
+      SSL.com TLS ECC Root CA 2022, not DigiCert; one `openssl s_client` said
+      so in a second, after a guess had already been implemented.
+- [x] ~~A MAKEFILE ORDERING BUG kept shipping a stale browser~~ --
+      `TLS_LIB_OBJS` was defined AFTER the rule that lists it as a
+      prerequisite, and make expands prerequisites when it reads the rule, so
+      it expanded to nothing. Changing a trust anchor rebuilt the object and
+      never relinked vellum. The OS kept refusing a site the host verifier
+      accepted.
+
+Still open:
+- [ ] No page has been seen WITH ITS IMAGES. The host harness cannot fetch
+      them; the metal can. That is a whole dimension of fidelity nobody has
+      looked at.
+- [ ] Only two live sites have been tried. The seventeen-site corpus is
+      fetched by curl and rendered on the host; the same list run on the metal
+      would be a different test and would find different things (memory at
+      521MB, TCG speed, decode cost).
+- [ ] No revocation checking of any kind, and the trust set is compiled in.
+      docs/TLS.md already logs both; the packaging story is where a
+      user-growable, verified-boot-sealed root set belongs.
