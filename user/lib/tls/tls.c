@@ -13,6 +13,7 @@
  *   <> application data                              (records under app keys)
  */
 #include "tls.h"
+#include "tls12.h"
 #include "keysched.h"
 #include "cert.h"            /* x509 chain verification (T3) */
 #include "asn1.h"
@@ -59,6 +60,13 @@ static int recv_record(struct tls_conn *c) {
 }
 
 /* Send a TLSPlaintext record (used for the ClientHello, before keys exist). */
+/* The 1.2 handshake lives in its own file and needs these two: one record in,
+ * one buffer out. Exposed rather than duplicated -- the socket discipline
+ * (short reads, exact lengths) is the same for both versions. */
+int tls12_io_send(struct tls_conn *c, const uint8_t *b, size_t n) { return io_send_all(c->fd, b, n); }
+int tls12_io_record(struct tls_conn *c) { return recv_record(c); }
+void tls12_now_utc14(char out[15]);
+
 static int send_plaintext(struct tls_conn *c, uint8_t type, const uint8_t *frag, size_t len) {
     uint8_t hdr[5] = { type, 0x03, 0x03, (uint8_t)(len >> 8), (uint8_t)len };
     if (io_send_all(c->fd, hdr, 5)) return -1;
@@ -76,6 +84,8 @@ static void install_keys(struct tls_keys *k, const uint8_t secret[32]) {
 /* ---- certificate verification (T3) -------------------------------------- */
 
 /* Current time as "yyyymmddhhmmss" UTC, from the OS clock. */
+/* Shared with the 1.2 path, which needs the same clock for the same reason. */
+void tls12_now_utc14(char out[15]);
 static void now_utc14(char out[15]) {
     time_t t = time(NULL);
     struct tm g;
@@ -199,8 +209,16 @@ int tls_connect(struct tls_conn *c, int fd, const char *server_name) {
     size_t shlen = (size_t)rl - 5;
     int pr = tls_parse_server_hello(c->recbuf + 5, shlen, server_pub);
     if (pr == -2) return -2;              /* HelloRetryRequest unsupported */
+    if (pr == TLS_SH_IS_12) {
+        /* The server does not speak 1.3. Hand the rest of the handshake to the
+         * 1.2 client -- same socket, same transcript, same certificate rules,
+         * an entirely different key schedule and record layer. */
+        tls_transcript_update(&c->tr, c->recbuf + 5, shlen);
+        return tls12_client_handshake(c, c->recbuf + 5, shlen, crand, priv, pub, server_name);
+    }
     if (pr) return -1;
     tls_transcript_update(&c->tr, c->recbuf + 5, shlen);
+    c->version = 13;
 
     /* Key schedule up to the handshake traffic keys (RFC 8446 §7.1). */
     uint8_t shared[32], empty_hash[32], early[32], derived[32], th[32], key[16], iv[12];
@@ -322,7 +340,13 @@ long tls_write(struct tls_conn *c, const void *buf, size_t len) {
     while (off < len) {
         size_t n = len - off;
         if (n > TLS_RECORD_MAX_PLAINTEXT) n = TLS_RECORD_MAX_PLAINTEXT;
-        int rn = tls_record_seal(&c->tx, TLS_CT_APPLICATION_DATA, p + off, n,
+        /* The two versions frame a record differently -- explicit nonce and
+         * a different AAD in 1.2 -- so this is the one place the split shows
+         * after the handshake. */
+        int rn = c->version == 12
+               ? tls12_seal(c, TLS_CT_APPLICATION_DATA, p + off, n,
+                            c->recbuf, sizeof c->recbuf)
+               : tls_record_seal(&c->tx, TLS_CT_APPLICATION_DATA, p + off, n,
                                  c->recbuf, sizeof c->recbuf);
         if (rn < 0 || io_send_all(c->fd, c->recbuf, (size_t)rn)) return -1;
         off += n;
@@ -345,10 +369,16 @@ long tls_read(struct tls_conn *c, void *buf, size_t cap) {
         int rl = recv_record(c);
         if (rl < 0) return -1;
         if (c->recbuf[0] == TLS_CT_CHANGE_CIPHER_SPEC) continue;
-        if (c->recbuf[0] != TLS_CT_APPLICATION_DATA) return -1;
+        /* In 1.2 the record header carries the REAL type, so an alert or a
+         * post-handshake message arrives labelled as itself; 1.3 hides
+         * everything behind application_data. */
+        if (c->version != 12 && c->recbuf[0] != TLS_CT_APPLICATION_DATA) return -1;
 
         uint8_t typ;
-        int n = tls_record_open(&c->rx, c->recbuf, (size_t)rl,
+        int n = c->version == 12
+              ? tls12_open(c, c->recbuf, (size_t)rl,
+                           c->rleft, sizeof c->rleft, &typ)
+              : tls_record_open(&c->rx, c->recbuf, (size_t)rl,
                                 c->rleft, sizeof c->rleft, &typ);
         if (n < 0) return -1;
         if (typ == TLS_CT_HANDSHAKE) continue;     /* NewSessionTicket etc: ignore */
@@ -371,3 +401,6 @@ void tls_close(struct tls_conn *c) {
     }
     close(c->fd);
 }
+
+/* The 1.2 path's clock, same source as 1.3's. */
+void tls12_now_utc14(char out[15]) { now_utc14(out); }

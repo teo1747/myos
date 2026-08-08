@@ -10,7 +10,13 @@
 /* Wire constants. */
 #define TLS_VERSION_13        0x0304
 #define TLS_VERSION_LEGACY    0x0303
-#define TLS_SUITE_AES128_GCM  0x1301   /* TLS_AES_128_GCM_SHA256 (the one T1 suite) */
+#define TLS_SUITE_AES128_GCM  0x1301   /* TLS_AES_128_GCM_SHA256 (the 1.3 suite) */
+#define TLS_VERSION_12        0x0303
+/* tls_parse_server_hello: the server chose 1.2, not an error. */
+#define TLS_SH_IS_12          (-3)
+/* The 1.2 suites, both ECDHE + AES-128-GCM + SHA-256 (RFC 5289). */
+#define TLS_SUITE12_ECDHE_ECDSA_AES128_GCM 0xC02B
+#define TLS_SUITE12_ECDHE_RSA_AES128_GCM   0xC02F
 #define TLS_GROUP_X25519      0x001d
 
 /* HandshakeType (RFC 8446 §4). */
