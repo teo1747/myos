@@ -1516,9 +1516,8 @@ int compositor_desktop_front(int pid, int on) {
              * predictable. Doing it properly means the bar's OPAQUE STRIP being
              * above and its dropdown canvas not, and that is a compositing
              * change, not a z-order one. */
-            /* Every window's meaning in the stack just changed -- what was in
-             * front is now behind, or the reverse -- so the whole screen is
-             * what has to be recomposed, not the layer's own rect. */
+            /* Every window's meaning in the stack just changed, so the whole
+             * screen is what has to be recomposed. */
             const struct fb_info *fi = fb_get_info();
             if (fi) paint_region(0, 0, (int)fi->width, (int)fi->height);
             enforce_focus();

@@ -8,44 +8,39 @@ left to do.
 
 ## The Applications launcher
 
-- [x] ~~Opens once, then never again~~ -- it was opening every time and being
-      drawn BEHIND the app windows. The launcher is painted by the desktop
-      process, and the desktop is pinned at z=0 because it is the ground. New
-      syscall 92 `win_desktop_front(on)` lifts that layer above the app band
-      while the launcher is up and drops it back after; only the layer's owner
-      may call it.
-- [x] ~~The app names print over the menu bar~~ -- two causes. The launcher was
-      a 480x430 modal card, which does not FIT a 640x480 display, so its header
-      slid under the bar; it is full-bleed and sized from the live viewport
-      now. And closing it left stale pixels: the compositor recomposes the
-      instant the z-flip lands, while home only draws the new state on its NEXT
-      frame and then presents dirty rects, so whatever the new frame did not
-      touch kept the old pixels. The frames either side of the flip present the
-      whole surface.
-- [ ] The menu bar is COVERED while the launcher is up, rather than staying
-      above it the way a Mac's does. Lifting translucent bars one band above
-      the raised desktop was tried and reverted: the bar's window GROWS from
-      792x26 to 792x340 to hold its dropdowns, so above the launcher it became
-      a 340px sheet of mostly-empty canvas composited over it -- the launcher
-      opened, logged `OPEN`, and could not be seen. Doing it properly means the
-      bar's OPAQUE STRIP being above and its dropdown canvas not, which is a
-      compositing change rather than a z-order one.
-- [ ] 🐛 A black block sits where the menu bar is while the launcher is up.
-      Two TRANSLUCENT full-screen layers now overlap: the desktop is composited
-      per-pixel (`fb_blit_over`) because its canvas is genuinely transparent --
-      the wallpaper is drawn by the COMPOSITOR, not by home -- and the menu bar
-      is translucent too, with a declared blur sub-rect it frosts before
-      blending. Raising the desktop above it makes the desktop blend over an
-      already-frosted strip, and that strip comes out black rather than tinted.
-      The fix is in the compositing order for that case, not in home.
-- [ ] NOT VERIFIED: that the launcher actually appears in front of a running
-      app. The only trigger with an app covering the screen is the menu-bar
-      button, and a synthesized click cannot work it here (the bar renders at
-      1Hz and QMP's press/release never lands as a click edge). The reasoning
-      and the syscall are in; the observation is not. Test by hand.
-- [ ] The menu-bar button cannot be driven under QMP at all, which is why this
-      whole area went unverified for so long. Worth a way to open the launcher
-      that a test can reach.
+- [x] Full-screen, searchable, 72px icons, tinted glass. The menu bar stays
+      visible above it.
+- [x] The button OPENS rather than toggles. Toggling turned one press into
+      open+close whenever the signal arrived twice, which looked like a dead
+      button.
+- [ ] 🐛 THE OPEN ONE. With an app window already on screen, the launcher is
+      BEHIND it -- it is drawn by the desktop process and the desktop is the
+      ground at z=0.
+      `embk_win_desktop_front()` (syscall 92) exists and works: the layer does
+      move, and the FIRST open renders correctly through it. But the SECOND
+      open composites to nothing -- home draws the grid (its own log says so:
+      11 apps, two frames) and the screen shows bare desktop, with the menu bar
+      gone because the layer is over it. It is DISABLED in home for now: a
+      launcher that is merely behind a window is better than one that looks
+      like a crash.
+      Three causes were guessed and all three were wrong, so the next attempt
+      should start from measurement:
+        * NOT the scene's dirty tracking -- em_structure_changed() made no
+          difference;
+        * NOT the compositor repainting before the content exists -- removing
+          the repaint from inside the syscall made no difference;
+        * NOT the menu bar's z -- lifting translucent bars above the layer made
+          it worse (the bar GROWS to 792x340 for its dropdowns and then covers
+          the launcher itself).
+      What is established: home renders it, and the compositor does not show
+      it, and only when another app window exists.
+- [ ] The bar is covered while the launcher is up IF the layer is ever lifted
+      again. Doing that properly means the bar's OPAQUE STRIP above and its
+      dropdown canvas below -- a compositing change, not a z-order one.
+- [ ] The launcher button is /system/images/launcher.eic at the FAR LEFT of the
+      menu bar (x~16), not the bolt glyph at x~561 -- that one is a draggable
+      status chip. Worth writing down: several rounds of "this cannot be tested
+      under QMP" were simply clicking the wrong pixel.
 
 ## Note++ -- the OS's own editor (started)
 

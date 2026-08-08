@@ -229,7 +229,27 @@ static void apps_set_open(int open) {
     /* Render the new state BEFORE moving the layer when closing, and move it
      * before rendering when opening -- either way the compositor's recompose
      * must not be the one that shows a half-updated desktop. */
-    int rc = embk_win_desktop_front(open);
+    /* NOT LIFTED. embk_win_desktop_front() exists and works -- the layer does
+     * move, and the first open renders correctly through it -- but with an app
+     * window already on screen the SECOND open composites to nothing: home
+     * draws the grid (its own log says so, 11 apps, two frames) and the screen
+     * shows bare desktop, with the menu bar gone because the layer is over it.
+     * Three attempts at the cause were wrong, so it is off until the real one
+     * is found rather than left on in a state that looks like a crash.
+     *
+     * The cost is the behaviour this OS always had: the launcher is drawn by
+     * the desktop, so it is behind any app window. The gain over where this
+     * started is the rest of it -- full-screen, searchable, and it never eats
+     * the menu bar. See docs/TODO.md. */
+    int rc = 0;  /* embk_win_desktop_front(open) -- see above */
+    /* TELL THE RUNTIME THE TREE CHANGED SHAPE. The launcher is a whole subtree
+     * that appears and disappears, and the renderer only repaints what it can
+     * see has changed -- so the SECOND time it opened, with the same apps in
+     * the same order, it rebuilt an identical subtree, nothing registered as a
+     * mutation, and not one pixel of it was painted. The layer came to the
+     * front (hiding the menu bar, which is how it looked like a crash) over a
+     * desktop that had simply not drawn its launcher. */
+    em_structure_changed();
     g_full_present = 3;
     g_dock_dirty = 1;
     /* Say so on the serial console. The launcher is reachable only from the
