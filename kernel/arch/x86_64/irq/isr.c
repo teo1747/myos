@@ -4,6 +4,7 @@
 #include "process/process.h"   /* current_thread, struct process/thread */
 #include "process/debug.h"     /* debug_on_exception (§6.6 exception routing) */
 #include "lib/ksym.h"          /* the panic symbolizer (§7) */
+#include "arch/x86_64/syscall/usercopy.h"   /* access_ok, for the ring-3 walk */
 
 /* Serializes the exception dump so two faulting cores don't interleave their
  * reports byte-by-byte over the lockless UART (observed directly as two
@@ -154,6 +155,42 @@ static void dump_fault(struct registers *regs) {
             rbp = next;
         }
         serial_write_string("--- end backtrace ---\n");
+    }
+
+    /* A RING-3 backtrace, in raw addresses.
+     *
+     * The kernel walk above stops at the kernel's own .text, which is exactly
+     * no help when the faulting code is an application -- and "RIP=0" says a
+     * call or return went through a null pointer without saying whose. The
+     * user stack is mapped right now (same CR3), so the rbp chain is readable;
+     * every read goes through access_ok so a corrupt frame ends the walk
+     * instead of faulting the fault handler.
+     *
+     * Addresses, not symbols: the kernel has its own .embdbg and knows nothing
+     * about an application's. `nm build/<app>.elf` turns these into names, and
+     * an ET_EXEC app is loaded at bias 0 so they match directly. */
+    if ((regs->cs & 0x3) == 0x3) {
+        serial_write_string("\n--- ring-3 backtrace (addresses; nm the app) ---\n");
+        serial_write_string("  rip  "); serial_write_hex(regs->rip); serial_write_string("\n");
+        /* The return address the faulting frame would use, if rsp still points
+         * at it -- the usual shape when a CALL through a null pointer faults
+         * on the very first instruction fetch. */
+        if (access_ok((const void *)(uintptr_t)regs->rsp, 8)) {
+            serial_write_string("  ret@rsp  ");
+            serial_write_hex(*(volatile uint64_t *)(uintptr_t)regs->rsp);
+            serial_write_string("\n");
+        }
+        uint64_t rbp = regs->rbp;
+        for (int i = 0; i < 24; i++) {
+            if ((rbp & 0x7) || !access_ok((const void *)(uintptr_t)rbp, 16)) break;
+            uint64_t next = *(volatile uint64_t *)(uintptr_t)(rbp);
+            uint64_t ret  = *(volatile uint64_t *)(uintptr_t)(rbp + 8);
+            if (!ret) break;
+            serial_write_string("  frame "); serial_write_hex(ret); serial_write_string("\n");
+            if (next <= rbp) break;                    /* chain must climb */
+            rbp = next;
+        }
+        serial_write_string("--- end ring-3 backtrace ---\n");
     }
 }
 

@@ -396,7 +396,15 @@ long tls_read(struct tls_conn *c, void *buf, size_t cap) {
 void tls_close(struct tls_conn *c) {
     if (c->established) {
         uint8_t alert[2] = { 1, 0 };   /* warning(1), close_notify(0) */
-        int rn = tls_record_seal(&c->tx, TLS_CT_ALERT, alert, 2, c->recbuf, sizeof c->recbuf);
+        /* THE THIRD PLACE THAT HAS TO KNOW THE VERSION, and the one that was
+         * missed. On a 1.2 connection c->tx was never initialised -- those
+         * keys live in tls12.c -- so sealing with it ran AES-GCM over a zeroed
+         * context and called through a null pointer. The browser fetched the
+         * page and then died closing the socket, which is why it looked like a
+         * startup fault with no TLS anywhere near it. */
+        int rn = c->version == 12
+               ? tls12_seal(c, TLS_CT_ALERT, alert, 2, c->recbuf, sizeof c->recbuf)
+               : tls_record_seal(&c->tx, TLS_CT_ALERT, alert, 2, c->recbuf, sizeof c->recbuf);
         if (rn > 0) (void)io_send_all(c->fd, c->recbuf, (size_t)rn);
     }
     close(c->fd);
