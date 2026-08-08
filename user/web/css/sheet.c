@@ -137,18 +137,28 @@ void css_sheet_apply(const struct css_sheet *sheet, struct html_doc *doc,
     if (!sheet || !doc || !out || node < 0 || node >= doc->n) return;
 
     /* Collect the matches, then apply in cascade order. Two passes rather than
-     * one because "weakest first" is not the order they are found in. */
-    unsigned char idx[CSS_MAX_RULES];
+     * one because "weakest first" is not the order they are found in.
+     *
+     * The index type has to HOLD a rule index. It was `unsigned char`, which
+     * was exactly wide enough while CSS_MAX_RULES was 256 and became silent
+     * corruption the moment the cap was raised: rule 300 was stored as 44, so
+     * the cascade applied whichever rule happened to live at the truncated
+     * index. lobste.rs came out completely blank because a rule for something
+     * else landed on <body> as display:none.
+     *
+     * Static rather than automatic: 4096 entries is 8KB, this is called once
+     * per element per frame, and it does not recurse. */
+    static unsigned short idx[CSS_MAX_RULES];
     int m = 0;
     for (int i = 0; i < sheet->n && m < CSS_MAX_RULES; i++)
-        if (css_sel_match(&sheet->rules[i].sel, doc, node)) idx[m++] = (unsigned char)i;
+        if (css_sel_match(&sheet->rules[i].sel, doc, node)) idx[m++] = (unsigned short)i;
     if (!m) return;
 
     /* insertion sort by (specificity, document order) -- ascending, so the
      * strongest rule is applied LAST and therefore wins each property it
      * sets, while weaker rules still contribute the properties it doesn't */
     for (int a = 1; a < m; a++) {
-        unsigned char key = idx[a];
+        unsigned short key = idx[a];
         const struct css_rule *rk = &sheet->rules[key];
         int b = a - 1;
         while (b >= 0) {

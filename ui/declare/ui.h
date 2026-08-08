@@ -116,6 +116,13 @@ uint32_t ui_debug_mutation_count(void);
 struct instance_handle ui_first_child(struct instance_handle h);
 struct instance_handle ui_next_sibling(struct instance_handle h);
 struct node_handle     ui_scene_of(struct instance_handle h);
+
+/* Did a tree this frame nest deeper than the reconciler can hold? Deeper
+ * containers are CLAMPED to the deepest level that fits -- their children
+ * attach one level up rather than corrupting the stack. Reported rather than
+ * silent, because a page that trips it is laid out slightly wrong and that is
+ * worth being able to see. */
+int                    ui_depth_overflowed(void);
 struct scene_arena    *ui_scene_arena(void);
 /* Instance-pool telemetry. `overflow` counts allocations the pool REFUSED --
  * any non-zero value means views were silently dropped and whatever is on

@@ -1,0 +1,39 @@
+<html><head><title>Pseudo-elements and display:table</title><style>
+/* THE CLEARFIX. The commonest rule on the web, and the one that used to turn
+   a page into a blank screen: a rule written for a generated box was applied
+   to the real element, which then had display:table and no rows -- and an
+   element with display:table and no rows rendered NOTHING AT ALL.
+   python.org drew zero words for exactly this pair of bugs. */
+.container:after { content: ""; display: table; clear: both }
+.legacy:before   { content: "x"; display: none }
+.modern::after   { display: none }
+.modern::before  { display: none }
+
+/* A pseudo-CLASS is deliberately treated differently: it describes the same
+   element in another state, so styling the element is closer to right than
+   dropping the rule. */
+a:hover { color: #58a6ff }
+
+/* ...and display:table on something that is not a table still shows what is
+   inside it. */
+.tbox { display: table }
+</style></head><body>
+<div class="container"><p>CLEARFIXED text is still visible</p></div>
+<div class="legacy"><p>LEGACYPSEUDO text is still visible</p></div>
+<div class="modern"><p>MODERNPSEUDO text is still visible</p></div>
+<div class="tbox"><p>TABLEBOX text is still visible</p></div>
+<p><a href="/x">HOVERLINK</a></p>
+
+<!-- A rule for a generated box must not reach the element it hangs off... -->
+<!-- EXPECT-TEXT: CLEARFIXED -->
+<!-- ...whichever way it is spelled: the four legacy pseudo-elements take one
+     colon, and anything with two colons is one by definition. -->
+<!-- EXPECT-TEXT: LEGACYPSEUDO -->
+<!-- EXPECT-TEXT: MODERNPSEUDO -->
+<!-- An element with display:table and no rows falls back to a block rather
+     than dropping its whole subtree. -->
+<!-- EXPECT-TEXT: TABLEBOX -->
+<!-- A pseudo-CLASS still applies to the element, which is the deliberate
+     difference: a:hover paints the link. -->
+<!-- EXPECT-COLOR: HOVERLINK #58a6ff -->
+</body></html>

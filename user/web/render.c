@@ -652,11 +652,21 @@ static int table_rows(struct html_doc *d, int tbl, int *out, int max,
 static void render_children(struct html_doc *d, int node, const struct vstyle *s,
                             const char *href);
 
-static void render_table(struct html_doc *d, int node, const struct vstyle *st,
-                         const char *href) {
+/* Returns 0 when `node` has no table structure to draw, so the caller can fall
+ * back to laying it out as an ordinary block.
+ *
+ * It used to return silently and the subtree DISAPPEARED, which matters far
+ * more than it sounds: `display: table` is a layout idiom on the real web, not
+ * only a thing <table> does -- centring, equal columns, and the clearfix that
+ * every CSS framework ships. A div carrying it has no rows, so the whole
+ * branch was dropped. Block is the honest degradation: a real engine would
+ * wrap the children in anonymous table boxes and the result would look much
+ * the same at this level of fidelity. */
+static int render_table(struct html_doc *d, int node, const struct vstyle *st,
+                        const char *href) {
     static int rows[TBL_MAX_ROWS];
     int nrow = table_rows(d, node, rows, TBL_MAX_ROWS, st);
-    if (!nrow) return;
+    if (!nrow) return 0;
 
     /* The column count is the WIDEST row: a row with fewer cells leaves the
      * tail empty rather than shifting the ones after it into the wrong
@@ -748,6 +758,7 @@ static void render_table(struct html_doc *d, int node, const struct vstyle *st,
         em_flush();
         ui_end_stack();
     }
+    return 1;
 }
 
 /* <pre>: one text node per source line, whitespace intact, no wrapping. */
@@ -942,7 +953,7 @@ static void render_block_inner(struct html_doc *d, int node, const struct vstyle
      * block in a document is as wide as its parent; that is what makes the
      * line breaks happen. */
     if (s->display == VD_IMAGE) { emit_image(d, node, s); return; }
-    if (s->display == VD_TABLE) { render_table(d, node, s, href); return; }
+    if (s->display == VD_TABLE && render_table(d, node, s, href)) return;
     if (s->display == VD_FIELD)  { emit_field(d, node, s); return; }
     if (s->display == VD_BUTTON) { emit_button(d, node, s); return; }
     if (s->display == VD_CHECK)  { emit_check(d, node, s, 0); return; }

@@ -69,7 +69,10 @@ static struct css_sheet g_sheet;   /* the page's own <style>, cascaded */
  * have arrived so far, then the document's own <style>. Rebuilt each time a
  * <link> lands, because css_sheet_parse replaces a sheet rather than extending
  * it -- and because a page must be readable before the last stylesheet does. */
-static char g_allcss[160 * 1024];
+/* Every sheet the page has, concatenated. Sized from the same measurement
+ * as CSS_MAX_RULES: python.org ships 513KB of CSS across four files, and a
+ * buffer that overflows silently drops whichever sheet did not fit. */
+static char g_allcss[1024 * 1024];
 /* The width a media query is evaluated against: the document's content box,
  * which is the window minus the ScrollView's padding -- what the page actually
  * gets to lay out in. */

@@ -2658,3 +2658,48 @@ Encrypt/RSA), `test wget https`, `test pypi`.
       for the life of the process.
 - [ ] Image and border-width lengths do not scale with zoom; only text and the
       box lengths render.c states (padding, margin, width/height, gap).
+
+### Browser: what a run against 17 real sites turned up (2026-08-08)
+
+Method: fetch real pages WITH their stylesheets, render each through
+`build/browser_render`, and rank what breaks. Everything below was found this
+way and is not in any corpus page, because the corpus was written by the same
+person who wrote the engine. Five bugs were fixed on the spot (deep-tree
+segfault, pseudo-elements matching real elements, display:table dropping its
+subtree, over-long selectors applying to an ancestor, and the cascade's
+unsigned-char rule index). These are what remain.
+
+- [ ] STYLE RESOLUTION IS O(rules x elements) AND IT NOW HURTS. Every element
+      tests every rule. With the rule cap raised to 4096 to fit real sheets,
+      one build+layout pass on the HOST costs 315ms for Wikipedia, 194ms for
+      bbc.com, 104ms for python.org -- against ~4ms for a small page. Under TCG
+      on the metal that is seconds per frame. The standard fix is the right
+      one: index rules by their RIGHTMOST simple selector (id, then class, then
+      tag, then a universal bucket) so an element only tests candidates. Expect
+      10-50x. This is the single biggest thing left in the browser.
+- [ ] The DOM arena (8192 nodes) truncates Wikipedia and bbc.com. The string
+      arena (256KB) truncates bbc.com first -- both are reported as
+      "TRUNCATED" without saying which ran out, which cost time to work out.
+      Report them separately.
+- [ ] The declare layer's instance pool (INST_MAX 8192) overflows on Wikipedia:
+      1452 views dropped. Bounded and reported, but it means the bottom of a
+      long page is not built. Paging that arena is the fix (already noted at
+      the top of declare.c).
+- [ ] python.org fails the scroll-blit pixel-exactness check ("pixels differ").
+      Not yet diagnosed -- the blit path is taken and disagrees with a full
+      repaint, which is a correctness bug in the fast path.
+- [ ] `:is()`, `:not()` and `:has()` with a COMMA inside are split on that
+      comma by the selector-group scanner, which produces one bogus selector
+      per argument. They currently fail to match rather than mis-matching, so
+      the damage is limited, but the rules are silently lost.
+- [ ] Selector matching keeps the rightmost 6 compounds (99.97% of real
+      selectors). Longer ones drop their outermost ancestor constraints and so
+      match a SUPERSET -- correct element, looser condition. Documented in
+      css_sel_parse rather than fixed.
+- [ ] github.com ships 6.9MB of CSS across 41 sheets and 40942 rules. It is
+      capped and reported, not crashed, and chasing that number is not the
+      plan; noted so the limit is a known one.
+- [ ] Several sites serve a bot-check page rather than content to a plain
+      fetch. That is not a rendering bug and the triage has to keep separating
+      the two: acmqueue was 45 nodes of "enable JavaScript", not a parse
+      failure.

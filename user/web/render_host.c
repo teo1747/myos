@@ -167,6 +167,62 @@ static void first_last_text(struct node_handle h, int inside,
  * and until this existed you could only see the emission, so every parse bug
  * had to be inferred from the shape of the wreckage downstream. Printed when
  * DOM=1 is set. */
+/* Text bytes under `node`, so a hidden subtree can be reported by how much of
+ * the page it takes with it. */
+static int subtree_text(struct html_doc *d, int node) {
+    if (node < 0 || node >= d->n) return 0;
+    int n = 0;
+    if (d->nodes[node].kind == HTML_TEXT && d->nodes[node].text)
+        n = (int)strlen(d->nodes[node].text);
+    for (int c = d->nodes[node].first_child; c >= 0; c = d->nodes[c].next_sibling)
+        n += subtree_text(d, c);
+    return n;
+}
+
+static void dump_hidden(struct html_doc *d, int node, const struct vstyle *parent,
+                        int depth) {
+    if (node < 0 || node >= d->n || depth > 40) return;
+    struct vstyle s = *parent;
+    if (d->nodes[node].kind == HTML_ELEM) {
+        vstyle_for_node(d, node, parent, &g_sheet, &s);
+        if (s.display == VD_NONE) {
+            int chars = subtree_text(d, node);
+            /* <head>, <script> and friends are display:none by the UA sheet and
+             * carry no text worth reporting -- only say something when a
+             * VISIBLE part of the page disappeared. */
+            if (chars > 0) {
+                printf("HIDDEN| depth=%-2d <%s%s%s%s%s> hides %d chars of text\n",
+                       depth, d->nodes[node].tag,
+                       d->nodes[node].id ? " id=" : "", d->nodes[node].id ? d->nodes[node].id : "",
+                       d->nodes[node].klass ? " class=" : "", d->nodes[node].klass ? d->nodes[node].klass : "",
+                       chars);
+                /* ...and WHICH RULE did it. Knowing that the body is hidden
+                 * still leaves a stylesheet to search; knowing the selector
+                 * that matched ends the search. */
+                for (int r = 0; r < g_sheet.n; r++) {
+                    const struct css_rule *ru = &g_sheet.rules[r];
+                    if (!css_sel_match(&ru->sel, d, node)) continue;
+                    /* every matching rule, not only the ones that mention display:
+                     * the point is to see what the cascade actually applied. */
+                    printf("HIDDEN|   matched by spec=%u: ", ru->sel.spec);
+                    for (int k = 0; k < ru->sel.n; k++)
+                        printf("%s%s%s%s%s ",
+                               k ? (ru->sel.part[k].comb == CSS_COMB_CHILD ? "> " :
+                                    ru->sel.part[k].comb == CSS_COMB_ADJ   ? "+ " :
+                                    ru->sel.part[k].comb == CSS_COMB_SIB   ? "~ " : "") : "",
+                               ru->sel.part[k].tag,
+                               ru->sel.part[k].id[0] ? "#" : "", ru->sel.part[k].id,
+                               ru->sel.part[k].klass[0] ? "." : "");
+                    printf("  {%.*s}\n", (int)(ru->decls_len > 90 ? 90 : ru->decls_len), ru->decls);
+                }
+            }
+            return;                     /* its children are hidden with it */
+        }
+    }
+    for (int c = d->nodes[node].first_child; c >= 0; c = d->nodes[c].next_sibling)
+        dump_hidden(d, c, &s, depth + 1);
+}
+
 static void dump_dom(struct html_doc *d, int node, int depth) {
     if (node < 0 || node >= d->n || depth > 40) return;
     struct html_node *n = &d->nodes[node];
@@ -314,7 +370,7 @@ int main(int argc, char **argv) {
     if (getenv("ZOOM")) vellum_set_zoom((float)atof(getenv("ZOOM")));
     cssref_start(&g_doc, g_doc_base);
     {
-        static char allcss[320 * 1024];
+        static char allcss[1024 * 1024];
         size_t n = 0, extn = 0;
         const char *ext = cssref_text(&extn);
         if (ext && extn) { memcpy(allcss, ext, extn); n = extn; allcss[n++] = '\n'; }
@@ -335,6 +391,19 @@ int main(int argc, char **argv) {
         if (failed) printf("*** %d script(s) threw ***\n", failed);
     }
     if (getenv("DOM")) dump_dom(&g_doc, g_root, 0);
+    /* HIDDEN=1 -- which elements the cascade turned off, and how much of the
+     * document went with each one.
+     *
+     * A page that renders blank is almost always ONE element with display:none
+     * too high up, and finding it by bisecting a stylesheet takes an evening.
+     * This walks the tree, computes each element's style exactly as the
+     * renderer does, and reports every subtree that gets dropped -- so the
+     * question becomes a lookup. Shallowest first: the one nearest the root is
+     * the one that matters. */
+    if (getenv("HIDDEN")) {
+        struct vstyle rs; vstyle_root(&rs);
+        dump_hidden(&g_doc, g_root, &rs, 0);
+    }
     printf("%s: %zu bytes -> %d nodes%s, root %d, %d css rule%s%s\n", doc, dl, g_doc.n,
            g_doc.truncated ? " (TRUNCATED)" : "", g_root, g_sheet.n,
            g_sheet.n == 1 ? "" : "s", g_sheet.truncated ? " (TRUNCATED)" : "");

@@ -429,14 +429,71 @@ static void t16_origin_order(void) {
 
 static void t17_bounded(void) {
     printf("T17 a stylesheet from a stranger is bounded:\n");
-    static char big[40000];
+    /* Sized FROM the cap, not from a number that happened to exceed it when
+     * this was written. The literal 400 silently stopped testing anything the
+     * day CSS_MAX_RULES went past it -- the check still passed, against a
+     * sheet that no longer truncated. */
+    static char big[(CSS_MAX_RULES + 64) * 24];
     size_t k = 0;
-    for (int i = 0; i < 400 && k < sizeof big - 40; i++)
+    for (int i = 0; i < CSS_MAX_RULES + 32 && k < sizeof big - 40; i++)
         k += (size_t)snprintf(big + k, sizeof big - k, ".c%d { color: red } ", i);
     struct css_sheet sh;
     css_sheet_parse(&sh, big, k);
     CHECK(sh.n <= CSS_MAX_RULES, "never exceeds the rule table");
     CHECK(sh.truncated == 1, "and truncation is REPORTED, not silent");
+
+    /* A selector longer than the parser can hold keeps its SUBJECT -- the
+     * element the rule is about -- and drops the outermost ancestors. Getting
+     * this backwards applied the rule to an ancestor, which for display:none
+     * removes a whole subtree rather than one element. */
+    struct css_sel sel;
+    const char *deep = "div.a div.b div.c div.d div.e span.leaf";
+    CHECK(css_sel_parse(deep, strlen(deep), &sel) == 0, "an over-long selector still parses");
+    CHECK(sel.n == CSS_SEL_PARTS, "...filling the parts it has");
+    CHECK(!strcmp(sel.part[sel.n - 1].tag, "span") &&
+          !strcmp(sel.part[sel.n - 1].klass, "leaf"),
+          "...and the SUBJECT is the last compound, not the first");
+    CHECK(sel.part[0].comb == CSS_COMB_DESC,
+          "the outermost kept compound is a descendant: its real ancestor is gone");
+    /* six classes + one on the subject = 7 classes (10 each), and six tag
+     * names (1 each) -- counted across the WHOLE selector, dropped compounds
+     * included, which is what a real engine reports. */
+    /* Six compounds, each one tag name (1) plus one class (10). Counted
+     * across the WHOLE selector, dropped compounds included, which is what a
+     * real engine reports. */
+    CHECK(sel.spec == 6 * (10 + 1),
+          "specificity counts every compound, including dropped ones");
+
+    /* The cascade must be able to INDEX every rule it is allowed to hold.
+     * The match list was an unsigned char array -- exactly wide enough at 256
+     * rules, and silent corruption at anything more: rule 300 was recorded as
+     * 44, so a page's <body> was styled by a rule written for something else.
+     * A sheet whose LAST rule is the one that matters is the shape that
+     * catches it. */
+    {
+        static char many[(CSS_MAX_RULES + 8) * 32];
+        size_t k = 0;
+        for (int i = 0; i < CSS_MAX_RULES - 1 && k < sizeof many - 64; i++)
+            k += (size_t)snprintf(many + k, sizeof many - k, ".none%d { color: #010101 } ", i);
+        k += (size_t)snprintf(many + k, sizeof many - k, "p { color: #20c040 } ");
+        struct css_sheet big2;
+        css_sheet_parse(&big2, many, k);
+        CHECK(big2.n == CSS_MAX_RULES && !big2.truncated, "a full sheet, not truncated");
+
+        static struct html_node nd[64];
+        static char st[4096];
+        struct html_doc dd;
+        const char *src = "<body><p>x</p></body>";
+        html_parse(&dd, src, strlen(src), nd, 64, st, sizeof st);
+        int p = -1;
+        for (int i = 0; i < dd.n; i++)
+            if (dd.nodes[i].kind == HTML_ELEM && !strcmp(dd.nodes[i].tag, "p")) { p = i; break; }
+        struct vstyle rv, pv;
+        vstyle_root(&rv);
+        vstyle_for_node(&dd, p, &rv, &big2, &pv);
+        CHECK(p >= 0 && pv.color == 0xFF20C040u,
+              "the LAST rule in a full sheet is the one that applies");
+    }
 }
 
 /* ======================= PNG (B6) ======================================= */

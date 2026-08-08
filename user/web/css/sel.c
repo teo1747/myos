@@ -35,12 +35,33 @@ static void cpy_lower(char *dst, size_t cap, const char *s, size_t n) {
     dst[k] = 0;
 }
 
+/* Parse a compound selector chain, KEEPING THE RIGHTMOST compounds.
+ *
+ * The subject of a selector is its LAST compound -- the element the rule
+ * actually applies to. Parsing straight into a fixed array and stopping when
+ * it filled kept the leftmost instead, so a selector one compound too long was
+ * applied to an ancestor of its target. With `display: none` on the end of it
+ * that does not misplace a style, it DELETES A SUBTREE: five compounds deep,
+ * a rule meant to hide one span hid the div four levels up and everything
+ * inside it. Found rendering lobste.rs, which came out blank.
+ *
+ * So: parse the whole chain into scratch, then keep the tail. Dropping
+ * ancestor constraints makes the selector match a SUPERSET of what it should
+ * -- the wrong direction is to match a different element entirely. The first
+ * kept combinator becomes a descendant for the same reason: it is the loosest,
+ * and its real ancestor is no longer there to be checked. */
+#define SEL_SCRATCH 24
+
 int css_sel_parse(const char *s, size_t len, struct css_sel *out) {
     if (!s || !out) return -1;
     memset(out, 0, sizeof *out);
 
+    struct css_sel_part scratch[SEL_SCRATCH];
+    int nscratch = 0;
+    memset(scratch, 0, sizeof scratch);
+
     size_t i = 0;
-    while (i < len && out->n < CSS_SEL_PARTS) {
+    while (i < len && nscratch < SEL_SCRATCH) {
         /* the combinator between the previous compound and this one; the last
          * one written wins, so "a  >  b" is a child combinator and not two */
         int comb = CSS_COMB_DESC;
@@ -52,7 +73,7 @@ int css_sel_parse(const char *s, size_t len, struct css_sel *out) {
         }
         if (i >= len) break;
 
-        struct css_sel_part *pt = &out->part[out->n];
+        struct css_sel_part *pt = &scratch[nscratch];
         pt->comb = (unsigned char)comb;
         int got = 0;
         while (i < len && !is_ws(s[i]) && s[i]!='>' && s[i]!='+' && s[i]!='~') {
@@ -71,7 +92,8 @@ int css_sel_parse(const char *s, size_t len, struct css_sel *out) {
             } else if (s[i] == ':' || s[i] == '[') {
                 char lead = s[i];
                 i++;
-                if (i < len && s[i] == ':') i++;      /* ::before -- an element */
+                int dbl = 0;
+                if (i < len && s[i] == ':') { i++; dbl = 1; }   /* ::before */
                 size_t vs = i;
                 while (i < len && !is_ws(s[i]) && s[i]!='.' && s[i]!='#' &&
                        s[i]!='>' && s[i]!='+' && s[i]!='~') i++;
@@ -81,6 +103,16 @@ int css_sel_parse(const char *s, size_t len, struct css_sel *out) {
                     cpy_lower(name, sizeof name, s + vs, vn);
                     if (!strcmp(name, "first-child")) { pt->first_child = 1; out->spec += 10; got = 1; }
                     else if (!strcmp(name, "last-child")) { pt->last_child = 1; out->spec += 10; got = 1; }
+                    /* A PSEUDO-ELEMENT names a box the document does not
+                     * contain, so the rule must not reach the element it hangs
+                     * off. `::` always means one; the four legacy ones are also
+                     * spelled with a single colon and have to be recognised by
+                     * name. See css_sel.pseudo_elem. */
+                    else if (dbl ||
+                             !strcmp(name, "before") || !strcmp(name, "after") ||
+                             !strcmp(name, "first-line") || !strcmp(name, "first-letter")) {
+                        out->pseudo_elem = 1; got = 1;
+                    }
                     /* anything else: skip the token and keep the compound --
                      * `a:hover` still styling `a` beats dropping the rule */
                 }
@@ -97,8 +129,17 @@ int css_sel_parse(const char *s, size_t len, struct css_sel *out) {
                 }
             }
         }
-        if (got) out->n++;
+        if (got) nscratch++;
     }
+
+    /* Keep the tail: the subject and as many of its nearest ancestors as fit.
+     * Specificity was accumulated over EVERY compound above, including the
+     * dropped ones, which is what a real engine reports. */
+    int keep = nscratch < CSS_SEL_PARTS ? nscratch : CSS_SEL_PARTS;
+    int from = nscratch - keep;
+    for (int k = 0; k < keep; k++) out->part[k] = scratch[from + k];
+    if (from > 0) out->part[0].comb = CSS_COMB_DESC;
+    out->n = (unsigned char)keep;
     return out->n ? 0 : -1;
 }
 
@@ -166,6 +207,10 @@ static int part_matches(const struct css_sel_part *pt, struct html_doc *d, int n
 
 int css_sel_match(const struct css_sel *sel, struct html_doc *d, int node) {
     if (!sel || !d || sel->n == 0 || node < 0 || node >= d->n) return 0;
+    /* A pseudo-element's box is not in the document, so nothing here is it.
+     * Until generated content exists, the honest answer is "no match" -- see
+     * css_sel.pseudo_elem for what pretending otherwise costs. */
+    if (sel->pseudo_elem) return 0;
 
     /* The SUBJECT (last part) must match the element itself. */
     int k = sel->n - 1;

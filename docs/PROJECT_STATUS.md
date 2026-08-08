@@ -1159,6 +1159,34 @@ halves, including an unkeyed control that demonstrates the displacement
 (`48 30 12 0` for rows declared `48 20 30 12`) -- an earlier version of that test
 restated every size each frame and passed while the browser was visibly broken.
 
+**Pointed at the real web, it broke in five places -- so those are fixed.**
+Everything before this had been verified against pages written by the same
+person who wrote the engine, which can only confirm what was already
+understood. Rendering seventeen real sites (with their stylesheets) found, in
+order of severity: a SEGFAULT on Wikipedia, where the reconciler's cursor stack
+overflowed on a deep tree and every refused push was still matched by a pop
+until the top walked off the bottom into a null dereference; pseudo-element
+selectors matching the element they hang off, so the clearfix
+`.container:after { display: table }` styled the container and python.org
+rendered zero words; `display: table` on anything without rows dropping its
+whole subtree; selectors longer than the parser holds keeping their FIRST
+compounds instead of their last, so a rule was applied to an ancestor of its
+target -- with `display:none` on the end of it, that deletes a page; and a
+cascade whose match list was an `unsigned char` array, exactly wide enough at
+256 rules and silent corruption above it.
+
+That last one only appeared because the rule cap was raised -- from 256 to
+4096, a number that came from counting: the median real page needs 132 rules,
+but bbc wants 781, mdn 1020, rust-lang 2570 and python.org 4314, and a page
+styled by an arbitrary first 256 of its rules is styled arbitrarily. The
+harness grew a `HIDDEN=1` mode that reports which elements the cascade turned
+off and which rule did it, because "the page is blank" should be a lookup
+rather than an evening of bisecting a stylesheet.
+
+All seventeen now render. What the run says is left -- chiefly that style
+resolution is O(rules x elements) and costs 315ms a frame on Wikipedia -- is in
+`TODO.md` under its own heading.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

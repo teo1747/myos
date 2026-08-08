@@ -35,7 +35,14 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out);
 
 /* ---- sel.c: one compound selector --------------------------------------- */
 
-#define CSS_SEL_PARTS 4          /* "nav ul li a" -- deeper is vanishingly rare */
+/* Compounds kept per selector. Across seventeen real sites, 99.8% of the
+ * 51503 selectors use four or fewer and 99.97% use six or fewer -- so six is
+ * where the cost stops buying anything.
+ *
+ * What matters more than the number is WHICH ones are kept when a selector is
+ * longer: see css_sel_parse. Keeping the first six would apply the rule to an
+ * ANCESTOR of the element the author meant. */
+#define CSS_SEL_PARTS 6
 
 /* How a compound is joined to the one BEFORE it in the selector. Stored on the
  * later part, because matching runs right-to-left and that is the direction
@@ -60,6 +67,21 @@ struct css_sel_part {
 struct css_sel {
     struct css_sel_part part[CSS_SEL_PARTS];  /* ancestor -> ... -> subject */
     unsigned char n;
+    /* The selector names a PSEUDO-ELEMENT (::before, ::after, ::marker...) --
+     * a box the document does not contain. It can never match a real element,
+     * and treating it as if it did is not a near miss: the commonest rule on
+     * the web is the clearfix
+     *
+     *     .container:after { content: ""; display: table; clear: both }
+     *
+     * and applying that to the container ITSELF turns a page into a blank
+     * screen. python.org rendered zero words for exactly this reason.
+     *
+     * Deliberately NOT the same treatment as an unknown pseudo-CLASS: `a:hover`
+     * styling `a` is closer to right than dropping the rule, because :hover
+     * describes the same element in another state. A pseudo-element describes a
+     * different box. */
+    unsigned char pseudo_elem;
     unsigned short spec;         /* specificity: id*100 + class*10 + type */
 };
 
@@ -102,7 +124,20 @@ int css_sel_match(const struct css_sel *sel, struct html_doc *doc, int node);
 
 /* ---- sheet.c: the stylesheet + cascade ---------------------------------- */
 
-#define CSS_MAX_RULES 256
+/* Set by MEASUREMENT, not by a round number. Across seventeen real sites the
+ * median page needs 132 rules and 256 was fine for eleven of them -- but bbc
+ * wants 781, mdn 1020, rust-lang 2570 and python.org 4314, and a page styled by
+ * an arbitrary first 256 of its rules is styled arbitrarily: whatever came
+ * after is simply not applied, so the cascade the author wrote is not the one
+ * that runs.
+ *
+ * 4096 covers sixteen of the seventeen. The seventeenth is github, which ships
+ * 6.9MB of CSS and 40942 rules; that is not a cap to chase, and hitting one is
+ * still reported rather than silent (css_sheet.truncated).
+ *
+ * The bound exists because a page can be hostile -- so it stays a bound. It is
+ * just no longer a bound that ordinary pages trip over. */
+#define CSS_MAX_RULES 4096
 
 struct css_rule {
     struct css_sel sel;

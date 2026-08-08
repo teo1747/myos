@@ -26,7 +26,11 @@
  * letting the caller draw a collapsed box; paging this arena the way the scene
  * and layout arenas already are is the proper fix, logged in docs/TODO.md. */
 #define INST_MAX          8192
-#define CURSOR_STACK_MAX  64
+/* Real HTML nests deeper than a hand-written UI does -- an English Wikipedia
+ * article got past 64 without trying. The stack is two handles per level, so
+ * this is a few kilobytes; the depth CLAMP below, not this number, is what
+ * makes an arbitrarily deep document safe. */
+#define CURSOR_STACK_MAX  256
 
 static struct instance g_inst[INST_MAX];
 static uint32_t g_inst_hw = 1;
@@ -39,6 +43,18 @@ static struct instance_handle g_root;
 struct reconcile_cursor { struct instance_handle parent, insert_after; };
 static struct reconcile_cursor g_cursor[CURSOR_STACK_MAX];
 static int g_cursor_top = -1;
+/* Containers entered PAST the stack's depth. They are still entered as far as
+ * the caller is concerned -- they just do not get a cursor level -- so their
+ * exit has to consume one of these instead of popping a level that was never
+ * pushed.
+ *
+ * Without this counter, overflow silently unbalanced the stack: every refused
+ * push was still matched by a real pop, g_cursor_top walked off the bottom,
+ * and cur_box() started returning NULL into an unchecked dereference. A deeply
+ * nested page did not degrade, it SEGFAULTED -- which on the metal is a ring-3
+ * fault that kills the browser. Found by rendering Wikipedia. */
+static int g_cursor_over;
+static int g_depth_overflowed;
 
 static uint32_t g_mutation_count;
 /* pointer / hover / press state (§7, extended for a live event loop) */
@@ -285,9 +301,11 @@ static struct instance_handle enter_container(enum instance_kind kind, uint64_t 
     reset_children_unvisited(inst);
     if (g_cursor_top + 1 < CURSOR_STACK_MAX)
         g_cursor[++g_cursor_top] = (struct reconcile_cursor){ inst, INSTANCE_HANDLE_NULL };
+    else { g_cursor_over++; g_depth_overflowed = 1; }   /* clamp, and stay balanced */
     return inst;
 }
 static void exit_container(void) {
+    if (g_cursor_over > 0) { g_cursor_over--; return; }
     if (g_cursor_top < 0) return;
     struct instance_handle parent = g_cursor[g_cursor_top].parent;
     sweep_unvisited_children(parent);
@@ -348,17 +366,27 @@ void ui_component(void (*fn)(void *props), const void *props, size_t props_size,
 
 void ui_box_begin(uint64_t key) { enter_container(INSTANCE_BOX, key, key != 0); }
 void ui_box_end(void) { exit_container(); }
+/* cur_box() can be NULL -- at the depth clamp, and after an unbalanced end
+ * that no longer corrupts anything but still has nowhere to write. Checked
+ * here rather than trusted: this exact dereference is what turned a deep page
+ * into a crash. */
 void ui_begin_vstack(uint64_t key) {
     enter_container(INSTANCE_BOX, key, key != 0);
-    struct layout_node *ln = layout_resolve(g_la, cur_box()->layout_node);
+    struct instance *b = cur_box();
+    if (!b) return;
+    struct layout_node *ln = layout_resolve(g_la, b->layout_node);
     if (ln) ln->axis = AXIS_COLUMN;
 }
 void ui_begin_hstack(uint64_t key) {
     enter_container(INSTANCE_BOX, key, key != 0);
-    struct layout_node *ln = layout_resolve(g_la, cur_box()->layout_node);
+    struct instance *b = cur_box();
+    if (!b) return;
+    struct layout_node *ln = layout_resolve(g_la, b->layout_node);
     if (ln) ln->axis = AXIS_ROW;
 }
 void ui_end_stack(void) { exit_container(); }
+
+int ui_depth_overflowed(void) { return g_depth_overflowed; }
 
 void ui_set_paint(struct paint p) {
     struct instance *b = cur_box(); if (!b) return;
@@ -596,7 +624,8 @@ void ui_text_keyed(uint64_t key, const char *fmt, ...) {
 
 void ui_spacer(void) {
     enter_container(INSTANCE_BOX, 0, false);
-    struct layout_node *ln = layout_resolve(g_la, cur_box()->layout_node);
+    struct instance *b = cur_box();
+    struct layout_node *ln = b ? layout_resolve(g_la, b->layout_node) : 0;
     if (ln) { ln->width.mode = SIZE_FLEX; ln->width.flex_grow = 1;
               ln->height.mode = SIZE_FLEX; ln->height.flex_grow = 1; }
     exit_container();
@@ -737,6 +766,7 @@ bool ui_is_pressed(void) { return g_ptr_down && is_ancestor_or_self(ui_open(), g
 bool ui_pointer_down(void) { return g_ptr_down; }
 
 void ui_frame_begin(void) {
+    g_depth_overflowed = 0; g_cursor_over = 0;
     g_cursor_top = -1;
     reset_children_unvisited(g_root);
     g_cursor[++g_cursor_top] = (struct reconcile_cursor){ g_root, INSTANCE_HANDLE_NULL };
