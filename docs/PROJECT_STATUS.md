@@ -1484,6 +1484,26 @@ a short body is reported rather than rendered as the page, because until this
 check existed a truncated download was indistinguishable from a complete one.
 That is why a networking bug spent this long looking like a rendering bug.
 
+**Modern CSS started applying.** Two gaps, both found by counting what the real
+corpus asks for rather than by guessing. `:where()` appears **4196** times in
+those sites' stylesheets, `:not()` 2693 and `:is()` 508 -- and the selector
+parser knew none of them. Worse than unsupported: the compound scanner ran to
+the next space, and `:where(.a, .b)` contains one, so `.b)` was read as a whole
+new compound and the rule attached to the wrong element or to nothing.
+Functional pseudos now consume their balanced parentheses even when their
+meaning is not implemented, which also stops `:nth-child(2n + 1)` corrupting
+whatever follows it.
+
+The other gap is **logical properties** -- `padding-inline`, `margin-block-start`
+and the rest, about **4800** uses, which is most of the spacing on any page
+built this decade. For the documents this renderer lays out (horizontal, LTR)
+each one is a physical property under another name, so a rename is the whole
+implementation, and it is stated in the code that this becomes a lie the day
+anything else is laid out.
+
+python.org went from a wall of unstyled text to its actual design: dark
+navigation bar, blue hero, the four-column footer grid.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

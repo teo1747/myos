@@ -6,6 +6,25 @@ left to do.
 
 ---
 
+## What still makes a page look older than it is
+
+Measured against the CSS of the seventeen real sites, ranked by how often the
+web asks for them and how much they change a page:
+
+- [ ] `opacity` (900 uses) and `box-shadow` (886). Shadow is most of what
+      reads as "depth" on a modern page; without it every card is a flat
+      rectangle.
+- [ ] `transform` (782). Used for layout offsets as often as for effects.
+- [ ] SVG is parsed but not DRAWN, so every logo and icon on a modern site is
+      alt text or nothing. rust-lang.org's header is the word "Rust Logo".
+- [ ] No `@font-face` (80 uses): every page renders in DejaVu Sans whatever it
+      asked for, which alone dates a design.
+- [ ] `background-image` (465), including gradients.
+- [ ] `z-index` (629) -- painting is still document order.
+- [ ] `white-space` (456), `min-width`/`min-height`/`max-height` (~1100).
+- [ ] `margin-right` has nowhere to go: the box model carries
+      `margin_top/bottom` and a left `indent` only.
+
 ## Browser chrome -- what is still missing
 
 - [x] ~~The address field shows the whole URL in one weight~~ -- the host is

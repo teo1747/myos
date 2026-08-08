@@ -231,6 +231,41 @@ static int parse_tracks(const char *v, size_t vn, unsigned char *tm, short *tv, 
     return cols;
 }
 
+/* LOGICAL PROPERTIES, renamed to the physical ones they mean.
+ *
+ * This is how CSS is written now: across the seventeen real sites this browser
+ * is measured against, the -inline-/-block- spellings appear about 4800 times,
+ * which is most of the spacing on any page built this decade. Ignoring them
+ * does not degrade a layout gracefully -- it removes the padding and margins
+ * from a design that has no others, which is a large part of why modern pages
+ * came out looking like documents from 2010.
+ *
+ * A rename is the whole implementation, and it is honest for exactly the
+ * documents this renderer lays out: horizontal writing mode, left to right.
+ * The day it lays out anything else this table becomes a lie, and has to ask
+ * the element which way its text runs. */
+static const char *logical_phys(const char *p, size_t pn) {
+    static const struct { const char *logical, *phys; } M[] = {
+        { "margin-block-start",   "margin-top"     },
+        { "margin-block-end",     "margin-bottom"  },
+        { "margin-inline-start",  "margin-left"    },
+        { "padding-block-start",  "padding-top"    },
+        { "padding-block-end",    "padding-bottom" },
+        { "padding-inline-start", "padding-left"   },
+        { "padding-inline-end",   "padding-right"  },
+        { "inline-size",          "width"          },
+        { "block-size",           "height"         },
+        { "max-inline-size",      "max-width"      },
+        { "inset-block-start",    "top"            },
+        { "inset-block-end",      "bottom"         },
+        { "inset-inline-start",   "left"           },
+        { "inset-inline-end",     "right"          },
+    };
+    for (size_t k = 0; k < sizeof M / sizeof M[0]; k++)
+        if (tok_eq(p, pn, M[k].logical)) return M[k].phys;
+    return 0;
+}
+
 int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
     if (!text || !out) return 0;
     int applied = 0;
@@ -258,6 +293,14 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
                       text[vs+vn-1]=='\n'||text[vs+vn-1]=='\r')) vn--;
         const char *p = text + ps, *v = text + vs;
         if (!pn || !vn) continue;
+
+        /* Rewrite a logical property to the physical one it means BEFORE the
+         * dispatch below sees it, so every longhand gets its handler for free
+         * rather than needing a second spelling of each. The two-value logical
+         * shorthands (padding-inline, margin-block) are separate: they set two
+         * sides at once and are handled with the other shorthands. */
+        { const char *ph = logical_phys(p, pn);
+          if (ph) { p = ph; pn = strlen(ph); } }
 
         /* A custom property DEFINES rather than sets: record it and move on.
          * (The sheet already collected these at parse time; an inline
@@ -549,6 +592,36 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
         } else if (tok_eq(p, pn, "padding-left")) {
             int lok = 0; short px = len_px(v, vn, &lok);
             if (lok) { out->pad_left = px; ok = 1; }
+        } else if (tok_eq(p, pn, "padding-inline") || tok_eq(p, pn, "padding-block") ||
+                   tok_eq(p, pn, "margin-inline")  || tok_eq(p, pn, "margin-block")) {
+            /* The two-value logical shorthands: one value sets both sides of
+             * the axis, two set start then end. Separate from the four-value
+             * `margin`/`padding` shorthand because they name an AXIS, not a
+             * box -- `padding-inline: 2rem` must not touch the vertical. */
+            int ispad  = (p[0] == 'p');
+            int isline = (pn > 7 && (p[pn-6] == 'l'));      /* ...-inline */
+            short a = 0, b = 0; int nv = 0;
+            size_t k = 0;
+            while (k < vn && nv < 2) {
+                while (k < vn && (v[k]==' '||v[k]=='\t')) k++;
+                size_t s2 = k;
+                while (k < vn && v[k]!=' ' && v[k]!='\t') k++;
+                if (k > s2) { int lok = 0; short px = len_px(v + s2, k - s2, &lok);
+                              if (!lok) break;
+                              if (nv == 0) a = px; else b = px;
+                              nv++; }
+            }
+            if (nv) {
+                if (nv == 1) b = a;
+                if (isline) {                      /* left / right */
+                    if (ispad) { out->pad_left = a; out->pad_right = b; }
+                    else       { out->indent = a; }   /* no margin-right in the box model */
+                } else {                           /* top / bottom */
+                    if (ispad) { out->pad_top = a; out->pad_bottom = b; }
+                    else       { out->margin_top = a; out->margin_bottom = b; }
+                }
+                ok = 1;
+            }
         } else if (tok_eq(p, pn, "margin") || tok_eq(p, pn, "padding")) {
             int ispad = tok_eq(p, pn, "padding");
             /* the shorthand, in its four spellings. Only the vertical parts

@@ -41,6 +41,12 @@ static unsigned short css_sheet_parse_into(struct css_sheet *sheet, const char *
                                            size_t len, unsigned short order);
 
 void css_sheet_parse(struct css_sheet *sheet, const char *text, size_t len) {
+    /* The functional-pseudo argument pool has the SHEET's lifetime, and every
+     * selector's :is()/:not() list is a slice of it. Forget it here or a
+     * reparse (a <link> landing, a resize crossing a breakpoint) appends to the
+     * previous page's arguments until the pool is full. */
+    css_sel_pool_reset();
+
     if (!sheet) return;
     memset(sheet, 0, sizeof *sheet);
     css_vars_reset();

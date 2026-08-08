@@ -55,6 +55,18 @@ enum {
     CSS_COMB_SIB,        /* "a ~ b" -- any earlier sibling */
 };
 
+/* One alternative inside :is() / :where() / :not(). A plain compound -- these
+ * live in a shared pool rather than inline on the part, because a selector
+ * carries six parts and the rule table carries eight thousand selectors, and
+ * inlining even a few of these would cost megabytes to hold something most
+ * selectors do not have. */
+struct css_fn_arg {
+    char tag[16];
+    char klass[32];
+    char id[32];
+};
+#define CSS_FN_ARGS 3072         /* pool size, shared by every selector */
+
 struct css_sel_part {
     char tag[16];                /* "" = any (or '*')          */
     char klass[32];              /* "" = none                  */
@@ -62,7 +74,17 @@ struct css_sel_part {
     unsigned char comb;          /* CSS_COMB_* joining to the previous part */
     unsigned char first_child;   /* :first-child */
     unsigned char last_child;    /* :last-child  */
+    /* :is()/:where() -- the element must match ONE of these. :not() -- it must
+     * match NONE. Slices of the pool above; n == 0 means the compound has no
+     * such constraint. Repeated :not()s merge into one list, which is exact:
+     * `:not(a):not(b)` and `:not(a, b)` are the same question. */
+    unsigned short fn_any_first, fn_none_first;
+    unsigned char  fn_any_n,     fn_none_n;
 };
+
+/* Forget every argument parsed so far. Called when a sheet is (re)parsed --
+ * the pool is shared, so it has the sheet's lifetime. */
+void css_sel_pool_reset(void);
 
 struct css_sel {
     struct css_sel_part part[CSS_SEL_PARTS];  /* ancestor -> ... -> subject */
