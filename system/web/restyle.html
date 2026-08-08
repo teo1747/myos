@@ -1,0 +1,18 @@
+<html><head><title>Restyle on click</title><style>
+html, body { background: #14141a; color: #d8d8e0 }
+.box { padding: 14px; border: 1px solid #444; margin: 10px 0 }
+.hot { background: #7a2020; color: #ffd0d0 }
+.tall { padding: 60px }
+</style></head><body>
+<h1>Restyle on click</h1>
+<p>The browser keeps computed styles between frames, because a frame that only
+scrolls changes nobody's style. A script that changes a class has to say so --
+this page is how that is checked on the metal.</p>
+<div id="b" class="box">CLICK THE BUTTON: this box should turn red and get taller.</div>
+<button id="go">Restyle it</button>
+<script>
+  document.querySelector("#go").addEventListener("click", function () {
+    document.querySelector("#b").className = "box hot tall";
+  });
+</script>
+</body></html>

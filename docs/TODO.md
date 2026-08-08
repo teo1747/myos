@@ -2850,3 +2850,32 @@ could not explain, which is written down here rather than guessed at.
       no longer matches what is inside it. MDN went 307394px -> 14859px, which
       is its document box. Pinned by tests/web/pct-height.html, which also
       checks that a percentage against a DEFINITE height still resolves.
+
+### C8: real pages at usable speed
+
+The style memo now SURVIVES ACROSS FRAMES. A frame that scrolls changes
+nobody's computed style -- same document, same sheet, a different offset -- so
+recomputing it was work whose answer was already known. Wikipedia was
+re-parsing 2267KB of declaration text every frame for a page nothing had
+changed. Per build+layout pass on the host:
+
+    wikipedia  206 -> 37ms      github     42 -> 4.1ms
+    bbc         20 -> 5.2ms     mdn        13 -> 5.2ms
+    python.org  26 -> 2.2ms     lobste.rs  ~7 -> 1.9ms
+
+Invalidated on the three things that can change an answer: a new document, a
+stylesheet arriving, and a script mutating the DOM. Inheritance needs no
+announcement -- the key already hashes the parent style, so a changed ancestor
+misses by construction. Verified interactively on the metal
+(`/system/web/restyle.html`: a click sets a class, the box restyles).
+
+- [ ] Wikipedia is still the outlier at 37ms, and it is LAYOUT now (21ms) not
+      build (16ms). measure_wrap_height and layout_measure_height_at_width are
+      the top entries after the cascade; both are height-at-width measurements
+      that a page of 10900 nodes does a great many of. Whether they are
+      redundant has not been established.
+- [ ] The style memo is direct-mapped on the node index and sized to NODE_MAX,
+      so collisions are impossible rather than rare -- but that ties 2.6MB of
+      BSS to the arena size. Both grow together if the arena does.
+- [ ] github still parses 5711 rules of a 6.9MB stylesheet. It renders; nobody
+      has looked at whether it renders RIGHT.

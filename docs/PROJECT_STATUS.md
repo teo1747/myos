@@ -1340,6 +1340,26 @@ when a script is listening to the element. Once it worked it turned the
 question over -- the document box was RIGHT and the text was outside it -- and
 the cause fell out of a four-line reproduction.
 
+**C8, speed on real pages: the computed styles now survive between frames.** A
+frame that scrolls changes nobody's style -- same document, same sheet, a
+different offset -- and the memo was being thrown away every pass, so Wikipedia
+re-parsed 2267KB of declaration text per frame for a page nothing had touched.
+It is dropped on the three things that can change an answer instead: a new
+document, a stylesheet arriving, a script mutating the DOM. Inheritance needs
+no announcement, because the key already hashes the parent style and a changed
+ancestor misses by construction.
+
+Then the memo turned out to be half the size of the arena it serves, so on a
+page with more elements than slots the tail evicted the head every frame and it
+stopped being a memo at all. Sized to NODE_MAX, collisions are impossible
+rather than rare.
+
+Per build+layout pass on the host: Wikipedia 206 -> 37ms, github 42 -> 4.1,
+bbc 20 -> 5.2, MDN 13 -> 5.2, python.org 26 -> 2.2. Every real site except
+Wikipedia is now under six milliseconds, and Wikipedia's remaining cost is
+layout rather than style. Interactive restyling is verified on the metal:
+`/system/web/restyle.html` sets a class on click and the box restyles.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

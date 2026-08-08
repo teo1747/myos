@@ -83,6 +83,7 @@ static char g_allcss[1024 * 1024];
  * gets to lay out in. */
 static float sheet_viewport_w(void) { return em_viewport_width() - 44.0f; }
 
+/* Every caller of this is a reason the computed styles are stale. */
 static void rebuild_sheet(void) {
     struct oscfg cfg; oscfg_load(&cfg);
     css_media_set(sheet_viewport_w(), em_viewport_height() - 132.0f, cfg.dark != 0);
@@ -102,6 +103,10 @@ static void rebuild_sheet(void) {
     }
     g_allcss[n] = 0;
     css_sheet_parse(&g_sheet, n ? g_allcss : 0, n);
+    /* The cascade changed, so every computed style is stale. This is the one
+     * that matters mid-load: a <link> landing must restyle the page, and the
+     * memo now survives frames precisely so that nothing else does. */
+    vstyle_cache_invalidate();
 }
 static int              g_root = -1;
 
@@ -244,6 +249,7 @@ static int install_document(size_t n) {
      * it is parsed here, once, and not per frame) */
     cssref_start(&g_doc, g_url);
     rebuild_sheet();
+    vstyle_cache_invalidate();     /* a different document entirely */
     imgcache_reset();          /* one page's pictures never leak into the next */
     vsel_reset();              /* ...nor does a selection: it indexed the OLD words */
     form_reset();              /* ...nor one page's typing into the next */
@@ -704,7 +710,9 @@ static void app(void) {
         if (jsdom_dispatch_input(changed)) em_request_frame();
 
     if (jsdom_pump(embk_uptime_ms())) em_request_frame();
-    if (jsdom_take_dirty()) em_request_frame();
+    /* A script changed the DOM: classes, attributes, whole subtrees. Every
+     * computed style is suspect. */
+    if (jsdom_take_dirty()) { vstyle_cache_invalidate(); em_request_frame(); }
     /* Keep frames coming while the page has WORK OUTSTANDING -- a timer to
      * fire or a fetch to land -- and stop the moment it does not, so an idle
      * page costs nothing. */

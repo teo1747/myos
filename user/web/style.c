@@ -176,9 +176,25 @@ void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {
  * different answer, and a memo that ignored that would be a correctness bug
  * rather than a speed-up. A miss on the hash simply recomputes.
  *
- * Cleared once per pass by the renderer (vstyle_cache_reset), which is also
- * what makes a new stylesheet take effect: nothing survives a frame. */
-#define VSTYLE_CACHE 8192
+ * It SURVIVES ACROSS FRAMES, and that is the point. A frame that scrolls does
+ * not change any element's style -- same document, same sheet, a different
+ * offset -- so recomputing all of it is work whose answer was already known.
+ * Wikipedia was re-parsing 2267KB of declaration text per frame for a page
+ * nothing had changed.
+ *
+ * What invalidates it: a new document, a stylesheet arriving, or a script
+ * mutating the DOM. Those are announced (vstyle_cache_invalidate) rather than
+ * detected, because the alternative -- clearing every frame -- is exactly the
+ * cost being removed. Inheritance is already safe without any announcement,
+ * since the key includes a hash of the parent style: a changed ancestor
+ * misses by construction. */
+/* One slot per node the DOM arena can hold. It was half that, so on a page
+ * with more elements than slots the tail evicted the head EVERY FRAME and the
+ * memo stopped being a memo -- Wikipedia has 10900 nodes against 8192 slots
+ * and was still recomputing a third of its styles per frame after the memo was
+ * made to survive frames at all. Direct-mapped on the node index, so matching
+ * NODE_MAX is what makes collisions impossible rather than merely rare. */
+#define VSTYLE_CACHE 16384
 
 static struct { int node; unsigned phash; struct vstyle v; } g_vs_cache[VSTYLE_CACHE];
 static int g_vs_ready;
@@ -187,6 +203,10 @@ void vstyle_cache_reset(void) {
     for (int i = 0; i < VSTYLE_CACHE; i++) g_vs_cache[i].node = -1;
     g_vs_ready = 1;
 }
+
+/* Everything computed so far is about a document or a sheet that no longer
+ * applies. Cheap: the next pass refills what it needs. */
+void vstyle_cache_invalidate(void) { vstyle_cache_reset(); }
 
 static unsigned vstyle_hash(const struct vstyle *v) {
     const unsigned char *p = (const unsigned char *)v;

@@ -1228,8 +1228,8 @@ const char *vellum_render_sized(struct html_doc *d, int root,
     g_pending = 0;
     g_hover_href = 0;
     g_sheet = sheet;
-    /* One pass, one set of computed styles. See vstyle_cache_reset. */
-    vstyle_cache_reset();
+    /* NOT cleared here. The memo survives across frames on purpose -- see
+     * style.h -- and is dropped by whoever changes the document or the sheet. */
     struct vstyle rs;
     vstyle_root(&rs);
     /* Open the brackets around the DOCUMENT only -- the app emits its chrome

@@ -446,6 +446,7 @@ int main(int argc, char **argv) {
         }
         allcss[n] = 0;
         css_sheet_parse(&g_sheet, n ? allcss : 0, n);
+        vstyle_cache_invalidate();
     }
     /* Run the page's scripts, as the app does. Without this the harness tests
      * a DIFFERENT document than the browser renders -- any page that builds
@@ -454,6 +455,7 @@ int main(int argc, char **argv) {
     if (jsdom_open(&g_doc, &g_sheet) == 0 && g_doc.n_js > 0) {
         int failed = jsdom_run_scripts();
         jsdom_take_dirty();
+        vstyle_cache_invalidate();     /* the scripts may have restyled it */
         if (failed) printf("*** %d script(s) threw ***\n", failed);
     }
     if (getenv("DOM")) dump_dom(&g_doc, g_root, 0);

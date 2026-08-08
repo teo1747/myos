@@ -185,6 +185,11 @@ struct css_sheet; struct html_doc;
  * each pass; nothing may survive a frame, which is what lets a new stylesheet
  * take effect and what makes the memo safe. See style.c. */
 void vstyle_cache_reset(void);
+/* Drop it because the DOCUMENT or the SHEET changed -- a new page, a
+ * stylesheet arriving, a script mutating the DOM. The renderer no longer
+ * clears it per frame: a frame that only scrolls changes nobody's style, and
+ * recomputing it all was the single biggest cost on a large page. */
+void vstyle_cache_invalidate(void);
 
 void vstyle_for_node(struct html_doc *doc, int node, const struct vstyle *parent,
                      const struct css_sheet *sheet, struct vstyle *out);
