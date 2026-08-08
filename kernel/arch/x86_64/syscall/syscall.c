@@ -1213,6 +1213,13 @@ static int64_t sys_screen_luma(struct regs *r) {
                                              (int)r->rdx, (int)r->r10);
 }
 
+/* win_desktop_front(on) -- the shell lifting its own full-screen surface above
+ * the app windows (the Applications launcher) and putting it back after. */
+static int64_t sys_win_desktop_front(struct regs *r) {
+    return compositor_desktop_front(current_process ? (int)current_process->pid : 0,
+                                    (int)r->rdi);
+}
+
 /* win_minimize(win) -- an app parking its OWN window. */
 static int64_t sys_win_minimize(struct regs *r) {
     return compositor_win_minimize(current_process ? (int)current_process->pid : 0,
@@ -1782,6 +1789,7 @@ typedef int64_t (*syscall_handler_t)(struct regs *);
 #define SYS_win_restore    89
 #define SYS_win_minimize   90
 #define SYS_screen_luma    91
+#define SYS_win_desktop_front 92
 
 
 static syscall_handler_t syscall_table[] = {
@@ -1869,6 +1877,7 @@ static syscall_handler_t syscall_table[] = {
     [SYS_win_restore]    = sys_win_restore,
     [SYS_win_minimize]   = sys_win_minimize,
     [SYS_screen_luma]    = sys_screen_luma,
+    [SYS_win_desktop_front] = sys_win_desktop_front,
     [SYS_debug_attach]   = sys_debug_attach,
     [SYS_debug_wait]     = sys_debug_wait,
     [SYS_debug_cont]     = sys_debug_cont,

@@ -117,6 +117,10 @@
 #define EMBK_SYS_win_restore    89   /* (spawn handle) -> un-minimize + raise that app's windows */
 #define EMBK_SYS_win_minimize   90   /* (win) -> park my own window (dock click brings it back) */
 #define EMBK_SYS_screen_luma    91   /* (x,y,w,h) -> mean luminance 0-255 of what is composed there */
+#define EMBK_SYS_win_desktop_front 92 /* (on) -> lift the DESKTOP layer above the
+                                       * app windows while a full-screen shell
+                                       * surface (the launcher) is up, and drop
+                                       * it back to the ground when it closes */
 
 /* The raw int-0x80 register convention (mirrors kernel/cpu/syscall_entry.asm
  * + struct regs): number in rax, args in rdi, rsi, rdx, r10, r8; result back

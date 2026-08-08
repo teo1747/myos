@@ -99,6 +99,11 @@ void compositor_exit_pid(int pid);
 int  compositor_restore_pid(int pid);
 /* An app parking its own window (chromeless apps have no kernel button). */
 int  compositor_win_minimize(int pid, uint32_t id);
+/* Lift the DESKTOP layer above every app window (on) or return it to the ground
+ * (off). For the shell's own full-screen surfaces -- the Applications launcher
+ * is drawn by the desktop process, and at z=0 it opened behind whatever the
+ * user already had open. Refused for any process but the layer's owner. */
+int  compositor_desktop_front(int pid, int on);
 /* Advance window open/park motion one frame; no-op when nothing is moving. */
 void compositor_anim_tick(void);
 /* Average luminance (0-255) of what is composed under a screen rect, or -1. */

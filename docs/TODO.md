@@ -6,6 +6,31 @@ left to do.
 
 ---
 
+## The Applications launcher
+
+- [x] ~~Opens once, then never again~~ -- it was opening every time and being
+      drawn BEHIND the app windows. The launcher is painted by the desktop
+      process, and the desktop is pinned at z=0 because it is the ground. New
+      syscall 92 `win_desktop_front(on)` lifts that layer above the app band
+      while the launcher is up and drops it back after; only the layer's owner
+      may call it.
+- [x] ~~The app names print over the menu bar~~ -- two causes. The launcher was
+      a 480x430 modal card, which does not FIT a 640x480 display, so its header
+      slid under the bar; it is full-bleed and sized from the live viewport
+      now. And closing it left stale pixels: the compositor recomposes the
+      instant the z-flip lands, while home only draws the new state on its NEXT
+      frame and then presents dirty rects, so whatever the new frame did not
+      touch kept the old pixels. The frames either side of the flip present the
+      whole surface.
+- [ ] NOT VERIFIED: that the launcher actually appears in front of a running
+      app. The only trigger with an app covering the screen is the menu-bar
+      button, and a synthesized click cannot work it here (the bar renders at
+      1Hz and QMP's press/release never lands as a click edge). The reasoning
+      and the syscall are in; the observation is not. Test by hand.
+- [ ] The menu-bar button cannot be driven under QMP at all, which is why this
+      whole area went unverified for so long. Worth a way to open the launcher
+      that a test can reach.
+
 ## Note++ -- the OS's own editor (started)
 
 Foundations in, app shell next:

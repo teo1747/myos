@@ -941,6 +941,22 @@ static inline int embk_win_minimize(int win) {
     return (int)embk_syscall1(EMBK_SYS_win_minimize, win);
 }
 
+/* Lift the DESKTOP layer above every app window, or drop it back to the ground.
+ *
+ * The desktop is pinned at z=0 because it is the ground: everything is supposed
+ * to be in front of it. That is right until the shell itself needs the whole
+ * screen -- the Applications launcher is drawn by the desktop process, so with
+ * an app window open it opened BEHIND that window and looked like it had not
+ * opened at all. Launchpad is full-screen and in front, and this is what lets
+ * the same program draw it.
+ *
+ * Only the desktop layer's owner may call it, and it is a MODE rather than a
+ * raise: nothing else re-orders while it is set, and clearing it puts the layer
+ * back on the ground rather than leaving it somewhere in the stack. */
+static inline int embk_win_desktop_front(int on) {
+    return (int)embk_syscall1(EMBK_SYS_win_desktop_front, on);
+}
+
 /* --- the system clipboard: one machine-global text buffer ----------------
  * Set replaces it whole; get copies up to cap bytes OUT and returns how many
  * bytes the clipboard HOLDS -- more than cap means the caller saw a prefix. */

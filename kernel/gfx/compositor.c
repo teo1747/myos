@@ -82,6 +82,15 @@ static spinlock_t g_comp_lock = SPINLOCK_INIT;
 static uint32_t   g_next_id = 1;
 /* z bands: desktop = 0; widgets in [1, WIDGET_Z_TOP); app windows above it. */
 #define WIDGET_Z_TOP 1000000
+/* ...and one band above every app, for the SHELL's own full-screen surface.
+ *
+ * The desktop is the ground and belongs at z=0, which is right until the shell
+ * needs the whole screen for itself. The Applications launcher is drawn by the
+ * desktop process, so with any app window open it opened UNDERNEATH that window
+ * -- the user pressed the button, the grid appeared behind the app they were
+ * looking at, and nothing seemed to happen. Launchpad is in front, so the layer
+ * has to be able to come to the front and go back down again. */
+#define DESKTOP_FRONT_Z (WIDGET_Z_TOP * 2)
 static int        g_next_z  = WIDGET_Z_TOP + 1;
 static int        g_widget_z = 1;
 static int        g_active  = 0;   /* desktop has been painted at least once  */
@@ -1476,6 +1485,35 @@ int compositor_win_minimize(int pid, uint32_t id) {
     }
     spin_unlock(&g_comp_lock);
     return 0;
+}
+
+/* Lift the desktop layer above every app window, or drop it back to the ground.
+ * Only the layer's own process may ask -- this puts a full-screen surface over
+ * everything the user has open, which is not a thing one app may do to another.
+ * A MODE, not a raise: clearing it restores z=0 exactly, so the ground does not
+ * end up parked somewhere in the middle of the stack. */
+int compositor_desktop_front(int pid, int on) {
+    spin_lock(&g_comp_lock);
+    int rc = -1;
+    for (int i = 0; i < COMP_MAX_WINDOWS; i++) {
+        struct comp_window *w = &g_wins[i];
+        if (!w->used || !w->desktop) continue;
+        if (w->pid != pid) break;                  /* not yours to move */
+        int want = on ? DESKTOP_FRONT_Z : 0;
+        rc = 0;
+        if (w->z != want) {
+            w->z = want;
+            /* Every window's meaning in the stack just changed -- what was in
+             * front is now behind, or the reverse -- so the whole screen is
+             * what has to be recomposed, not the layer's own rect. */
+            const struct fb_info *fi = fb_get_info();
+            if (fi) paint_region(0, 0, (int)fi->width, (int)fi->height);
+            enforce_focus();
+        }
+        break;
+    }
+    spin_unlock(&g_comp_lock);
+    return rc;
 }
 
 /* Bring a process's windows back to the user: un-park anything it minimized,

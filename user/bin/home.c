@@ -202,10 +202,44 @@ static void apps_listener(long arg) {
         embk_chan_close(ch);
     }
 }
+/* Open or close the launcher, and move the desktop LAYER with it.
+ *
+ * The layer is the ground at z=0, so a launcher drawn into it opens behind
+ * every app window -- press the button with anything open and nothing appears
+ * to happen, which is exactly what it did. Launchpad is in front, so the layer
+ * comes to the front for as long as the launcher is up and goes back down the
+ * moment it closes. Everything else about the desktop is unchanged; this is a
+ * mode, not a reordering. */
+/* Frames still owed a FULL present after the launcher opened or closed. The
+ * transition changes every pixel on the layer, and it changes them in two
+ * places that do not happen together: the compositor recomposes the moment the
+ * z-flip lands, while this loop only renders the new state on its NEXT frame
+ * and then presents the dirty rects of it. Anything the new frame does not
+ * touch therefore keeps whatever the old one left -- the launcher's title
+ * stayed painted across the top of the screen, over the menu bar. A whole-
+ * surface present for the frames either side of the flip is what makes the two
+ * agree. */
+static int g_full_present = 0;
+
+static void apps_set_open(int open) {
+    if (open == g_apps_open) return;
+    if (open) { scan_apps(); g_apps_frames = 0; g_apps_scroll = 0; }
+    g_apps_open = open;
+    /* Render the new state BEFORE moving the layer when closing, and move it
+     * before rendering when opening -- either way the compositor's recompose
+     * must not be the one that shows a half-updated desktop. */
+    embk_win_desktop_front(open);
+    g_full_present = 3;
+    g_dock_dirty = 1;
+}
+
 static void poll_apps_request(void) {
     if (!g_apps_requested) return;
     g_apps_requested = 0;
-    if (!g_apps_open) { scan_apps(); g_apps_open = 1; g_apps_frames = 0; g_dock_dirty = 1; }
+    /* The menu-bar button TOGGLES, which is what a button that is already lit
+     * should do -- pressing it again to dismiss is the first thing anyone
+     * tries. */
+    apps_set_open(!g_apps_open);
 }
 
 static void open_item(struct app_item it) {
@@ -467,29 +501,53 @@ static void drag_ghost(void) {
     ui_end_stack();
 }
 
-/* The Apps launcher: a modal grid of every installed app, each shown by its
- * declared icon + name; click one to launch it. Outside-click / Esc dismiss. */
+/* THE APPLICATIONS LAUNCHER -- Launchpad, not a dialog.
+ *
+ * It used to be a 480px card floating over the desktop, and that was wrong in
+ * two ways at once. It read as a file-picker rather than as the place all your
+ * applications live; and at 480x430 it did not FIT a 640x480 display, so its
+ * header slid up under the menu bar and the app names printed over the clock.
+ * A modal card has to be sized against a screen it cannot know.
+ *
+ * Full-bleed instead: the launcher IS the screen while it is up. The wallpaper
+ * home already painted stays visible through a frosted sheet, the grid is
+ * centred in the work area, and everything is sized from the live viewport, so
+ * there is no resolution at which it can overflow. This is also why the layer
+ * comes to the front (see apps_set_open): a full-screen surface behind the
+ * windows is just an invisible one. */
 static void apps_grid(void) {
     if (!g_apps_open) return;
     g_apps_frames++;
+
+    /* Sized from the screen, never from a constant. Columns grow with width so
+     * the grid stays a grid rather than a column on a narrow display. */
+    float top    = 34.0f;                       /* clear of the menu bar */
+    float bottom = 76.0f;                       /* clear of the dock     */
+    float availw = g_sw - 80.0f;
+    if (availw < 200.0f) availw = 200.0f;
+    int cols = (int)(availw / 132.0f);
+    if (cols < 3) cols = 3;
+    if (cols > 7) cols = 7;
+    float body = g_sh - top - bottom - 52.0f;   /* minus the title block */
+    if (body < 120.0f) body = 120.0f;
+
     Overlay() {
-        /* Same material language as the dock: the launcher frosts the
-         * wallpaper home itself painted earlier in this tree, rather than
-         * sitting on it as an opaque card. One vocabulary for every surface
-         * that floats -- that unity IS the Mac look, more than any one
-         * effect. */
-        Dialog(.width = 480, .spacing = 12, .padding = 20, .glass = 1) {
-            /* header: title + an explicit close, so the grid has a normal way out
-             * (not only the click-off-the-scrim dismiss) */
-            HStack(.align = Center, .spacing = 8) {
-                Text("Applications").title();
-                Spacer();
-                if (IconButton(IconClose).clicked()) { g_apps_open = 0; g_dock_dirty = 1; }
+        /* The whole screen is the sheet. One frosted surface over the
+         * wallpaper -- the same material as the dock and the menus, which is
+         * what makes these read as one system rather than three widgets. */
+        Glass(.width = g_sw, .height = g_sh, .align = Fill, .spacing = 0,
+              .pt = top, .pb = bottom, .px = 40, .blur = 28) {
+            /* A quiet title, centred. Launchpad has no header bar and no close
+             * button: the whole background dismisses, and Esc does, so a chrome
+             * row would be a control for something you can already do
+             * everywhere. */
+            HStack(.align = Center, .justify = Center, .py = 8) {
+                Text("Applications").heading();
             }
-            ScrollView(&g_apps_scroll, 430) {
-                Grid(4, .spacing = 12) {
+            ScrollView(&g_apps_scroll, body, .key = "appsgrid") {
+                Grid(cols, .spacing = 18) {
                     for (int i = 0; i < g_all_n; i++) {
-                        VStack(.spacing = 6, .align = Center) {
+                        VStack(.spacing = 8, .align = Center) {
                             /* click launches (resolved in dock_resolve_drop);
                              * drag pins into the dock */
                             drag_icon(grid_to_item(i), DESK_ICON, 3, i);
@@ -500,9 +558,9 @@ static void apps_grid(void) {
             }
         }
     }
-    /* click on the bare scrim (outside the dialog) closes -- debounced so the
-     * click that OPENED the launcher does not immediately dismiss it. */
-    if (g_apps_frames >= 3 && OverlayDismissed()) { g_apps_open = 0; g_dock_dirty = 1; }
+    /* Click anywhere off an icon closes, and so does Esc -- debounced so the
+     * press that OPENED it does not immediately dismiss it. */
+    if (g_apps_frames >= 3 && OverlayDismissed()) apps_set_open(0);
 }
 
 /* --- free desktop placement -------------------------------------------------
@@ -590,7 +648,7 @@ static void dock_resolve_drop(void) {
                g_drag_y >= g_dockr[1] - 28 && g_drag_y <= g_dockr[3] + 12;
     if (!g_drag_moved) {
         open_item(g_drag_item);                   /* a plain click -> launch/open */
-        if (g_drag == 3) { g_apps_open = 0; g_dock_dirty = 1; }   /* grid click closes launcher */
+        if (g_drag == 3) apps_set_open(0);        /* grid click closes launcher */
     } else if (g_drag == 3) {                      /* launcher app dragged toward the dock */
         /* pin a COPY: the grid's exec buffer gets reused on the next rescan, so
          * the dock keeps its own stable exec string. Skip if already docked. */
@@ -602,7 +660,7 @@ static void dock_resolve_drop(void) {
             snprintf(buf, sizeof g_pin_exec[0], "%s", g_drag_item.app);
             g_drag_item.app = buf;
             g_dock[g_dock_n++] = g_drag_item;
-            g_apps_open = 0;                       /* pinned -> close the launcher */
+            apps_set_open(0);                      /* pinned -> close the launcher */
             g_dock_dirty = 1;
         }                                          /* dropped off the dock -> launcher stays open */
     } else if (g_drag == 1) {                      /* a desktop icon */
@@ -736,10 +794,7 @@ static void home_ui(void) {
             if (MenuItem("New Terminal")) g_launch = "/data/apps/term/term.elf";
             if (MenuItem("Open Files"))   launch_folder(getenv("HOME") ? getenv("HOME") : "/");
             MenuSeparator();
-            if (MenuItem("Show Applications")) {
-                if (!g_apps_open) { scan_apps(); g_apps_open = 1; g_apps_frames = 0; }
-                g_dock_dirty = 1;
-            }
+            if (MenuItem("Show Applications")) apps_set_open(1);
             if (MenuItem("Clean Up Icons")) {
                 /* forget every position; autoplace re-columns them next frame */
                 for (int i = 0; i < g_desk_n; i++) g_desk[i].placed = 0;
@@ -946,6 +1001,15 @@ int main(int argc, char **argv, char **envp) {
         cfg_poll();            /* dock size / indicator, as Settings left them */
         poll_apps_request();   /* the top bar's Apps button opens our launcher */
 
+        /* Esc closes the launcher. Only worth reading while it is up: the
+         * desktop layer is in FRONT then, so the compositor gives it the
+         * keyboard, and draining keys at any other time would take them from
+         * whichever app the user is actually typing into. */
+        if (g_apps_open) {
+            for (int c; (c = embk_key_poll()) > 0; )
+                if (c == 27) { apps_set_open(0); break; }
+        }
+
         /* pointer: the compositor routes the desktop's content-local mouse to us */
         struct embk_win_input in;
         embk_win_input(&in);
@@ -981,7 +1045,8 @@ int main(int argc, char **argv, char **envp) {
 
         scene_render_frame(&r, &sa, ui_scene_of(ui_root()), &rt);
 
-        if (r.full || r.n_dirty == 0) {
+        if (r.full || r.n_dirty == 0 || g_full_present > 0) {
+            if (g_full_present > 0) g_full_present--;
             embk_win_present(win, pixels, sw, sh);
         } else {
             int x0 = 1 << 29, y0 = 1 << 29, x1 = -(1 << 29), y1 = -(1 << 29);
