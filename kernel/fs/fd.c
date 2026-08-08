@@ -1018,6 +1018,11 @@ static int sock_fd_read(struct fd_entry *e, void *buf, size_t len, size_t *out) 
         return EMBK_OK;
     }
     int n = net_tcp_recv(e->u.sock.conn, buf, (uint32_t)len);
+    /* Timed out with the connection still open. NOT end-of-stream, and not an
+     * I/O error either -- the distinction is the whole point (see
+     * net_tcp_recv). A blocking reader gets EAGAIN and decides for itself
+     * whether it is mid-message and must wait longer. */
+    if (n == -2) return -EMBK_EAGAIN;
     if (n < 0) return -EMBK_EIO;
     *out = (size_t)n;                                 /* 0 = peer FIN / EOF */
     return EMBK_OK;

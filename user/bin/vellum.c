@@ -132,6 +132,7 @@ static struct {
     char   via[64];
     size_t bytes;
     int    res_trunc;
+    int    res_partial;      /* fewer bytes than Content-Length promised */
 } g_st;
 
 static void update_status(void) {
@@ -147,9 +148,10 @@ static void update_status(void) {
         snprintf(css + k, sizeof css - k, "  %d script%s",
                  g_doc.n_js, g_doc.n_js == 1 ? "" : "s");
     }
-    snprintf(g_status, sizeof g_status, "%d  %s  %zu bytes  %d nodes%s%s%s",
+    snprintf(g_status, sizeof g_status, "%d  %s  %zu bytes  %d nodes%s%s%s%s",
              g_st.status, g_st.via, g_st.bytes, g_doc.n, css,
              g_st.res_trunc  ? "  (response truncated)" : "",
+             g_st.res_partial ? "  (INCOMPLETE -- the connection ended early)" : "",
              g_doc.truncated ? "  (document truncated)" : "");
     snprintf(g_status_done, sizeof g_status_done, "%s", g_status);
 }
@@ -368,7 +370,8 @@ static void finish_load(const struct vnet_result *res) {
     g_st.status = res->status;
     snprintf(g_st.via, sizeof g_st.via, "%s", res->via);
     g_st.bytes = n;
-    g_st.res_trunc = res->truncated;
+    g_st.res_trunc   = res->truncated;
+    g_st.res_partial = res->incomplete;
     update_status();
 }
 
@@ -421,20 +424,28 @@ static void navigate(const char *url) {
  * appended -- no client id, no session, nothing this browser has no business
  * sending.
  *
- * Which engine was MEASURED, not chosen on principle. What each one answers a
- * browser with no JavaScript and an honest User-Agent:
+ * Which engine was MEASURED, not preferred. The question is not which index is
+ * best, it is which one puts its RESULTS IN THE HTML, because this browser
+ * cannot run the script that fetches them otherwise. Asking each for
+ * "operating system" with an honest User-Agent:
  *
- *     Google      302 -> consent.google.com, and the results behind it are
- *                 built by script. Every search would land on a wall.
- *     DuckDuckGo  200, and a CAPTCHA: "select all squares containing a duck".
- *                 The lite endpoint is clean HTML and still gates on it.
- *     searx.be    200, "Verifying your browser..."
- *     Bing        200, 600KB, 14 scripts.
- *     Mojeek      200, 20KB, no gate, real results. An independent index.
+ *   engine      http   bytes  scripts  result links  what came back
+ *   Google       200   91585        5             0  a JS shell -- the words
+ *                                                    "operating system" do not
+ *                                                    appear anywhere in it
+ *   Bing         200  121877       20             0  the same
+ *   Startpage    200   10249        5             0  the same
+ *   DuckDuckGo   200   28845        0             1  a CAPTCHA
+ *   Marginalia   200   37395        4             3  thin
+ *   Mojeek       200   20401        6             9  real, small index
+ *   Brave        200  303202        2            28  REAL RESULTS
  *
- * So Mojeek, until this browser looks enough like the others to be served like
- * them -- which is a JavaScript problem, not a search problem. */
-#define SEARCH_URL "https://www.mojeek.com/search?q="
+ * So Brave: an index of actual scale, server-rendered. Its pages are big --
+ * 367KB parses to 2044 nodes in 6ms here, which is fine -- and unlike Google it
+ * is not withholding the answer behind a bundle we cannot execute. Google is
+ * not a search problem; it is the JavaScript problem, and the day this browser
+ * runs their bundle is the day that line can change. */
+#define SEARCH_URL "https://search.brave.com/search?q="
 
 /* Percent-encode a query. Unreserved characters (RFC 3986) pass through and a
  * space becomes '+', which is what a search form sends. */
@@ -1143,13 +1154,25 @@ static void app(void) {
         HStack(.spacing = 10, .align = Center, .px = 12, .py = 4, .key = "statusrow") {
             /* what the PAGE said outranks what the browser has to say: a
              * script's output is the thing the reader is waiting for. */
+            /* The page's status on the left, a script's complaint on the
+             * RIGHT -- not one replacing the other. A console message used to
+             * win outright, so the moment any page ran a script that threw,
+             * the line that says how many bytes and nodes arrived was gone for
+             * the rest of that page's life. That is exactly when it is worth
+             * reading: a blank page with "ReferenceError" under it tells you a
+             * script failed and nothing about whether the document did. */
             const char *h = vellum_hovered_link();
-            Text(h ? h : (g_console[0] ? g_console : g_status)).caption().tertiary();
+            Text(h ? h : g_status).caption().tertiary();
             /* The URL used to be echoed on the right, which put the address on
              * screen twice -- and the copy down here was the one nobody could
              * edit. The row keeps its height so that hovering a link does not
              * reflow the page underneath it. */
             Spacer();
+            if (!h && g_console[0]) {
+                char c[72];
+                snprintf(c, sizeof c, "%.68s", g_console);
+                Text(c).caption().tertiary();
+            }
         }
     }
 }

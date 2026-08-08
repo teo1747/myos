@@ -188,7 +188,7 @@ int  net_tcp_ready(int conn);
 int  net_tcp_listen(uint16_t port);                         /* passive open -> a listen conn index */
 int  net_tcp_accept(int listen_conn);                       /* block for a client -> its conn index */
 int  net_tcp_send(int conn, const void *data, uint32_t len);/* send + wait for ACK */
-int  net_tcp_recv(int conn, void *buf, uint32_t cap);       /* bytes, or 0 at peer FIN/EOF */
+int  net_tcp_recv(int conn, void *buf, uint32_t cap);       /* bytes; 0 = peer FIN/EOF; -2 = timed out, still open; -1 = bad conn */
 void net_tcp_close(int conn);                               /* FIN handshake, then free */
 void net_tcp_abort(int conn);                               /* free the TCB WITHOUT blocking (reap path) */
 

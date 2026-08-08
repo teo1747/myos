@@ -467,8 +467,10 @@ int net_tcp_recv(int conn, void *buf, uint32_t cap) {
     if (!t->in_use) { net_unlock(); return -1; }
 
     uint64_t deadline = net_ticks() + NET_TMO_TICKS;
-    while (t->rx_len == 0 && net_ticks() < deadline) {
+    int timed_out = 0;
+    while (t->rx_len == 0) {
         if (t->peer_fin || t->reset || t->state == TCP_CLOSED) break;
+        if (net_ticks() >= deadline) { timed_out = 1; break; }
         net_wait();
     }
     uint32_t k = t->rx_len < cap ? t->rx_len : cap;
@@ -478,6 +480,21 @@ int net_tcp_recv(int conn, void *buf, uint32_t cap) {
         t->rx_len -= k;
     }
     net_unlock();
+    /* A TIMEOUT IS NOT AN END OF STREAM, and saying 0 for both was the bug that
+     * made this browser unable to load a large page.
+     *
+     * Three seconds with nothing arriving used to return 0, which every layer
+     * above reads as "the peer is done": io_recv_exact turned it into -1,
+     * tls_read into -1, and the HTTP loop into "the response ended here" -- so
+     * a 367KB page became whatever had arrived by the first gap, with status
+     * 200 and no error anywhere. The document rendered, short, and nothing in
+     * the system knew. It got worse the bigger the page, which is exactly
+     * backwards from how a browser should fail.
+     *
+     * -2 is the code the non-blocking variant already uses for "nothing yet",
+     * so the fd layer's mapping to EAGAIN is the one that was already there.
+     * A caller mid-record has to retry; a caller between messages may stop. */
+    if (!k && timed_out) return -2;
     return (int)k;                               /* 0 = EOF (peer FIN, no data left) */
 }
 

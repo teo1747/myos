@@ -22,6 +22,10 @@ struct vnet_result {
     int    status;          /* HTTP status; 200 synthesised for a local read  */
     size_t len;             /* bytes written to the caller's buffer           */
     int    truncated;       /* the response did not fit and was cut           */
+    /* The server said how many bytes the body would be and fewer arrived. The
+     * document is real but PARTIAL, so the caller may still render it -- and
+     * must say so rather than present it as the whole page. */
+    int    incomplete;
     int    redirects;       /* how many hops were followed                    */
     char   final_url[512];  /* where we ended up -- redirects change this     */
     char   via[64];         /* "file", "http", "https (authenticated)"        */

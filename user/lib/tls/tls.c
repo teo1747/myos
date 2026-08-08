@@ -24,6 +24,7 @@
 #include "crypto/sha256.h"
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <time.h>
 
 extern int getentropy(void *buf, size_t len);   /* RDRAND-backed (user/lib/syscalls.c) */
@@ -39,11 +40,29 @@ static int io_send_all(int fd, const uint8_t *b, size_t n) {
     }
     return 0;
 }
+/* How long to keep waiting for the rest of a record before calling it dead.
+ * The kernel's own receive timeout is ~3s, so this is that many attempts: a
+ * peer that has said nothing for this long is not going to. */
+#define TLS_RECV_STALLS 10
+
 static int io_recv_exact(int fd, uint8_t *b, size_t n) {
     size_t off = 0;
+    int stalls = 0;
     while (off < n) {
         long r = read(fd, b + off, n - off);
-        if (r <= 0) return -1;           /* 0 = EOF, <0 = error */
+        /* EAGAIN means the kernel's receive timeout expired with the connection
+         * STILL OPEN -- nothing has arrived yet, not nothing is coming. Half of
+         * a TLS record has already been read at this point, so there is no
+         * interpretation under which stopping is right: the only choices are
+         * wait or corrupt. This used to be indistinguishable from EOF and the
+         * record layer took the corrupt one, silently, on every page big enough
+         * to arrive in more than one burst. */
+        if (r < 0 && errno == EAGAIN) {
+            if (++stalls > TLS_RECV_STALLS) return -1;
+            continue;
+        }
+        if (r <= 0) return -1;           /* 0 = EOF, <0 = a real error */
+        stalls = 0;
         off += (size_t)r;
     }
     return 0;

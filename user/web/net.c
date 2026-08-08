@@ -14,6 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include "embk.h"
 #include "embk_socket.h"
@@ -211,9 +212,19 @@ static int http_once(const struct url *u, char *out, size_t cap,
     size_t n = 0;
     int hlen = 0, header_done = 0;
 
+    int stalls = 0;
     for (;;) {
         long got = x_recv(&x, buf, sizeof buf);
+        /* Nothing YET is not nothing coming -- see net_tcp_recv in the kernel.
+         * The TLS path handles this inside its record reader, because it can be
+         * stopped mid-record; this is the plain-HTTP arm, which can only be
+         * stopped mid-body. Both used to read it as the end of the response. */
+        if (got < 0 && errno == EAGAIN) {
+            if (++stalls > 10) break;
+            continue;
+        }
         if (got <= 0) break;
+        stalls = 0;
         int off = 0;
         if (!header_done) {
             for (int i = 0; i < got && !header_done; i++) {
@@ -248,6 +259,23 @@ static int http_once(const struct url *u, char *out, size_t cap,
     if (!header_done) {
         snprintf(r->err, sizeof r->err, "No response from %s", u->host);
         return -1;
+    }
+    /* DID ALL OF IT ARRIVE? The server said how long the body would be; a
+     * shorter one means the connection ended early, and until this check
+     * existed that was indistinguishable from a complete response. A page
+     * arriving at a third of its length rendered as a page, with status 200 and
+     * nothing anywhere saying otherwise -- which is how a networking bug spent
+     * this long looking like a rendering one. */
+    const char *cl = hdr_find(hdr, "Content-Length");
+    if (cl && !r->truncated) {
+        char v[32];
+        hdr_value(cl, v, sizeof v);
+        unsigned long want = strtoul(v, 0, 10);
+        if (want && n < want) {
+            r->incomplete = 1;
+            snprintf(r->err, sizeof r->err,
+                     "Connection ended early: %zu of %lu bytes", n, want);
+        }
     }
     return 0;
 }

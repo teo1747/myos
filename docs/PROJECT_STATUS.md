@@ -1468,6 +1468,22 @@ builds its own fixtures, malformed ones included, because a favicon is bytes
 from a stranger and every field in its directory is an offset into somewhere
 else.
 
+**And then the search page did not render, which turned out to be the most
+important bug found in a while.** A Brave results page arrived as 8192 bytes of
+291486, with status 200 and no error anywhere in the system; Wikipedia the
+same. The kernel's blocking TCP receive returned **0 on timeout**, and 0 means
+end-of-stream -- so three seconds with nothing arriving was reported all the way
+up as "the peer is done". `io_recv_exact` turned it into -1, `tls_read` into
+-1, and the HTTP loop into "the response ended here". The bigger the page the
+worse it got, which is exactly backwards.
+
+A timeout now reports itself as one (-2, the code the non-blocking path already
+used), the fd layer maps it to EAGAIN, and a reader that is mid-record waits
+instead of truncating. Separately, the HTTP client now **checks Content-Length**:
+a short body is reported rather than rendered as the page, because until this
+check existed a truncated download was indistinguishable from a complete one.
+That is why a networking bug spent this long looking like a rendering bug.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

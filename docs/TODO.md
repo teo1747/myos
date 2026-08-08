@@ -27,11 +27,18 @@ left to do.
       DuckDuckGo with a CAPTCHA. Mojeek answers with results.
 - [ ] The address bar has no completion -- no history matching, no suggestions.
       Every visit is fully typed.
-- [ ] Wikipedia still renders badly on the metal (its article body was already
-      logged as squeezed). One measured contributor: the "Operating system"
-      article is 666KB and TAB_SRC_MAX is 512KB, so the response cannot fit and
-      is truncated before the parser sees it. Whether that alone accounts for
-      the near-blank page has NOT been established.
+- [x] ~~Large pages render blank on the metal~~ -- root cause found and fixed,
+      and it was not rendering at all: the kernel's blocking TCP receive
+      returned 0 on TIMEOUT, which every layer above reads as end-of-stream.
+      A Brave results page arrived as 8192 of 291486 bytes with status 200 and
+      no error anywhere. Now 291486/291486. See net_tcp_recv.
+- [ ] A large page over HTTPS is SLOW: ~90-200s for 291KB under TCG. Now that
+      the transfer completes instead of being cut short, throughput is the next
+      wall. Unmeasured which of these dominates -- our AES-GCM decrypt cost, the
+      TCP receive window, or the 4KB read chunk in net.c. Measure before
+      theorising.
+- [ ] Wikipedia's "Operating system" article is 666KB and TAB_SRC_MAX is 512KB,
+      so it is truncated before the parser sees it regardless of the above.
 - [ ] The status line still reports node and rule counts -- developer
       telemetry as a permanent resting state. Useful here, but not what a
       reader wants the bottom of the window to say.

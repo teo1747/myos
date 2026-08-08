@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include "embk_socket.h"
@@ -110,9 +111,15 @@ int main(int argc, char **argv)
     static char hdr[4096];
     char buf[2048];
     int hlen = 0, header_done = 0, status = 0, body = 0;
+    int stalls = 0;
     for (;;) {
         long n = x_recv(&x, buf, sizeof buf);
+        /* Nothing yet is not nothing coming -- the same distinction the browser
+         * needs, for the same reason: this loop cannot tell a slow server from
+         * a finished one except by asking again. */
+        if (n < 0 && errno == EAGAIN) { if (++stalls > 10) break; continue; }
         if (n <= 0) break;
+        stalls = 0;
         int off = 0;
         if (!header_done) {
             for (int i = 0; i < n && !header_done; i++) {
