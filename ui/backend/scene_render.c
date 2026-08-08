@@ -406,6 +406,11 @@ void scene_render_destroy(struct scene_renderer *r) {
     free(r->cache); r->cache = 0; r->cache_cap = 0;
 }
 
+void scene_render_invalidate(struct scene_renderer *r) {
+    if (!r || !r->cache) return;
+    for (uint32_t i = 0; i < r->cache_cap; i++) r->cache[i].valid = 0;
+}
+
 static void ensure_cache(struct scene_renderer *r, uint32_t need) {
     if (r->cache_cap >= need) return;
     uint32_t cap = r->cache_cap ? r->cache_cap : 64;

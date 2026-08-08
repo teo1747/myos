@@ -13,27 +13,24 @@ left to do.
 - [x] The button OPENS rather than toggles. Toggling turned one press into
       open+close whenever the signal arrived twice, which looked like a dead
       button.
-- [ ] 🐛 THE OPEN ONE. With an app window already on screen, the launcher is
-      BEHIND it -- it is drawn by the desktop process and the desktop is the
-      ground at z=0.
-      `embk_win_desktop_front()` (syscall 92) exists and works: the layer does
-      move, and the FIRST open renders correctly through it. But the SECOND
-      open composites to nothing -- home draws the grid (its own log says so:
-      11 apps, two frames) and the screen shows bare desktop, with the menu bar
-      gone because the layer is over it. It is DISABLED in home for now: a
-      launcher that is merely behind a window is better than one that looks
-      like a crash.
-      Three causes were guessed and all three were wrong, so the next attempt
-      should start from measurement:
-        * NOT the scene's dirty tracking -- em_structure_changed() made no
-          difference;
-        * NOT the compositor repainting before the content exists -- removing
-          the repaint from inside the syscall made no difference;
-        * NOT the menu bar's z -- lifting translucent bars above the layer made
-          it worse (the bar GROWS to 792x340 for its dropdowns and then covers
-          the launcher itself).
-      What is established: home renders it, and the compositor does not show
-      it, and only when another app window exists.
+- [ ] 🐛 THE OPEN ONE, now half-diagnosed. Re-opening the launcher paints
+      nothing: home runs the declarative pass (its log says so, 11 apps, two
+      frames) and the screen keeps the previous frame.
+      CAUSE FOUND, and it is the renderer's cache, not the window order: the
+      cache is keyed by NODE INDEX, indices are reused, and a subtree that is
+      destroyed and rebuilt identically lands on the same indices holding
+      still-valid entries with the same geometry -- so every node compares
+      equal and nothing is painted. scene_render_invalidate() was added for
+      exactly this (ui/backend/scene_render.h).
+      SECOND FAULT, why it is not switched on: with the cache invalidated the
+      second open DOES paint -- at the wrong geometry. The search field lands
+      in the top-left corner instead of centred, i.e. a re-created overlay
+      subtree lays out wrong, and over the menu bar that looks worse than not
+      painting. Two faults, one understood. The next step is the LAYOUT of a
+      re-created Overlay/Glass subtree, with scene_render_invalidate() turned
+      on so the fault is visible.
+      Consequence for now: the launcher is behind an app window, which is what
+      this OS has always done.
 - [ ] The bar is covered while the launcher is up IF the layer is ever lifted
       again. Doing that properly means the bar's OPAQUE STRIP above and its
       dropdown canvas below -- a compositing change, not a z-order one.

@@ -39,4 +39,15 @@ void scene_render_destroy(struct scene_renderer *r);
 void scene_render_frame(struct scene_renderer *r, struct scene_arena *a,
                         struct node_handle root, struct render_target *target);
 
+/* Forget every cached rect, so the next frame repaints the whole tree.
+ *
+ * For a caller that knows the surface changed for a reason the cache cannot
+ * see. The cache is keyed by NODE INDEX, and indices are reused: a subtree that
+ * is destroyed and later rebuilt identically -- a launcher opening a second
+ * time with the same apps in the same places -- lands on the same indices
+ * holding still-valid entries with the same geometry, so every node compares
+ * equal and not one pixel is painted. The declarative pass runs, the app
+ * believes it drew, and the screen keeps the frame from before. */
+void scene_render_invalidate(struct scene_renderer *r);
+
 #endif /* __EMBLINK_UI_SCENE_RENDER_H__ */

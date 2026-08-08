@@ -222,6 +222,7 @@ static void apps_listener(long arg) {
  * agree. */
 static int g_full_present = 0;
 
+
 static void apps_set_open(int open) {
     if (open == g_apps_open) return;
     if (open) { scan_apps(); g_apps_frames = 0; g_apps_scroll = 0; g_apps_q[0] = 0; }
@@ -229,18 +230,18 @@ static void apps_set_open(int open) {
     /* Render the new state BEFORE moving the layer when closing, and move it
      * before rendering when opening -- either way the compositor's recompose
      * must not be the one that shows a half-updated desktop. */
-    /* NOT LIFTED. embk_win_desktop_front() exists and works -- the layer does
-     * move, and the first open renders correctly through it -- but with an app
-     * window already on screen the SECOND open composites to nothing: home
-     * draws the grid (its own log says so, 11 apps, two frames) and the screen
-     * shows bare desktop, with the menu bar gone because the layer is over it.
-     * Three attempts at the cause were wrong, so it is off until the real one
-     * is found rather than left on in a state that looks like a crash.
+    /* THE LIFT IS OFF. embk_win_desktop_front (syscall 92) works and the first
+     * open renders correctly through it; the second open does not, and the
+     * cause is now half-known rather than unknown. It is NOT the z: with the
+     * render cache invalidated on the toggle, the second open began painting
+     * again -- but at the wrong GEOMETRY, the search field landing at the top
+     * left corner instead of centred. So the remaining fault is in the layout
+     * of a re-created overlay subtree, not in the window order, and lifting
+     * the layer only makes that fault cover the whole screen and take the menu
+     * bar with it.
      *
-     * The cost is the behaviour this OS always had: the launcher is drawn by
-     * the desktop, so it is behind any app window. The gain over where this
-     * started is the rest of it -- full-screen, searchable, and it never eats
-     * the menu bar. See docs/TODO.md. */
+     * Off until that is understood. The cost is what this OS always did: the
+     * launcher is drawn by the desktop, so it sits behind an app window. */
     int rc = 0;  /* embk_win_desktop_front(open) -- see above */
     /* TELL THE RUNTIME THE TREE CHANGED SHAPE. The launcher is a whole subtree
      * that appears and disappears, and the renderer only repaints what it can
@@ -1122,6 +1123,13 @@ int main(int argc, char **argv, char **envp) {
         g_launch_dir = 0;
         ui_frame_begin(); em_new_frame(); home_ui(); em_flush(); ui_frame_end();
         ui_run_layout((float)sw, (float)sh);
+
+        /* NOT invalidating the render cache here, though it is what the second
+         * open needs. scene_render_invalidate() does make it start painting
+         * again -- and it paints at the WRONG GEOMETRY, the search field
+         * landing in the top-left corner instead of centred, which over the
+         * menu bar looks worse than not painting at all. The staleness and the
+         * bad layout are two faults and only one of them is understood. */
 
         /* No forced full repaints. This loop used to nuke the renderer's rect
          * cache (two whole frames' worth) on every dock change and all through
