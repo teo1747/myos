@@ -134,7 +134,10 @@ missing, roughly in the order a user meets it:
       `writable` or `read-only` beside the path, decided by TRYING (create a
       probe file, remove it) rather than by keeping a second copy of what
       notepp.ns already declares.
-- [ ] The picker still cannot CREATE a file or a directory.
+- [x] ~~The picker cannot create a file~~ -- a name field, offered only where a
+      write would actually succeed. Nothing touches the disk until Save, so a
+      mistyped name costs nothing.
+- [ ] Still cannot create a DIRECTORY from the picker.
 
 ## The JavaScript gap -- it is the PLATFORM, not the engine
 

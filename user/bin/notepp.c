@@ -196,6 +196,7 @@ static struct embk_dirent g_pick[PICK_MAX];
 static int  g_pick_n;
 static float g_pick_scroll;
 static int  g_pick_writable;      /* is the listed directory writable BY US? */
+static char g_pick_new[96];       /* a name to create in the listed directory */
 
 /* CAN WE WRITE HERE? Asked by trying, not by consulting a copy of the manifest.
  * The app's authority is declared in notepp.ns, which the app cannot read (its
@@ -238,6 +239,7 @@ static void pick_begin(void) {
         if (slash != start) *slash = 0; else start[1] = 0;
     } else snprintf(start, sizeof start, "%s", (h && h[0]) ? h : "/");
     pick_scan(start);
+    g_pick_new[0] = 0;
     g_pick_open = 1;     g_pick_frames = 0;
 }
 
@@ -954,7 +956,32 @@ static void app(void) {
                         if (Button("Close").ghost().font(Caption).py(2).clicked())
                             g_pick_open = 0;
                     }
-                    ScrollView(&g_pick_scroll, 300, .key = "picklist") {
+                    /* CREATE HERE. Naming a new file used to mean typing its
+                     * whole path into the field, which is the one thing the
+                     * picker exists to spare you -- and you had to already know
+                     * a writable directory to type. Only offered where a write
+                     * would actually succeed; nothing touches the disk until
+                     * Save, so an accidental name costs nothing. */
+                    if (g_pick_writable) {
+                        HStack(.spacing = 6, .align = Center) {
+                            int mk = TextField(g_pick_new, sizeof g_pick_new,
+                                               "new file name").submitted();
+                            if (Button("Create").ghost().font(Caption).py(2).clicked()) mk = 1;
+                            if (mk && g_pick_new[0]) {
+                                char full[DOC_PATH_MAX];
+                                int fn = snprintf(full, sizeof full, "%s%s%s", g_pick_dir,
+                                                  strcmp(g_pick_dir, "/") ? "/" : "",
+                                                  g_pick_new);
+                                if (fn > 0 && fn < (int)sizeof full) {
+                                    snprintf(g_path_field, sizeof g_path_field, "%s", full);
+                                    g_want_open = 1;      /* absent = a new buffer at that path */
+                                    g_pick_open = 0;
+                                    snprintf(g_msg, sizeof g_msg, "New file -- Save to create it");
+                                }
+                            }
+                        }
+                    }
+                    ScrollView(&g_pick_scroll, 268, .key = "picklist") {
                         VStack(.spacing = 2, .align = Fill) {
                             /* Up first, always -- a picker you cannot leave is a
                              * trap, and the root has no parent to offer. */
