@@ -72,8 +72,12 @@ missing, roughly in the order a user meets it:
       a shortcut (that rule is what stopped a paste running delete-line). Real
       hardware sends control codes and works. To see the find bar in a test,
       default g_find_open to 1 for that build.
-- [ ] Ctrl+G (go to line) opens the find box and asks for a number instead of
-      being its own thing.
+- [x] ~~Ctrl+G hijacked the find box~~ -- it is its own dialog, showing the
+      file's real line range, and it puts the line in the MIDDLE of the view
+      rather than at the top.
+- [ ] The go-to and picker sheets dismiss on the FIRST click anywhere outside
+      them, with no debounce -- the launcher has one for exactly this reason.
+      Not yet a reported problem, but the same shape of bug.
 - [x] ~~No auto-close, no comment toggle~~ -- an opener brings its partner and
       typing the closer steps over it; Ctrl+/ comments a block and uncomments
       it only when every line already is.

@@ -101,6 +101,8 @@ static float g_char_w;            /* one monospace advance, measured once      *
 static float g_gutter_w;          /* the number column, in pixels              */
 static int   g_dragging;          /* a selection drag is in progress           */
 static int   g_track_drag;        /* the scroll thumb is being dragged         */
+static int   g_goto_open;
+static char  g_goto_buf[16];
 static int   g_confirm_close = -1;/* a modified document asking before it goes */
 static uint64_t g_last_click_ms;  /* for double / triple click                 */
 static int   g_click_streak;
@@ -322,7 +324,7 @@ static int on_key(int ch) {
      * exception, because Ctrl+S means the same thing wherever you are. */
     if (ui_any_focus()) {
         if (ctrl && ch == 19) { save_current(); return 1; }   /* Ctrl+S */
-        if (ch == 27) { g_find_open = g_replace_open = 0; return 0; }
+        if (ch == 27) { g_find_open = g_replace_open = g_goto_open = 0; return 0; }
         return 0;
     }
 
@@ -371,10 +373,7 @@ static int on_key(int ch) {
             case '/': { const char *tk = comment_tok(d_lang());
                         if (tk) ed_toggle_comment(&ED, tk);
                         scroll_to_caret(); return 1; }
-            case 'g': { /* go to line: the number is typed into the find field */
-                        g_find_open = 1;
-                        snprintf(g_msg, sizeof g_msg, "Type a line number, then Enter");
-                        return 1; }
+            case 'g': g_goto_open = 1; g_goto_buf[0] = 0; return 1;
             case 'c': case 'x': {
                 char tmp[4096];
                 int n = ed_copy(&ED, tmp, sizeof tmp);
@@ -898,6 +897,39 @@ static void app(void) {
         Divider("editsep");
 
         document_view(em_viewport_height() - chrome);
+
+        /* GO TO LINE, as its own question. It used to open the FIND bar and ask
+         * for a number that nothing then read -- a prompt that lies about what
+         * it will do with the answer is worse than no prompt. */
+        if (g_goto_open) {
+            Overlay() {
+                Dialog(.width = 300, .spacing = 12, .padding = 18) {
+                    char cap[64];
+                    snprintf(cap, sizeof cap, "Go to line (1 - %d)", ed_line_count(&ED));
+                    Text(cap).caption().secondary(); em_flush();
+                    int go = TextField(g_goto_buf, sizeof g_goto_buf, "line").submitted();
+                    HStack(.spacing = 8, .align = Center) {
+                        Spacer();
+                        if (Button("Cancel").ghost().clicked()) g_goto_open = 0;
+                        if (Button("Go").primary().clicked()) go = 1;
+                    }
+                    if (go) {
+                        int n = atoi(g_goto_buf);
+                        if (n >= 1) {
+                            ed_goto_line(&ED, n);
+                            /* Put the line in the MIDDLE rather than at the very
+                             * top: you asked to look at it, and a line pinned to
+                             * the first row has no context above it. */
+                            int first_l = ed_line_of(&ED, ED.cursor) - g_rows / 2;
+                            g_scroll = (float)(first_l < 0 ? 0 : first_l);
+                            scroll_to_caret();
+                        }
+                        g_goto_open = 0;
+                    }
+                }
+            }
+            if (OverlayDismissed()) g_goto_open = 0;
+        }
 
         if (g_pick_open) {
             Overlay() {
