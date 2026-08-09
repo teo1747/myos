@@ -59,7 +59,14 @@ void ui_set_grid_tracks(const unsigned char *mode, const float *val, int n);
 /* Place a grid CHILD explicitly, as `grid-area` does. row/col are zero-based;
  * pass row < 0 to auto-flow it, which is the default. */
 void ui_set_grid_place(int row, int col, int rowspan, int colspan);
-void ui_set_grid_span(int span);                            /* child: columns to span */
+void ui_set_grid_span(int span);                                    /* child: columns to span */
+/* THE CROSS-AXIS GAP of a wrapping container -- `gap: 30px 10px` states two,
+ * and on a wrapping row they land on different axes. 0 means "same as
+ * spacing", which is what a one-value gap means. */
+void ui_set_cross_spacing(float s);
+/* align-self on THIS box, overriding its container's align. Pass -1 for auto
+ * (no override), which is the initial value. */
+void ui_set_align_self(int align_or_minus_one);
 void ui_set_justify(enum layout_justify j);
 void ui_set_align(enum layout_align a);
 void ui_set_text_color(struct color c);   /* colour for subsequent ui_text calls */

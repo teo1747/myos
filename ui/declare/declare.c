@@ -606,6 +606,19 @@ void ui_set_grid_span(int span) {   /* on the CHILD box */
     struct layout_node *ln = layout_resolve(g_la, b->layout_node);
     if (ln) { ln->grid_span = span; ln->dirty = true; }
 }
+void ui_set_cross_spacing(float sp) {
+    struct instance *b = cur_box(); if (!b) return;
+    struct layout_node *ln = layout_resolve(g_la, b->layout_node);
+    if (ln) { ln->cross_spacing = sp; ln->dirty = true; }
+}
+
+void ui_set_align_self(int a) {
+    struct instance *b = cur_box(); if (!b) return;
+    struct layout_node *ln = layout_resolve(g_la, b->layout_node);
+    /* +1 encoded, so 0 keeps meaning "auto" on a node nobody has touched. */
+    if (ln) { ln->align_self = (a < 0) ? 0 : (unsigned char)(a + 1); ln->dirty = true; }
+}
+
 void ui_set_justify(enum layout_justify j) {
     struct instance *b = cur_box(); if (!b) return;
     struct layout_node *ln = layout_resolve(g_la, b->layout_node);

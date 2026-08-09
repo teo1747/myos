@@ -50,7 +50,11 @@ typedef enum {                 /* .font = Title / Body / ... */
 } EmFont;
 
 typedef enum {                 /* .align / .justify (shared) */
-    AlignDefault = 0, Leading, Center, Trailing, Fill, SpaceBetween
+    AlignDefault = 0, Leading, Center, Trailing, Fill, SpaceBetween,
+    /* Justify only. AROUND gives every item an equal share of the leftover
+     * with half of it on each side; EVENLY makes all n+1 gaps equal. They
+     * differ only at the two ends, which is exactly why an author picks one. */
+    SpaceAround, SpaceEvenly
 } EmAlign;
 
 typedef enum {                 /* .style on Button */

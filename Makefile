@@ -2033,15 +2033,7 @@ BW    ?= 940
 BH    ?= 620
 DEPTH ?= 6
 browser-render:
-	@mkdir -p $(BUILD)
-	$(HOSTCC) -std=gnu11 -Wall -Wextra -O1 -g $(V2_INC) -Iuser/web \
-	    -Iuser/web/css \
-	    -Iuser/lib \
-	    $(V2_SRC) user/web/html.c user/web/style.c user/web/render.c \
-	    user/web/css/decl.c user/web/css/sel.c user/web/css/sheet.c user/web/css/vars.c user/web/css/media.c user/web/css/calc.c \
-	    user/web/url.c user/web/png.c user/web/jpeg.c user/lib/inflate.c user/web/form.c \
-	    user/web/select.c \
-	    user/web/render_host.c -lm -o $(BUILD)/browser_render
+	@$(MAKE) --no-print-directory build/browser_render
 	$(BUILD)/browser_render $(DOC) $(BW) $(BH) $(DEPTH) $(PNG) $(BUSY)
 
 # web-corpus -- render every page in tests/web and check what each one claims

@@ -101,6 +101,8 @@ static float g_char_w;            /* one monospace advance, measured once      *
 static float g_gutter_w;          /* the number column, in pixels              */
 static int   g_dragging;          /* a selection drag is in progress           */
 static int   g_track_drag;        /* the scroll thumb is being dragged         */
+static int   g_wrap = 1;          /* word wrap on/off (status bar toggles it)  */
+#define WRAP_MAX 64               /* visual rows one logical line may become   */
 static int   g_goto_open;
 static char  g_goto_buf[16];
 /* Frames each sheet has been up. A modal must not honour a click-off on the
@@ -113,6 +115,14 @@ static int   g_confirm_close = -1;/* a modified document asking before it goes *
 static uint64_t g_last_click_ms;  /* for double / triple click                 */
 static int   g_click_streak;
 static int   g_last_click_off = -1;
+
+/* THE VISUAL-ROW MODEL, forward-declared because the key hook and the scroller
+ * are written above it. With wrap on, a screen row is no longer a line: these
+ * four are the only place that difference is allowed to live, and everything
+ * that used to count lines now counts rows through them. */
+static int  vis_total(void);
+static int  vis_row_of(int at);
+static void move_visual(int dir, int extend);
 
 
 /* ---- files --------------------------------------------------------------- */
@@ -299,7 +309,7 @@ static void session_load(void) {
 /* Keep the caret on screen. Called after anything that moves it -- which is
  * why it lives in one place rather than at every call site. */
 static void scroll_to_caret(void) {
-    int line = ed_line_of(&ED, ED.cursor);
+    int line = vis_row_of(ED.cursor);
     int first = (int)g_scroll;
     if (line < first)                first = line;
     else if (line >= first + g_rows) first = line - g_rows + 1;
@@ -311,6 +321,8 @@ static void scroll_to_caret(void) {
      * tail is silently clipped: the editor knows where the caret is and the
      * screen does not say. A margin of a few columns keeps some context ahead
      * of it rather than pinning it to the very edge. */
+    /* Sideways only when NOT wrapped: a wrapped view has nothing off the edge. */
+    if (g_wrap) { g_hscroll = 0; return; }
     int col = ed_col_of(&ED, ED.cursor);
     if (col < g_hscroll + 4)            g_hscroll = col - 4;
     else if (col >= g_hscroll + g_cols - 4) g_hscroll = col - g_cols + 5;
@@ -409,8 +421,8 @@ static int on_key(int ch) {
     switch (ch) {
         case 0x11: ed_move(&ED, -1, shift); break;
         case 0x12: ed_move(&ED, +1, shift); break;
-        case 0x13: ed_move_line_v(&ED, -1, shift); break;
-        case 0x14: ed_move_line_v(&ED, +1, shift); break;
+        case 0x13: move_visual(-1, shift); break;
+        case 0x14: move_visual(+1, shift); break;
         case 0x02: ed_home(&ED, shift); break;
         case 0x05: ed_end(&ED, shift); break;
         case 0x7F: ed_delete(&ED); break;
@@ -443,6 +455,73 @@ static int on_key(int ch) {
     return 1;
 }
 
+/* ---- visual rows ---------------------------------------------------------
+ * With wrap off a row IS a line and every one of these is a rename. With it on
+ * a logical line becomes one or more VISUAL ROWS, and five things have to agree
+ * about that at once -- drawing, click mapping, up/down, scrolling and the
+ * scrollbar. They agree by all asking here rather than each doing the
+ * arithmetic itself, which is the only version of this that stays correct. */
+
+/* Rows of one logical line, and where each after the first starts. */
+static int line_rows(int ls, int le, int *breaks) {
+    if (!g_wrap) return 1;
+    return ed_wrap_line(ED.buf + ls, le - ls, g_cols, breaks, WRAP_MAX);
+}
+
+static int vis_total(void) {
+    if (!g_wrap) return ed_line_count(&ED);
+    int brk[WRAP_MAX], total = 0, off = 0;
+    for (;;) {
+        int le = ed_line_end(&ED, off);
+        total += line_rows(off, le, brk);
+        if (le >= ED.len) break;
+        off = le + 1;
+    }
+    return total;
+}
+
+/* Visual row -> the logical line it belongs to, and the offsets of that row's
+ * slice. Returns the line's start offset. */
+static int vis_row_at(int want, int *row_lo, int *row_hi) {
+    int brk[WRAP_MAX], seen = 0, off = 0;
+    for (;;) {
+        int le = ed_line_end(&ED, off);
+        int r  = line_rows(off, le, brk);
+        if (want < seen + r) {
+            int k = want - seen;
+            int lo = (k == 0) ? off : off + brk[k - 1];
+            int hi = (k + 1 < r) ? off + brk[k] : le;
+            if (row_lo) *row_lo = lo;
+            if (row_hi) *row_hi = hi;
+            return off;
+        }
+        seen += r;
+        if (le >= ED.len) {                   /* past the end: clamp to the last row */
+            if (row_lo) *row_lo = ed_line_start(&ED, ED.len);
+            if (row_hi) *row_hi = ED.len;
+            return ed_line_start(&ED, ED.len);
+        }
+        off = le + 1;
+    }
+}
+
+/* Which visual row an offset sits on, counting from the top of the document. */
+static int vis_row_of(int at) {
+    int brk[WRAP_MAX], seen = 0, off = 0;
+    for (;;) {
+        int le = ed_line_end(&ED, off);
+        int r  = line_rows(off, le, brk);
+        if (at <= le) {
+            int k = 0;
+            for (int i = 0; i < r - 1; i++) if (at >= off + brk[i]) k = i + 1;
+            return seen + k;
+        }
+        seen += r;
+        if (le >= ED.len) return seen ? seen - 1 : 0;
+        off = le + 1;
+    }
+}
+
 /* ---- pointer -> caret ---------------------------------------------------- *
  * The whole reason em_text_width exists: turning a click into a position in
  * the text needs the width of the text, and only the font knows it. Monospace
@@ -451,19 +530,40 @@ static int on_key(int ch) {
 
 static int offset_at_point(float px, float py) {
     if (g_char_w <= 0.0f) return ED.cursor;
-    int line = (int)g_scroll + (int)((py - g_doc_top) / NOTE_LINE_H);
-    int last = ed_line_count(&ED) - 1;
-    if (line < 0) line = 0;
-    if (line > last) line = last;
-    int ls = ed_offset_of_line(&ED, line), le = ed_line_end(&ED, ls);
-    /* Round to the NEAREST gap between characters, not the one to the left:
-     * clicking the right half of a glyph must put the caret after it, which is
-     * the difference between a caret that lands where you pointed and one that
-     * is always one character early. */
-    int col = g_hscroll + (int)(((px - g_gutter_w) / g_char_w) + 0.5f);
+    int want = (int)g_scroll + (int)((py - g_doc_top) / NOTE_LINE_H);
+    int last = vis_total() - 1;
+    if (want < 0) want = 0;
+    if (want > last) want = last;
+    int lo, hi;
+    vis_row_at(want, &lo, &hi);
+    /* Round to the NEAREST gap between characters: clicking the right half of a
+     * glyph must put the caret after it. The horizontal offset only applies
+     * when wrap is off -- a wrapped view never scrolls sideways, because there
+     * is nothing off the edge to reach. */
+    int col = (g_wrap ? 0 : g_hscroll)
+            + (int)(((px - g_gutter_w) / g_char_w) + 0.5f);
     if (col < 0) col = 0;
-    if (ls + col > le) col = le - ls;
-    return ls + col;
+    if (lo + col > hi) col = hi - lo;
+    return lo + col;
+}
+
+/* Up and down move by VISUAL row when wrapped: through a wrapped paragraph the
+ * caret should walk the rows you can see, not jump the whole paragraph. */
+static void move_visual(int dir, int extend) {
+    if (!g_wrap) { ed_move_line_v(&ED, dir, extend); return; }
+    int lo, hi;
+    int row = vis_row_of(ED.cursor);
+    vis_row_at(row, &lo, &hi);
+    if (ED.goal_col < 0) ED.goal_col = ED.cursor - lo;
+    int goal = ED.goal_col;
+    int want = row + dir;
+    if (want < 0) { ED.cursor = 0; if (!extend) ED.anchor = ED.cursor; return; }
+    if (want > vis_total() - 1) { ED.cursor = ED.len; if (!extend) ED.anchor = ED.cursor; return; }
+    int nlo, nhi;
+    vis_row_at(want, &nlo, &nhi);
+    int w = nhi - nlo;
+    ED.cursor = nlo + (goal < w ? goal : w);
+    if (!extend) ED.anchor = ED.cursor;
 }
 
 /* ---- the document view --------------------------------------------------- */
@@ -471,7 +571,7 @@ static int offset_at_point(float px, float py) {
 /* One line: gutter number, then the text as coloured spans, with the selection
  * behind it and the caret dropped in at the right offset. */
 static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang lang,
-                      int cur_line, int sel_lo, int sel_hi) {
+                      int cur_line, int sel_lo, int sel_hi, int show_num) {
     char tmp[256];
     /* The line's full length is what the HIGHLIGHTER needs -- a string opened
      * near the start decides the colour of everything after it -- but only the
@@ -500,8 +600,12 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
          * overwrites that buffer before the emit happens. Every line drew
          * whatever happened to be in `tmp` at flush time: line numbers came out
          * as boxes and words appeared on the wrong lines. */
+        /* Only the FIRST visual row of a line carries its number. Repeating it
+         * down a wrapped paragraph would say the line is four lines, which is
+         * the one thing a gutter exists to get right. */
         { char num[16];
-          snprintf(num, sizeof num, "%4d ", line + 1);
+          if (show_num) snprintf(num, sizeof num, "%4d ", line + 1);
+          else          snprintf(num, sizeof num, "%4s ", "");
           Text(num).font(Body).color(line == cur_line ? C_GUTTER_CUR : C_GUTTER);
           em_flush(); }
 
@@ -597,6 +701,12 @@ static void document_view(float height) {
 
     /* How many lines fit. Recomputed every frame so a resize is not a special
      * case, and used by PgUp/PgDn as well as by the scroller. */
+    /* Measured once, from the font actually in use, rather than assumed. */
+    if (g_char_w <= 0.0f) {
+        g_char_w   = em_text_width("M", 15.0f);
+        g_gutter_w = em_text_width("    0 ", 15.0f);
+    }
+
     g_rows = (int)(height / NOTE_LINE_H);
     if (g_char_w > 0.0f) {
         g_cols = (int)((em_viewport_width() - g_gutter_w - 12.0f) / g_char_w);
@@ -604,32 +714,25 @@ static void document_view(float height) {
     }
     if (g_rows < 1) g_rows = 1;
 
-    int total = ed_line_count(&ED);
+    int total = vis_total();
+    /* THE LAST ROW STOPS AT THE BOTTOM. Clamping to total-1 instead let the
+     * wheel push the whole file off the top and leave a screen of empty rows
+     * with the document above it -- which looks exactly like a file that was
+     * lost. Scroll ends when the end of the file is on screen. */
+    int maxfirst = total - g_rows; if (maxfirst < 0) maxfirst = 0;
     int first = (int)g_scroll;
-    if (first > total - 1) first = total - 1;
+    if (first > maxfirst) first = maxfirst;
     if (first < 0) first = 0;
+    if (g_scroll > (float)maxfirst) g_scroll = (float)maxfirst;
 
     int sel_lo, sel_hi; ed_sel_range(&ED, &sel_lo, &sel_hi);
     int cur_line = ed_line_of(&ED, ED.cursor);
 
-    /* The highlighter carries state across lines, so a screen that starts in
-     * the middle of a file has to know whether it starts inside a block
-     * comment. Re-scan from the top: at the sizes this edits, walking the
-     * lines above the viewport costs less than a frame and is always right. */
+    /* The highlighter's state starts clean and is carried down by the row loop
+     * itself, which walks from the top of the file regardless (it has to, to
+     * know which visual row is which). A second walk here would advance the
+     * same state twice. */
     int st = SYN_ST_NONE;
-    int off = 0;
-    for (int l = 0; l < first && off < ED.len; l++) {
-        int le = ed_line_end(&ED, off);
-        struct syn_span sp[128];
-        if (lang != SYN_PLAIN) syn_line(lang, ED.buf + off, le - off, sp, 128, &st);
-        off = le + 1;
-    }
-
-    /* Measured once, from the font actually in use, rather than assumed. */
-    if (g_char_w <= 0.0f) {
-        g_char_w   = em_text_width("M", 15.0f);
-        g_gutter_w = em_text_width("    0 ", 15.0f);
-    }
 
     /* THE TRACK, sized from what is on screen. Without it the only clue to
      * where you are in a file is the line number, which tells you the position
@@ -652,7 +755,7 @@ static void document_view(float height) {
         if (w != 0.0f) {
             g_scroll -= w * 3.0f;
             if (g_scroll < 0) g_scroll = 0;
-            if (g_scroll > (float)(total - 1)) g_scroll = (float)(total - 1);
+            if (g_scroll > (float)maxfirst) g_scroll = (float)maxfirst;
             first = (int)g_scroll;
         }
         /* CLICK places the caret, DRAG extends the selection. ui_is_active is
@@ -713,18 +816,35 @@ static void document_view(float height) {
               em_request_frame();
           }
         }
-        g_doc_top = em_viewport_height() - height - 26.0f;   /* the rows start here */
-        for (int l = first; l < total && l < first + g_rows; l++) {
-            int ls = off;
-            int le = ed_line_end(&ED, ls);
-            int st_in = st;
-            if (lang != SYN_PLAIN) {
-                struct syn_span sp[128];
-                syn_line(lang, ED.buf + ls, le - ls, sp, 128, &st);
+        g_doc_top = em_viewport_height() - height - 26.0f;
+        /* Walk LOGICAL lines and emit VISUAL rows, skipping the rows above the
+         * viewport. The highlighter still runs once per logical line: a string
+         * opened on the first row decides the colour of the rest of them. */
+        int drawn = 0, seen = 0, lnum = 0, woff = 0;
+        while (woff <= ED.len && drawn < g_rows) {
+            int le = ed_line_end(&ED, woff);
+            int brk[WRAP_MAX];
+            int rows = line_rows(woff, le, brk);
+            for (int k = 0; k < rows; k++) {
+                int rlo = (k == 0) ? woff : woff + brk[k - 1];
+                int rhi = (k + 1 < rows) ? woff + brk[k] : le;
+                /* State is threaded ROW by row, not line by line: a block
+                 * comment opened on a wrapped line's first row has to still be
+                 * open on its second. Captured BEFORE the scan advances it. */
+                int st_in = st;
+                if (lang != SYN_PLAIN) {
+                    struct syn_span sp2[128];
+                    syn_line(lang, ED.buf + rlo, rhi - rlo, sp2, 128, &st);
+                }
+                if (seen + k < first) continue;      /* above the viewport */
+                if (drawn >= g_rows) break;          /* below it */
+                draw_line(lnum, rlo, rhi, st_in, lang, cur_line, sel_lo, sel_hi, k == 0);
+                drawn++;
             }
-            draw_line(l, ls, le, st_in, lang, cur_line, sel_lo, sel_hi);
-            off = le + 1;
+            seen += rows;
+            lnum++;
             if (le >= ED.len) break;
+            woff = le + 1;
         }
         Spacer();
     }
@@ -1101,6 +1221,17 @@ static void app(void) {
                            Text(s).caption().tertiary(); }
             Text(syn_lang_name(d ? d->lang : SYN_PLAIN)).caption().tertiary();
             Text(ED.use_tabs ? "Tabs" : "Spaces").caption().tertiary();
+            if (Button(g_wrap ? "Wrap" : "No wrap").ghost().font(Caption).py(2)
+                    .id("wraptog").clicked()) {
+                g_wrap = !g_wrap;
+                /* g_scroll is a row index, and the toggle changes what a row
+                 * IS -- so the old number means nothing afterwards. Re-anchor
+                 * on the caret, centred rather than pinned to the top row: the
+                 * line you were looking at should stay where you were looking. */
+                int r = vis_row_of(ED.cursor) - g_rows / 2;
+                g_scroll = (float)(r > 0 ? r : 0);
+                scroll_to_caret();
+            }
             if (d && doc_dirty(doc_current())) Text("modified").caption().tertiary();
             Spacer();
             if (g_msg[0]) Text(g_msg).caption().tertiary();

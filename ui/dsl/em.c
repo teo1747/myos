@@ -100,7 +100,10 @@ static enum layout_align  map_align(EmAlign a) {
 }
 static enum layout_justify map_justify(EmAlign a) {
     switch (a) { case Leading: return JUSTIFY_START; case Center: return JUSTIFY_CENTER;
-                 case Trailing: return JUSTIFY_END; case SpaceBetween: return JUSTIFY_SPACE_BETWEEN; default: return JUSTIFY_START; }
+                 case Trailing: return JUSTIFY_END; case SpaceBetween: return JUSTIFY_SPACE_BETWEEN;
+                 case SpaceAround: return JUSTIFY_SPACE_AROUND;
+                 case SpaceEvenly: return JUSTIFY_SPACE_EVENLY;
+                 default: return JUSTIFY_START; }
 }
 
 /* True when the active theme is dark (glass tint/edge differ by ground). */

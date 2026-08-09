@@ -28,7 +28,16 @@ static const struct layout_handle LAYOUT_HANDLE_NULL = { 0, 0 };
 static inline bool layout_handle_is_null(struct layout_handle h) { return h.index == 0; }
 
 enum layout_axis    { AXIS_ROW, AXIS_COLUMN };
-enum layout_justify { JUSTIFY_START, JUSTIFY_CENTER, JUSTIFY_END, JUSTIFY_SPACE_BETWEEN };
+enum layout_justify { JUSTIFY_START, JUSTIFY_CENTER, JUSTIFY_END, JUSTIFY_SPACE_BETWEEN,
+                      /* SPACE_AROUND gives every item an equal share of the
+                       * leftover, half of it on each side, so the end gaps are
+                       * half the middle ones. SPACE_EVENLY makes all n+1 gaps
+                       * equal instead. They differ only at the two ends, and
+                       * that difference is the whole reason an author picks
+                       * one -- collapsing both onto SPACE_BETWEEN, as this did,
+                       * pins the first and last items to the edges, which is
+                       * the one thing neither keyword means. */
+                      JUSTIFY_SPACE_AROUND, JUSTIFY_SPACE_EVENLY };
 enum layout_align   { ALIGN_START, ALIGN_CENTER, ALIGN_END, ALIGN_STRETCH };
 /* SIZE_PERCENT keeps the FRACTION in fixed_value (0.5 == 50%), resolved
  * against the containing block's content size on that axis -- which is a
@@ -75,6 +84,18 @@ struct layout_node {
     float spacing;                     /* main-axis gap between children */
     bool  wrap;                        /* flex-wrap: overflowing children flow onto
                                         * new lines stacked on the cross axis */
+    /* THE CROSS-AXIS GAP, when it differs from the main one. CSS states two:
+     * `gap: 12px 20px` is row-gap then column-gap, and for a wrapping row the
+     * first separates LINES and the second separates ITEMS. One `spacing` had
+     * to be both, so a card grid with a large row gap got it between its cards
+     * as well. 0 means "same as spacing", which is what a single-value gap
+     * means and keeps every existing caller unchanged. */
+    float cross_spacing;
+    /* align-self: this child's own cross alignment, overriding its container's.
+     * Encoded as align+1 because ALIGN_START is 0 and a zeroed node has to mean
+     * "no override" -- otherwise every child ever created would silently claim
+     * it had been told to align to the start. Read it through child_align(). */
+    unsigned char align_self;
     int   grid_cols;                   /* >0 => 2D grid: N columns, auto-flow */
     /* EXPLICIT TRACK SIZES, when the author stated them
      * (`grid-template-columns: 12.25rem minmax(0,1fr)`). Without these every
