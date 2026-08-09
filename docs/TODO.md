@@ -118,8 +118,14 @@ missing, roughly in the order a user meets it:
       is per-document only while that document is bound.
 - [ ] No column selection, no multiple carets, no folding, no minimap.
 - [ ] The tab bar does not scroll and caps at 8 documents.
-- [ ] Nothing is remembered between runs: no session, no recent files, no
-      per-file cursor position.
+- [x] ~~Nothing is remembered between runs~~ -- which files were open, which
+      one was in front, and the caret in each, in $HOME/.notepp-session. A flat
+      text file on purpose: it is a list of paths, and a format nobody can read
+      is one nobody can fix.
+- [ ] The editor can only write under $HOME -- notepp.ns grants `rw $HOME` and
+      nothing else, so a save to /data is refused. That is correct and the
+      status bar says so, but there is no file PICKER, so the only way to learn
+      it is to try.
 
 ## The JavaScript gap -- it is the PLATFORM, not the engine
 

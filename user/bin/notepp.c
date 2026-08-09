@@ -139,6 +139,8 @@ static void sync_out(void) {
     if (d) d->cursor = ED.cursor;
 }
 
+static void session_save(void);   /* defined below; save records the session */
+
 static void save_current(void) {
     struct doc *d = doc_cur();
     if (!d) return;
@@ -152,7 +154,8 @@ static void save_current(void) {
     size_t len = strlen(d->text), w = fwrite(d->text, 1, len, f);
     fclose(f);
     if (w == len) { doc_mark_saved(doc_current());
-                    snprintf(g_msg, sizeof g_msg, "Saved %lu bytes", (unsigned long)w); }
+                    snprintf(g_msg, sizeof g_msg, "Saved %lu bytes", (unsigned long)w);
+                    session_save(); }
     else snprintf(g_msg, sizeof g_msg, "PARTIAL WRITE %lu of %lu",
                   (unsigned long)w, (unsigned long)len);
 }
@@ -170,6 +173,55 @@ static const char *comment_tok(enum syn_lang l) {
 static enum syn_lang d_lang(void) {
     struct doc *d = doc_cur();
     return d ? d->lang : SYN_PLAIN;
+}
+
+/* ---- the session ---------------------------------------------------------
+ * Which files were open, and where the caret was in each. Reopening an editor
+ * to an empty Untitled after it was full of work is the friction you meet
+ * every single launch, and it is a dozen lines to not have.
+ *
+ * A flat text file under $HOME rather than anything structured: it is a list of
+ * paths, a person may want to read or delete it, and a format nobody can
+ * inspect is a format nobody can fix. Written whenever the set of documents
+ * changes -- not on every keystroke, which would be a disk write per character
+ * for a fact that has not changed. */
+static void session_path(char *out, size_t cap) {
+    const char *h = getenv("HOME");
+    snprintf(out, cap, "%s/.notepp-session", (h && h[0]) ? h : "/data");
+}
+
+static void session_save(void) {
+    char sp[256]; session_path(sp, sizeof sp);
+    FILE *f = fopen(sp, "w");
+    if (!f) return;
+    for (int i = 0; i < DOC_MAX; i++) {
+        struct doc *d = doc_at(i);
+        if (!d || !d->path[0]) continue;        /* an unnamed buffer has nowhere to come back from */
+        fprintf(f, "%d %d %s\n", i == doc_current(), d->cursor, d->path);
+    }
+    fclose(f);
+}
+
+static void session_load(void) {
+    char sp[256]; session_path(sp, sizeof sp);
+    FILE *f = fopen(sp, "r");
+    if (!f) return;
+    char line[400];
+    int want = -1;
+    while (fgets(line, sizeof line, f)) {
+        int cur = 0, off = 0;
+        char path[DOC_PATH_MAX];
+        if (sscanf(line, "%d %d %255[^\n]", &cur, &off, path) != 3) continue;
+        int i = doc_open(path, file_read);
+        if (i < 0) continue;                    /* out of slots: keep what loaded */
+        struct doc *d = doc_at(i);
+        /* The file may have changed since -- shorter, or gone. Clamp rather
+         * than restore a caret past the end of it. */
+        if (d && off >= 0 && off <= (int)strlen(d->text)) d->cursor = off;
+        if (cur) want = i;
+    }
+    fclose(f);
+    if (want >= 0) doc_select(want);
 }
 
 /* ---- scrolling ----------------------------------------------------------- */
@@ -630,11 +682,17 @@ static void app(void) {
     /* The editor owns the keyboard; installed once, on the first frame, the
      * way vellum installs its own. */
     static int wired = 0;
-    if (!wired) { wired = 1; em_set_key_hook(on_key); }
+    if (!wired) {
+        wired = 1;
+        em_set_key_hook(on_key);
+        doc_init();
+        session_load();          /* before the first bind, so it opens onto a real file */
+        g_bound = -1;
+    }
     doc_init();
     bind_current();
 
-    if (g_want_new)  { g_want_new = 0; doc_new(); g_path_field[0] = 0; g_bound = -1; }
+    if (g_want_new)  { g_want_new = 0; doc_new(); g_path_field[0] = 0; g_bound = -1; session_save(); }
     if (g_want_open) {
         g_want_open = 0;
         int i = doc_open(g_path_field, file_read);
@@ -642,15 +700,15 @@ static void app(void) {
         else { struct doc *dd = doc_at(i);
                snprintf(g_msg, sizeof g_msg, "%s%s", dd->text[0] ? "Opened" : "New file",
                         dd->truncated ? " (TRUNCATED -- will not save)" : "");
-               g_bound = -1; }
+               g_bound = -1; session_save(); }
     }
-    if (g_switch_to >= 0) { sync_out(); doc_select(g_switch_to); g_switch_to = -1; g_bound = -1; }
+    if (g_switch_to >= 0) { sync_out(); doc_select(g_switch_to); g_switch_to = -1; g_bound = -1; session_save(); }
     if (g_close >= 0) {
         /* ASK BEFORE LOSING EDITS. Closing a modified document used to just
          * take it, and that is the only item on this app's list that costs
          * something you cannot get back. */
         if (doc_dirty(g_close)) { g_confirm_close = g_close; g_close = -1; }
-        else { doc_close(g_close); g_close = -1; g_bound = -1; }
+        else { doc_close(g_close); g_close = -1; g_bound = -1; session_save(); }
     }
     bind_current();
 
