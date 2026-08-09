@@ -69,9 +69,13 @@ missing, roughly in the order a user meets it:
       typing the closer steps over it; Ctrl+/ comments a block and uncomments
       it only when every line already is.
 - [x] ~~No prompt when closing a modified file~~ -- Cancel / Save / Discard.
-- [ ] 🐛 That confirm sheet draws in the TOP-LEFT instead of centred, over the
-      tab bar. Dialog inside Window() is not being centred by its overlay; it
-      works and it looks broken.
+- [x] ~~The confirm sheet drew top-left over the tab bar~~ -- two layout bugs,
+      neither sufficient alone: layout_run set the initial containing block to
+      ZERO while its own comment said it was the viewport, and place_positioned
+      preferred an out-of-flow box's INTRINSIC size over the block even when
+      the box had asked to grow. A full-screen scrim therefore took the size of
+      the dialog inside it and sat in the corner. Fixed for every overlay in
+      the OS, not just this one.
 - [x] ~~Double and triple click~~ -- CONFIRMED BY HAND on a real mouse. It
       could not be verified here: a tap held ~90ms never reaches the guest at
       all, and one held long enough to be seen (450ms) puts the presses 700ms

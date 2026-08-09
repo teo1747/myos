@@ -861,9 +861,25 @@ static void place_positioned(struct layout_arena *la, struct scene_arena *sa,
     int has_w = 0, has_h = 0;
     float w = stated_px(&k->width,  cw, &has_w);
     float h = stated_px(&k->height, ch, &has_h);
+    /* GROW means fill the containing block, even out of flow -- especially out
+     * of flow. Falling back to the intrinsic size is right for a box that
+     * merely has no stated width; for one that ASKED to grow it is wrong, and
+     * it fails quietly: a full-screen modal scrim takes the size of the dialog
+     * inside it and sits in the corner, over whatever was there.
+     * The initial containing block being the viewport (see layout_run) is the
+     * other half of this -- neither is sufficient alone. */
+    /* ...but ONLY when no edge on that axis was stated. A box that names an
+     * edge is CSS absolute positioning, and there `width: auto` shrink-to-fits
+     * rather than filling -- making it fill moved every pinned box in the
+     * browser's position test. A scrim states no edges at all; that is what
+     * tells the two apart. */
+    int grow_w = (k->width.mode  == SIZE_FLEX) && !L && !R;
+    int grow_h = (k->height.mode == SIZE_FLEX) && !T && !B;
     if (!has_w) w = (L && R) ? cw - k->ins_left - k->ins_right
+                 : grow_w    ? cw
                              : (k->intrinsic_w > 0 ? k->intrinsic_w : cw);
     if (!has_h) h = (T && B) ? ch - k->ins_top - k->ins_bottom
+                 : grow_h    ? ch
                              : (k->intrinsic_h > 0 ? k->intrinsic_h : ch);
     if (w < 0) w = 0;
     if (h < 0) h = 0;
@@ -1355,8 +1371,12 @@ void layout_run(struct layout_arena *la, struct scene_arena *sa,
     measure_intrinsic(la, sa, root);
     r = layout_resolve(la, root);
     r->resolved_x = 0; r->resolved_y = 0;
-    /* No containing block yet: the root establishes one, which is the initial
-     * containing block CSS calls the viewport. */
-    g_cb_x = g_cb_y = 0; g_cb_w = 0; g_cb_h = 0;
+    /* The root establishes the initial containing block, and that block is THE
+     * VIEWPORT -- which is what this said and not what it did: it set the size
+     * to zero, so an out-of-flow box with no positioned ancestor was resolved
+     * against nothing, fell back to its intrinsic size, and landed at the
+     * origin. A full-screen modal scrim came out dialog-sized in the top-left
+     * corner, over whatever was there. */
+    g_cb_x = g_cb_y = 0; g_cb_w = W; g_cb_h = H;
     arrange(la, sa, root, W, H);
 }
