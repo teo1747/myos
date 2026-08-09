@@ -69,6 +69,11 @@ static uint32_t g_mutation_count;
 /* pointer / hover / press state (§7, extended for a live event loop) */
 static struct instance_handle g_hovered;   /* deepest instance under the pointer */
 static struct instance_handle g_clicked;   /* deepest instance a press landed on */
+/* PRESS EDGES SINCE THE LAST FRAME LOOKED. g_clicked holds only the most recent
+ * one, so a double or triple click -- three presses that can easily all happen
+ * between two frames -- was indistinguishable from a single one. Counting them
+ * is the only way an app can tell, and nothing else in the stack remembers. */
+static int g_press_edges;
 static struct instance_handle g_active;    /* instance that owns the current drag (pointer capture) */
 static struct instance_handle g_focused;   /* instance with keyboard focus (text field) */
 static float g_ptr_x, g_ptr_y;
@@ -835,6 +840,8 @@ static bool is_ancestor_or_self(struct instance_handle anc, struct instance_hand
     return false;
 }
 
+int ui_take_press_edges(void) { int n = g_press_edges; g_press_edges = 0; return n; }
+
 bool ui_consume_click(struct instance_handle h) {
     if (is_ancestor_or_self(h, g_clicked)) { g_clicked = INSTANCE_HANDLE_NULL; return true; }
     return false;
@@ -988,6 +995,7 @@ void ui_pointer(float x, float y, bool down) {
     g_ptr_x = x; g_ptr_y = y;
     g_hovered = instance_at(x, y);
     if (down && !g_ptr_down) {           /* press edge */
+        g_press_edges++;
         g_clicked = g_hovered;
         g_active  = g_hovered;           /* capture: this widget owns the drag until release */
         g_press_edge = true;             /* for defocus when the press misses every field */

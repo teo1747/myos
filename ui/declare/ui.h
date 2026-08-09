@@ -98,6 +98,10 @@ bool ui_consume_click(struct instance_handle h);
  * box. A click fires on the press edge and is read via ui_consume_click. */
 void ui_pointer(float x, float y, bool down);
 void ui_pointer_pos(float *x, float *y);   /* live pointer position (surface-local) */
+/* How many press EDGES have happened since this was last asked (and clears the
+ * count). For a caller that needs to tell one click from three -- g_clicked
+ * remembers only the last, and three presses can all land between two frames. */
+int  ui_take_press_edges(void);
 bool ui_is_hovered(void);   /* is the pointer over the currently open box? */
 bool ui_is_pressed(void);   /* ...and is the button held down? */
 bool ui_pointer_down(void); /* the raw button state, not scoped to a widget */

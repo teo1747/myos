@@ -72,17 +72,23 @@ missing, roughly in the order a user meets it:
 - [ ] 🐛 That confirm sheet draws in the TOP-LEFT instead of centred, over the
       tab bar. Dialog inside Window() is not being centred by its overlay; it
       works and it looks broken.
-- [ ] 🐛 DOUBLE AND TRIPLE CLICK DO NOT COUNT. The engine's half works and is
-      tested (ed_select_word / ed_select_line); the app never reaches them
-      because it cannot tell a second click from a first. Two attempts, both
-      wrong and both worth knowing:
-        * sampling ui_is_active() once a frame -- under TCG a whole press and
-          release falls between two frames, so three clicks look like one;
-        * ui_consume_click() on the document container -- the click lands on
-          the ROW, not the container, so it never fires there;
-        * ui_consume_click() on the row itself -- also does not fire, and that
-          is where the next attempt should start: find out what instance the
-          click IS being attributed to before writing more code.
+- [ ] 🐛 DOUBLE AND TRIPLE CLICK STILL DO NOT FIRE, though the ground under
+      them is fixed. Found and repaired on the way:
+        * ui_pointer() detects the press edge by comparing against LAST FRAME's
+          button state, and is called once a frame -- so a press and release
+          that both happen between two frames was never seen at all. The app
+          loop now samples the pointer in 5ms slices through BOTH sleeps (idle
+          and post-render) instead of sleeping blind. That is an OS-wide fix:
+          every app was losing fast clicks.
+        * g_clicked remembers only the most recent press, so it could never
+          distinguish one click from three. ui_take_press_edges() counts them.
+      With both in place the caret still lands correctly and no selection
+      appears, so the streak is not advancing. NEXT STEP IS MEASUREMENT, not
+      another guess: put ui_take_press_edges()'s return value and the streak on
+      the status bar and watch them while clicking. Three theories remain
+      untested -- the count never exceeds zero, the time delta exceeds 500ms in
+      GUEST time, or `near` fails because the two clicks resolve to different
+      offsets.
 - [ ] Still no shift-click to extend a selection.
 - [ ] No scrollbar; the only indication of position is the line number.
 - [ ] Undo cannot redo an insert (the pool stores removed text only), and undo

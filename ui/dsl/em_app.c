@@ -343,7 +343,26 @@ int em_app_run(const EmApp *app) {
         int build = first || input_edge || em_take_frame_request() || app_tick ||
                     em_ui_epoch() != prev_epoch || em_nav_transitioning() ||
                     em_overlay_active() || win_moved;
-        if (!build) { embk_sleep_ms(pace); continue; }
+        if (!build) {
+            /* SAMPLE THE POINTER WHILE IDLING, in slices, rather than sleeping
+             * through it. A frame here can be far apart from the next under an
+             * emulator, and a press and release that both happen in the gap
+             * were simply never seen: the click did not arrive late, it did not
+             * arrive. Feeding the toolkit during the wait turns those into real
+             * press edges, which it counts. */
+            for (int slept = 0; slept < pace; slept += 5) {
+                embk_sleep_ms(pace - slept < 5 ? pace - slept : 5);
+                struct embk_win_input pin;
+                embk_win_input(&pin);
+                em_feed_pointer((float)pin.x, (float)pin.y,
+                                pin.buttons & EMBK_MOUSE_LEFT,
+                                pin.buttons & EMBK_MOUSE_RIGHT,
+                                pin.wheel, pin.focused);
+                if ((pin.buttons & EMBK_MOUSE_LEFT) != (in.buttons & EMBK_MOUSE_LEFT))
+                    { em_request_frame(); break; }
+            }
+            continue;
+        }
 
         em_feed_pointer((float)in.x, (float)in.y,
                         in.buttons & EMBK_MOUSE_LEFT, in.buttons & EMBK_MOUSE_RIGHT,
@@ -563,6 +582,20 @@ int em_widget_run(const EmWidget *wg) {
         embk_win_present(win, px, (uint32_t)winw, (uint32_t)winh);
 
         if (first) { first = 0; char b[64]; snprintf(b, sizeof b, "%s: widget first frame\n", title); embk_puts(1, b); }
-        embk_sleep_ms(pace);
+        /* The same slicing as the idle path above, and for the same reason:
+         * this sleep sits between two rendered frames, which is exactly where a
+         * fast second or third click lands. Sleeping through it loses the press
+         * entirely -- a double click arrives as one. */
+        for (int slept = 0; slept < pace; slept += 5) {
+            embk_sleep_ms(pace - slept < 5 ? pace - slept : 5);
+            struct embk_win_input pin;
+            embk_win_input(&pin);
+            em_feed_pointer((float)pin.x, (float)pin.y,
+                            pin.buttons & EMBK_MOUSE_LEFT,
+                            pin.buttons & EMBK_MOUSE_RIGHT,
+                            pin.wheel, pin.focused);
+            if ((pin.buttons & EMBK_MOUSE_LEFT) != (in.buttons & EMBK_MOUSE_LEFT))
+                { em_request_frame(); break; }
+        }
     }
 }

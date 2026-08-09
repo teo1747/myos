@@ -103,10 +103,7 @@ static int   g_confirm_close = -1;/* a modified document asking before it goes *
 static uint64_t g_last_click_ms;  /* for double / triple click                 */
 static int   g_click_streak;
 static int   g_last_click_off = -1;
-/* Set by whichever ROW was clicked this frame. The click lands on the row, not
- * on the container around it, so asking the container whether it was clicked
- * never fired -- and multi-click never counted past one. */
-static int   g_row_clicked;
+
 
 /* ---- files --------------------------------------------------------------- */
 
@@ -377,7 +374,6 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
     HStack(.spacing = EmZero, .align = Center, .px = EmZero, .py = EmZero,
            .height = NOTE_LINE_H, .minh = NOTE_LINE_H, .maxh = NOTE_LINE_H,
            .background = (line == cur_line) ? C_CURLINE : rgb(0)) {
-        if (ui_consume_click(ui_open())) g_row_clicked = 1;
         /* EVERY Text IS FLUSHED IMMEDIATELY, and that is not a style choice.
          * The DSL STAGES a leaf and emits it on the next one, so a Text() given
          * a stack buffer keeps a POINTER to it -- and the next loop iteration
@@ -514,14 +510,14 @@ static void document_view(float height) {
               g_dragging = 0;
           }
 
-          /* COUNTING CLICKS is an EDGE, and must not be sampled. Counting them
-           * from ui_is_active meant asking "is the button down?" once a frame,
-           * and under TCG a whole press and release can happen between two
-           * frames -- so a real triple-click was seen as one press and only
-           * ever placed the caret. ui_consume_click fires once per completed
-           * click however the frames fall. */
-          if (g_row_clicked) {
-              g_row_clicked = 0;
+          /* COUNTING CLICKS is an EDGE, and the toolkit counts them now --
+           * ui_take_press_edges. Neither ui_is_active (a state, sampled once a
+           * frame) nor ui_consume_click (which remembers only the LAST press)
+           * could tell one click from three: three presses fit easily between
+           * two frames under an emulator, and the earlier ones were simply
+           * never seen. */
+          int presses = ui_take_press_edges();
+          for (int c = 0; c < presses; c++) {
               uint64_t now = embk_uptime_ms();
               int near = (g_last_click_off >= 0 && at >= g_last_click_off - 1
                                                 && at <= g_last_click_off + 1);
@@ -532,7 +528,8 @@ static void document_view(float height) {
               if (g_click_streak >= 3)      ed_select_line(&ED, at);
               else if (g_click_streak == 2) ed_select_word(&ED, at);
               em_request_frame();
-          } }
+          }
+        }
         g_doc_top = em_viewport_height() - height - 26.0f;   /* the rows start here */
         for (int l = first; l < total && l < first + g_rows; l++) {
             int ls = off;
