@@ -219,7 +219,9 @@ static int dir_writable(const char *dir) {
 }
 
 static void pick_scan(const char *dir) {
-    snprintf(g_pick_dir, sizeof g_pick_dir, "%s", dir);
+    /* A rescan of the CURRENT directory passes g_pick_dir back in -- copying a
+     * buffer onto itself is undefined, and the compiler is right to say so. */
+    if (dir != g_pick_dir) snprintf(g_pick_dir, sizeof g_pick_dir, "%s", dir);
     int64_t n = embk_readdir(g_pick_dir, g_pick, PICK_MAX);
     g_pick_n = n < 0 ? 0 : (int)n;
     g_pick_writable = dir_writable(g_pick_dir);
@@ -965,8 +967,31 @@ static void app(void) {
                     if (g_pick_writable) {
                         HStack(.spacing = 6, .align = Center) {
                             int mk = TextField(g_pick_new, sizeof g_pick_new,
-                                               "new file name").submitted();
+                                               "new file, or name/ for a folder").submitted();
                             if (Button("Create").ghost().font(Caption).py(2).clicked()) mk = 1;
+                            /* A NAME ENDING IN '/' IS A FOLDER. One field, and
+                             * the shape of the name says which -- rather than a
+                             * second field and a second button for a thing you
+                             * do once a session. It is made immediately, unlike
+                             * a file: an empty directory is the whole object,
+                             * so there is no later Save to create it at. */
+                            if (mk && g_pick_new[0] &&
+                                g_pick_new[strlen(g_pick_new) - 1] == '/') {
+                                char dir[DOC_PATH_MAX];
+                                int dn = snprintf(dir, sizeof dir, "%s%s%.*s", g_pick_dir,
+                                                  strcmp(g_pick_dir, "/") ? "/" : "",
+                                                  (int)strlen(g_pick_new) - 1, g_pick_new);
+                                if (dn > 0 && dn < (int)sizeof dir) {
+                                    if (embk_mkdir(dir) == 0) {
+                                        snprintf(g_msg, sizeof g_msg, "Created %.60s", dir);
+                                        g_pick_new[0] = 0;
+                                        pick_scan(g_pick_dir);   /* show it */
+                                    } else {
+                                        snprintf(g_msg, sizeof g_msg, "Cannot create %.55s", dir);
+                                    }
+                                }
+                                mk = 0;                       /* handled */
+                            }
                             if (mk && g_pick_new[0]) {
                                 char full[DOC_PATH_MAX];
                                 int fn = snprintf(full, sizeof full, "%s%s%s", g_pick_dir,

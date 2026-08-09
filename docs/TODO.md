@@ -137,7 +137,10 @@ missing, roughly in the order a user meets it:
 - [x] ~~The picker cannot create a file~~ -- a name field, offered only where a
       write would actually succeed. Nothing touches the disk until Save, so a
       mistyped name costs nothing.
-- [ ] Still cannot create a DIRECTORY from the picker.
+- [x] ~~Cannot create a directory from the picker~~ -- a name ending in `/`
+      makes a folder, in the same field. Made immediately, unlike a file: an
+      empty directory is the whole object, so there is no later Save to create
+      it at.
 
 ## The JavaScript gap -- it is the PLATFORM, not the engine
 
