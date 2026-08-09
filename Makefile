@@ -1155,12 +1155,14 @@ build/note_syntax.o: user/note/syntax.c user/note/syntax.h user/note/ckeywords.h
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/note -c $< -o $@
 build/note_doc.o: user/note/doc.c user/note/doc.h user/note/syntax.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/note -c $< -o $@
-build/notepp.o: user/bin/notepp.c user/note/doc.h user/note/syntax.h | $(BUILD)
+build/note_edit.o: user/note/edit.c user/note/edit.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/note -c $< -o $@
+build/notepp.o: user/bin/notepp.c user/note/doc.h user/note/syntax.h user/note/edit.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(UIDEMO_INC) -Iuser/note -c $< -o $@
-build/notepp.elf: build/notepp.o build/note_syntax.o build/note_doc.o \
+build/notepp.elf: build/notepp.o build/note_syntax.o build/note_doc.o build/note_edit.o \
                   build/crt0.o build/syscalls.o build/libembk.so
 	$(USER_CC) $(NEWLIB_DYN_LDFLAGS) build/crt0.o build/syscalls.o \
-	    build/notepp.o build/note_syntax.o build/note_doc.o \
+	    build/notepp.o build/note_syntax.o build/note_doc.o build/note_edit.o \
 	    build/libembk.so -lc -lm -lgcc $(NEWLIB_DYN_WL) -o $@
 
 build/home.elf: build/home.o build/appauth.o build/crt0.o build/syscalls.o build/libembk.so
@@ -1951,6 +1953,14 @@ ico-test:
 
 # The syntax highlighter -- a pure function, so it needs no screen. The cases
 # that matter are the ones a compiler is allowed to refuse and an editor is not.
+# The editing engine: a selection dragged backwards, an undo that must restore
+# the caret, a replace-all whose replacement contains the search term. All of it
+# is testable without a screen, and all of it is where editors get bugs.
+edit-test:
+	$(HOSTCC) -std=c11 -Wall -Wextra -O2 -Iuser/note \
+	    user/note/edit.c user/note/edit_test.c -o $(BUILD)/edit_test
+	$(BUILD)/edit_test
+
 syntax-test:
 	$(HOSTCC) -std=c11 -Wall -Wextra -O2 -Iuser/note \
 	    user/note/syntax.c user/note/syntax_test.c -o $(BUILD)/syntax_test
