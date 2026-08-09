@@ -75,6 +75,9 @@ static Color role_color(int role) {
 /* The height of one line of code, everywhere: the row, the scroller, and the
  * page keys all have to agree or the caret leaves the screen. */
 #define NOTE_LINE_H 20.0f
+/* How much of one line the highlighter is given. Beyond this a line is not
+ * coloured past the cap -- it is still all there, still editable, still saved. */
+#define NOTE_LINE_MAX 4096
 
 static struct editor ED;          /* the engine, re-pointed at the current doc */
 static int   g_bound = -1;        /* which doc slot ED currently wraps         */
@@ -88,6 +91,8 @@ static int   g_find_open, g_replace_open, g_find_icase = 1;
 static char  g_find_buf[80], g_repl_buf[80];
 
 static float g_scroll;            /* first visible line                        */
+static int   g_hscroll;           /* first visible COLUMN                      */
+static int   g_cols = 80;         /* columns that fit, recomputed from the box */
 static int   g_rows = 20;         /* visible lines, recomputed from the window */
 static int   g_match = -1;        /* bracket matching the caret's, or -1       */
 static float g_doc_top;           /* screen y of the first drawn line          */
@@ -157,6 +162,16 @@ static void scroll_to_caret(void) {
     else if (line >= first + g_rows) first = line - g_rows + 1;
     if (first < 0) first = 0;
     g_scroll = (float)first;
+
+    /* ...and sideways. Without this a caret driven past the right edge simply
+     * stopped being visible, which is the same class of lie as a line whose
+     * tail is silently clipped: the editor knows where the caret is and the
+     * screen does not say. A margin of a few columns keeps some context ahead
+     * of it rather than pinning it to the very edge. */
+    int col = ed_col_of(&ED, ED.cursor);
+    if (col < g_hscroll + 4)            g_hscroll = col - 4;
+    else if (col >= g_hscroll + g_cols - 4) g_hscroll = col - g_cols + 5;
+    if (g_hscroll < 0) g_hscroll = 0;
 }
 
 /* ---- keyboard ------------------------------------------------------------ */
@@ -266,7 +281,7 @@ static int offset_at_point(float px, float py) {
      * clicking the right half of a glyph must put the caret after it, which is
      * the difference between a caret that lands where you pointed and one that
      * is always one character early. */
-    int col = (int)(((px - g_gutter_w) / g_char_w) + 0.5f);
+    int col = g_hscroll + (int)(((px - g_gutter_w) / g_char_w) + 0.5f);
     if (col < 0) col = 0;
     if (ls + col > le) col = le - ls;
     return ls + col;
@@ -278,9 +293,15 @@ static int offset_at_point(float px, float py) {
  * behind it and the caret dropped in at the right offset. */
 static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang lang,
                       int cur_line, int sel_lo, int sel_hi) {
-    char tmp[512];
+    char tmp[256];
+    /* The line's full length is what the HIGHLIGHTER needs -- a string opened
+     * near the start decides the colour of everything after it -- but only the
+     * visible columns are ever drawn. That is what removes the old 512-byte
+     * draw cap: a long line is no longer truncated, it is WINDOWED, and the
+     * part off the right edge is reached by scrolling rather than lost. */
     int n = le - ls;
-    if (n > (int)sizeof tmp - 1) n = (int)sizeof tmp - 1;
+    if (n > NOTE_LINE_MAX) n = NOTE_LINE_MAX;
+    int c0 = g_hscroll, c1 = g_hscroll + g_cols;
 
     /* EmZero, not 0. Zero means "unset" in EmProps and the theme then supplies
      * its own padding -- which on a row of code is a third of a line of air
@@ -321,18 +342,25 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
              * rounded to a span boundary. */
             int i = 0;
             while (i < sl) {
-                int abs = ls + off + i;
+                int col = off + i;                    /* monospace: column == byte */
+                if (col >= c1) break;                 /* past the right edge */
+                int abs = ls + col;
                 int in_sel = (sel_lo < sel_hi && abs >= sel_lo && abs < sel_hi);
                 int run = 1;
-                while (i + run < sl) {
+                while (i + run < sl && col + run < c1) {
                     int a2 = ls + off + i + run;
                     int s2 = (sel_lo < sel_hi && a2 >= sel_lo && a2 < sel_hi);
                     if (s2 != in_sel) break;
                     if (a2 == ED.cursor) break;
                     run++;
                 }
-                if (abs == ED.cursor) { Text("|").font(Body).color(C_CARET); em_flush(); }
-                memcpy(tmp, ED.buf + abs, (size_t)run); tmp[run] = 0;
+                if (col + run <= c0) { i += run; continue; }   /* left of the window */
+                int skip = (col < c0) ? c0 - col : 0;          /* partly left of it */
+                if (abs + skip == ED.cursor) { Text("|").font(Body).color(C_CARET); em_flush(); }
+                int keep = run - skip;
+                if (keep > (int)sizeof tmp - 1) keep = (int)sizeof tmp - 1;
+                memcpy(tmp, ED.buf + abs + skip, (size_t)keep); tmp[keep] = 0;
+                run = skip + keep;
                 Color fg = role_color(sp[k].role);
                 if (g_match >= 0 && abs <= g_match && g_match < abs + run)
                     Text(tmp).font(Body).color(fg).bg(C_MATCH);
@@ -345,7 +373,9 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
             }
             off += sl;
         }
-        if (ED.cursor == le) { Text("|").font(Body).color(C_CARET); em_flush(); }
+        { int ecol = le - ls;
+          if (ED.cursor == le && ecol >= c0 && ecol <= c1)
+              { Text("|").font(Body).color(C_CARET); em_flush(); } }
         if (!n && ED.cursor != le) { Text(" ").font(Body); em_flush(); }
         Spacer();
     }
@@ -359,6 +389,10 @@ static void document_view(float height) {
     /* How many lines fit. Recomputed every frame so a resize is not a special
      * case, and used by PgUp/PgDn as well as by the scroller. */
     g_rows = (int)(height / NOTE_LINE_H);
+    if (g_char_w > 0.0f) {
+        g_cols = (int)((em_viewport_width() - g_gutter_w - 12.0f) / g_char_w);
+        if (g_cols < 8) g_cols = 8;
+    }
     if (g_rows < 1) g_rows = 1;
 
     int total = ed_line_count(&ED);

@@ -37,8 +37,14 @@ status bar tracking line, column, selection size and language. The engine
 Honest score from the person using it: 0.1/10 -- a base, not an editor. What is
 missing, roughly in the order a user meets it:
 
-- [ ] No horizontal scrolling. A line longer than the window is clipped, and
-      the draw caps at 512 bytes per line besides.
+- [x] ~~No horizontal scrolling~~ -- a long line is WINDOWED now rather than
+      clipped, and the caret drags the window sideways with a few columns of
+      margin ahead of it. The 512-byte draw cap is gone with it: only the
+      visible columns are ever emitted, so the limit that remains is the
+      highlighter's (4096 per line, past which a line is uncoloured but still
+      whole, editable and saved).
+- [ ] Still no horizontal SCROLLBAR, and no way to scroll sideways with the
+      wheel or a gesture -- only the caret moves the window.
 - [ ] No word wrap.
 - [ ] Find shows no match count and does not highlight the other matches.
 - [ ] Ctrl+G (go to line) opens the find box and asks for a number instead of
