@@ -72,23 +72,24 @@ missing, roughly in the order a user meets it:
 - [ ] 🐛 That confirm sheet draws in the TOP-LEFT instead of centred, over the
       tab bar. Dialog inside Window() is not being centred by its overlay; it
       works and it looks broken.
-- [ ] 🐛 DOUBLE AND TRIPLE CLICK STILL DO NOT FIRE, though the ground under
-      them is fixed. Found and repaired on the way:
-        * ui_pointer() detects the press edge by comparing against LAST FRAME's
-          button state, and is called once a frame -- so a press and release
-          that both happen between two frames was never seen at all. The app
-          loop now samples the pointer in 5ms slices through BOTH sleeps (idle
-          and post-render) instead of sleeping blind. That is an OS-wide fix:
-          every app was losing fast clicks.
-        * g_clicked remembers only the most recent press, so it could never
-          distinguish one click from three. ui_take_press_edges() counts them.
-      With both in place the caret still lands correctly and no selection
-      appears, so the streak is not advancing. NEXT STEP IS MEASUREMENT, not
-      another guess: put ui_take_press_edges()'s return value and the streak on
-      the status bar and watch them while clicking. Three theories remain
-      untested -- the count never exceeds zero, the time delta exceeds 500ms in
-      GUEST time, or `near` fails because the two clicks resolve to different
-      offsets.
+- [ ] 🐛 DOUBLE AND TRIPLE CLICK STILL DO NOT FIRE, and the search has narrowed
+      to one place. Fixed on the way, and both were real:
+        * ui_pointer() compares against LAST FRAME's button state and runs once
+          a frame, so a press and release between two frames was never an edge
+          at all. The loop samples in 5ms slices through both sleeps now --
+          every app in the OS was losing fast clicks.
+        * the streak added ONE PER FRAME while the edges arrive BATCHED (two or
+          three in a single frame under an emulator), so three rapid clicks
+          incremented it once. It adds however many arrived.
+      MEASURED with the counters on the status bar: `e=5 s=1 at=62 last=44
+      dt=4114`. All five taps are counted -- the edges are arriving. But only
+      TWO sightings happened for five taps, and the streak still read 1, so the
+      per-sighting count is reaching the streak and not surviving to the next
+      frame. Something between the two resets g_click_streak.
+      START HERE: print g_click_streak at the TOP of the frame as well as after
+      the update. If it is 1 at the top having been 3 at the bottom, find the
+      writer; the drag branch immediately above it assigns anchor and cursor on
+      a fresh press and is the first suspect.
 - [ ] Still no shift-click to extend a selection.
 - [ ] No scrollbar; the only indication of position is the line number.
 - [ ] Undo cannot redo an insert (the pool stores removed text only), and undo

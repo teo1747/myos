@@ -517,12 +517,21 @@ static void document_view(float height) {
            * two frames under an emulator, and the earlier ones were simply
            * never seen. */
           int presses = ui_take_press_edges();
-          for (int c = 0; c < presses; c++) {
+          if (presses) {
+              /* THE PRESSES ARRIVE IN BATCHES, and that is the whole bug. The
+               * loop hands over however many edges happened since it last
+               * looked -- under an emulator a double click is routinely BOTH
+               * presses in one frame -- and adding one per frame turned three
+               * rapid clicks into a streak of one, every time.
+               *
+               * Count what arrived, not how many times we looked. Two edges in
+               * one frame IS a double click: they cannot have been further
+               * apart than a frame. */
               uint64_t now = embk_uptime_ms();
               int near = (g_last_click_off >= 0 && at >= g_last_click_off - 1
                                                 && at <= g_last_click_off + 1);
-              g_click_streak = (near && now - g_last_click_ms < 500)
-                             ? g_click_streak + 1 : 1;
+              if (near && now - g_last_click_ms < 500) g_click_streak += presses;
+              else                                     g_click_streak  = presses;
               g_last_click_ms = now;
               g_last_click_off = at;
               if (g_click_streak >= 3)      ed_select_line(&ED, at);
