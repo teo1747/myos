@@ -72,6 +72,10 @@ static Color role_color(int role) {
 
 /* ---- state --------------------------------------------------------------- */
 
+/* The height of one line of code, everywhere: the row, the scroller, and the
+ * page keys all have to agree or the caret leaves the screen. */
+#define NOTE_LINE_H 20.0f
+
 static struct editor ED;          /* the engine, re-pointed at the current doc */
 static int   g_bound = -1;        /* which doc slot ED currently wraps         */
 static char  g_msg[96];
@@ -167,13 +171,18 @@ static int on_key(int ch) {
      * all: every character went into the document behind them. Save is the one
      * exception, because Ctrl+S means the same thing wherever you are. */
     if (ui_any_focus()) {
-        if (ctrl && (ch | 32) == 's') { save_current(); return 1; }
+        if (ctrl && ch == 19) { save_current(); return 1; }   /* Ctrl+S */
         if (ch == 27) { g_find_open = g_replace_open = 0; return 0; }
         return 0;
     }
 
     if (ctrl) {
-        switch (ch | 32) {
+        /* Ctrl+letter arrives as a CONTROL CODE, 1..26 -- which is why the
+         * runtime tests for 0x16 to catch Ctrl+V. Masking with |32 turns
+         * Ctrl+Z (0x1A) into ':' and matches nothing, so every shortcut here
+         * silently did nothing. Decode it back to the letter. */
+        int key = (ch >= 1 && ch <= 26) ? ('a' + ch - 1) : (ch | 32);
+        switch (key) {
             case 's': save_current(); return 1;
             case 'n': g_want_new = 1; return 1;
             case 'o': g_want_open = 1; return 1;
@@ -193,16 +202,15 @@ static int on_key(int ch) {
                 char tmp[4096];
                 int n = ed_copy(&ED, tmp, sizeof tmp);
                 if (n) { embk_clip_set(tmp, (size_t)n);
-                         if ((ch | 32) == 'x') ed_delete_sel(&ED);
+                         if (key == 'x') ed_delete_sel(&ED);
                          snprintf(g_msg, sizeof g_msg, "%d bytes %s", n,
-                                  (ch | 32) == 'x' ? "cut" : "copied"); }
+                                  key == 'x' ? "cut" : "copied"); }
                 return 1; }
             case 'v': {
                 char tmp[4096];
                 int64_t n = embk_clip_get(tmp, sizeof tmp - 1);
                 if (n > 0) { tmp[n] = 0; ed_insert_text(&ED, tmp, (int)n); scroll_to_caret(); }
                 return 1; }
-            case 0x11 | 32: break;    /* fall through for arrows below */
             default: break;
         }
         /* Ctrl + arrows: by word, and by line for up/down. */
@@ -247,11 +255,28 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
     int n = le - ls;
     if (n > (int)sizeof tmp - 1) n = (int)sizeof tmp - 1;
 
-    HStack(.spacing = 0, .align = Center, .px = 0, .py = 0,
+    /* EmZero, not 0. Zero means "unset" in EmProps and the theme then supplies
+     * its own padding -- which on a row of code is a third of a line of air
+     * between every line, and is why this looked like a form rather than a
+     * file. */
+    /* A FIXED ROW HEIGHT, because a line of code is a line of code. Left to
+     * size itself the row took the theme's idea of a comfortable control and
+     * came out at double the type's line height -- a file with a blank line
+     * between every line of it. This is also the number the scroller and
+     * PgUp/PgDn count in, so it is stated once, here. */
+    HStack(.spacing = EmZero, .align = Center, .px = EmZero, .py = EmZero,
+           .height = NOTE_LINE_H,
            .background = (line == cur_line) ? C_CURLINE : rgb(0)) {
+        /* EVERY Text IS FLUSHED IMMEDIATELY, and that is not a style choice.
+         * The DSL STAGES a leaf and emits it on the next one, so a Text() given
+         * a stack buffer keeps a POINTER to it -- and the next loop iteration
+         * overwrites that buffer before the emit happens. Every line drew
+         * whatever happened to be in `tmp` at flush time: line numbers came out
+         * as boxes and words appeared on the wrong lines. */
         { char num[16];
           snprintf(num, sizeof num, "%4d ", line + 1);
-          Text(num).font(Body).color(line == cur_line ? C_GUTTER_CUR : C_GUTTER); }
+          Text(num).font(Body).color(line == cur_line ? C_GUTTER_CUR : C_GUTTER);
+          em_flush(); }
 
         struct syn_span sp[128];
         int st = syn_state_in;
@@ -264,9 +289,9 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
             int sl = sp[k].len;
             if (off + sl > n) sl = n - off;
             if (sl <= 0) continue;
-            /* Split this span wherever the selection or the caret starts or
-             * ends inside it, so both land between characters rather than
-             * being approximated to a span boundary. */
+            /* Split the span wherever the selection or the caret begins or ends
+             * inside it, so both land between characters rather than being
+             * rounded to a span boundary. */
             int i = 0;
             while (i < sl) {
                 int abs = ls + off + i;
@@ -279,9 +304,7 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
                     if (a2 == ED.cursor) break;
                     run++;
                 }
-                if (abs == ED.cursor) {
-                    Text("|").font(Body).color(C_CARET);
-                }
+                if (abs == ED.cursor) { Text("|").font(Body).color(C_CARET); em_flush(); }
                 memcpy(tmp, ED.buf + abs, (size_t)run); tmp[run] = 0;
                 Color fg = role_color(sp[k].role);
                 if (g_match >= 0 && abs <= g_match && g_match < abs + run)
@@ -290,12 +313,13 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
                     Text(tmp).font(Body).color(fg).bg(C_SEL);
                 else
                     Text(tmp).font(Body).color(fg);
+                em_flush();                       /* tmp is about to change */
                 i += run;
             }
             off += sl;
         }
-        if (ED.cursor == le) Text("|").font(Body).color(C_CARET);
-        if (!n && ED.cursor != le) Text(" ").font(Body);
+        if (ED.cursor == le) { Text("|").font(Body).color(C_CARET); em_flush(); }
+        if (!n && ED.cursor != le) { Text(" ").font(Body); em_flush(); }
         Spacer();
     }
 }
@@ -307,8 +331,7 @@ static void document_view(float height) {
 
     /* How many lines fit. Recomputed every frame so a resize is not a special
      * case, and used by PgUp/PgDn as well as by the scroller. */
-    float lh = 21.0f;
-    g_rows = (int)(height / lh);
+    g_rows = (int)(height / NOTE_LINE_H);
     if (g_rows < 1) g_rows = 1;
 
     int total = ed_line_count(&ED);
@@ -332,8 +355,9 @@ static void document_view(float height) {
         off = le + 1;
     }
 
-    VStack(.spacing = 0, .align = Fill, .padding = 0, .background = C_EDITOR_BG,
-           .corner = 8, .clip = 1, .height = height, .key = "doc") {
+    VStack(.spacing = EmZero, .align = Fill, .padding = EmZero,
+           .background = C_EDITOR_BG, .corner = 8, .clip = 1,
+           .height = height, .key = "doc") {
         for (int l = first; l < total && l < first + g_rows; l++) {
             int ls = off;
             int le = ed_line_end(&ED, ls);
