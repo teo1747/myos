@@ -184,6 +184,45 @@ int main(void) {
     ok(ed_auto_close('(') == ')' && ed_auto_close('"') == '"', "closers for openers");
     ok(ed_auto_close('x') == 0, "...and nothing for a letter");
 
+    /* --- word wrap: pure arithmetic, so all of it is testable here --- */
+    { int b[16], r;
+      r = ed_wrap_line("short", 5, 20, b, 16);
+      ok(r == 1, "a line that fits is one row");
+
+      /* "hello world " is exactly 12 -- the space ON the boundary is the break
+       * that costs no characters, so it is the one to take. */
+      r = ed_wrap_line("hello world again", 17, 12, b, 16);
+      ok(r == 2 && b[0] == 12, "breaks at the last space that fits");
+
+      r = ed_wrap_line("aaaaaaaaaaaaaaaaaaaa", 20, 8, b, 16);
+      ok(r == 3 && b[0] == 8 && b[1] == 16,
+         "a word longer than the view is CUT rather than pushed off the edge");
+
+      /* rows: "ab " "cd " "ef " "gh ij" -- the last takes five, which fits. */
+      r = ed_wrap_line("ab cd ef gh ij", 14, 5, b, 16);
+      ok(r == 4 && b[0] == 3 && b[1] == 6 && b[2] == 9,
+         "several rows, each breaking after a space");
+
+      /* The rows must reassemble into the original: no character invented and
+       * none dropped, which is the property that makes a wrapped view still a
+       * view OF the text rather than a rendering of something near it. */
+      { const char *L = "one two three four five"; int len = 23;
+        r = ed_wrap_line(L, len, 9, b, 16);
+        int at = 0, total = 0, good = 1;
+        for (int i = 0; i < r; i++) {
+            int end = (i + 1 < r) ? b[i] : len;
+            if (end < at) good = 0;
+            total += end - at;
+            at = end;
+        }
+        ok(good && total == len && at == len, "the rows cover the line exactly"); }
+
+      r = ed_wrap_line("exactly8", 8, 8, b, 16);
+      ok(r == 1, "a line exactly as wide as the view does not wrap");
+
+      r = ed_wrap_line("", 0, 10, b, 16);
+      ok(r == 1, "an empty line is still one row"); }
+
     printf("=== edit_test: %s (%d failure%s) ===\n",
            g_fail ? "FAILED" : "OK", g_fail, g_fail == 1 ? "" : "s");
     return g_fail != 0;

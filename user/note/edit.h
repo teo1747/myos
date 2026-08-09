@@ -140,6 +140,23 @@ void ed_select_line(struct editor *e, int off);
  * the rule that makes one shortcut do both without a mode. */
 int  ed_toggle_comment(struct editor *e, const char *tok);
 
+/* WORD WRAP -- where one logical line breaks into visual rows.
+ *
+ * Given the bytes of one line and how many columns fit, fill `breaks` with the
+ * offset (relative to the line) where each row after the first STARTS, and
+ * return the number of rows. A line that fits is one row and writes nothing.
+ *
+ * Breaks go after a space where there is one in reach, and mid-word only when
+ * a single word is longer than the view -- wrapping a long identifier is ugly,
+ * and refusing to wrap it puts text off the edge of the screen, which is
+ * worse. The space that a row breaks on stays on the row that ends, the way
+ * every editor does it, so a wrapped line's rows concatenate back to the
+ * original with nothing added or lost.
+ *
+ * Pure arithmetic on one line: no state, no view, no pixels -- so the hard
+ * part is testable, and only the drawing is left to be got right on a screen. */
+int ed_wrap_line(const char *line, int n, int cols, int *breaks, int max);
+
 /* Auto-close: the closing partner for an opening bracket or quote, or 0. */
 char ed_auto_close(char open);
 

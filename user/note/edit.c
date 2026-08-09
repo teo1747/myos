@@ -659,3 +659,29 @@ char ed_auto_close(char open) {
         default:  return 0;
     }
 }
+
+/* ---- word wrap ----------------------------------------------------------- */
+
+int ed_wrap_line(const char *line, int n, int cols, int *breaks, int max) {
+    if (cols < 1) cols = 1;
+    if (n <= cols) return 1;                  /* fits: one row, no breaks */
+
+    int rows = 1, start = 0;
+    while (n - start > cols && rows <= max) {
+        int limit = start + cols;             /* first column that does NOT fit */
+        int brk = -1;
+        /* The last space at or before the limit. At-or-before, not before:
+         * a space sitting exactly on the boundary is a break that costs no
+         * characters, which is the nicest one available. */
+        for (int i = limit; i > start; i--) {
+            if (line[i - 1] == ' ' || line[i - 1] == '\t') { brk = i; break; }
+        }
+        /* A word longer than the view has no break to find. Cut it: text
+         * pushed off the right edge is worse than a word in two pieces. */
+        if (brk <= start) brk = limit;
+        breaks[rows - 1] = brk;
+        start = brk;
+        rows++;
+    }
+    return rows;
+}

@@ -60,7 +60,19 @@ missing, roughly in the order a user meets it:
       whole, editable and saved).
 - [ ] Still no horizontal SCROLLBAR, and no way to scroll sideways with the
       wheel or a gesture -- only the caret moves the window.
-- [ ] No word wrap.
+- [~] WORD WRAP -- the arithmetic is done and tested (ed_wrap_line, 7 cases:
+      breaks at the last space that fits, cuts a word longer than the view
+      rather than pushing text off the edge, rows reassemble into the line
+      exactly). The VIEW half is not wired, and it is not small: five things
+      assume `row == line` and all five have to change together --
+        * draw_line and the row loop in document_view,
+        * offset_at_point (a click maps to a VISUAL row, then to a column
+          within its slice),
+        * ed_move_line_v (up/down should walk visual rows, not logical ones),
+        * scroll_to_caret and g_rows (counting visual rows, not lines),
+        * the scrollbar's total.
+      Do them as one change. Wiring two of the five is worse than none: the
+      caret and the pixels disagree and every symptom afterwards is a lie.
 - [x] ~~Find shows no match count~~ -- it says "3 of 12", or "none".
 - [x] ~~Find does not highlight the other matches~~ -- every hit on every
       visible line is tinted, with the current one still the brighter
