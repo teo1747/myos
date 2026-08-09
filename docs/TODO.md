@@ -72,32 +72,28 @@ missing, roughly in the order a user meets it:
 - [ ] 🐛 That confirm sheet draws in the TOP-LEFT instead of centred, over the
       tab bar. Dialog inside Window() is not being centred by its overlay; it
       works and it looks broken.
-- [?] DOUBLE AND TRIPLE CLICK -- the path is proven to run; whether it WORKS
-      needs a real mouse, because QMP cannot produce a testable double click.
-      Measured: a tap held ~90ms never reaches the guest at all (the press
-      block does not run, so no edge exists to count), and a tap held long
-      enough to be seen -- 450ms -- puts the two presses 700ms apart, outside
-      the 500ms window. Too fast to see or too slow to pair, with nothing in
-      between. TEST IT BY HAND before touching this code again: everything
-      below was fixed on the way and all of it is real.
+- [x] ~~Double and triple click~~ -- CONFIRMED BY HAND on a real mouse. It
+      could not be verified here: a tap held ~90ms never reaches the guest at
+      all, and one held long enough to be seen (450ms) puts the presses 700ms
+      apart, outside the window. Too fast to see or too slow to pair, with
+      nothing in between -- so the last word had to come from a person.
+      Five real defects were found underneath it, and the first is OS-WIDE:
         1. ui_pointer() compared against LAST FRAME's button state and ran once
-           a frame, so a press+release between frames was never an edge at all.
-           The app loop samples in 5ms slices through both sleeps now. This is
-           an OS-WIDE fix -- every app was dropping fast clicks.
+           a frame, so a press+release between frames was never an edge. The
+           app loop samples in 5ms slices through both sleeps now. EVERY APP
+           was dropping fast clicks, not just this one.
         2. g_clicked keeps only the most recent press, so it could not tell one
-           click from three. Edges are counted (ui_take_press_edges).
-        3. The streak added one PER FRAME while edges arrive batched; it adds
-           however many arrived.
-        4. The window was timed between FRAMES rather than clicks, and a frame
-           here can outlast the whole window. em_take_clicks() carries the
-           press's own timestamp.
-        5. TWO edge detectors, one in ui_pointer and a duplicate in
-           em_feed_pointer, disagreed about the previous button state -- so the
-           DSL counted zero for presses the toolkit had plainly registered.
-           One detector now; the DSL only adds the timestamp.
-      A probe mistake worth not repeating: an earlier version printed
+           click from three. Edges are counted.
+        3. The streak counted FRAMES rather than clicks, and edges arrive
+           batched.
+        4. The window was timed between frames, and a frame here can outlast
+           the whole 500ms window. The press carries its own timestamp.
+        5. TWO edge detectors watching one button disagreed about the previous
+           state, so the DSL counted zero for presses the toolkit had
+           registered. One detector.
+      A probe mistake worth not repeating: an early version printed
       g_last_click_off AFTER assigning it, so `at == last` was guaranteed by
-      the probe. Capture before you mutate.
+      the probe. CAPTURE BEFORE YOU MUTATE.
 - [ ] Still no shift-click to extend a selection.
 - [ ] No scrollbar; the only indication of position is the line number.
 - [ ] Undo cannot redo an insert (the pool stores removed text only), and undo
