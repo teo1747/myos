@@ -64,7 +64,8 @@ static Color role_color(int role) {
 #define C_SEL         rgb(0x593B6FB5)
 #define C_CARET       rgb(0xFF7FB2FF)
 #define C_EDITOR_BG   rgb(0xFF16181D)
-#define C_MATCH       rgb(0x66FFC24B)
+#define C_MATCH       rgb(0x66FFC24B)   /* the bracket partner */
+#define C_FIND        rgb(0x4CE0A33A)   /* every other search hit */
 #define TAB_ON        rgb(0xFF3A3A3C)
 #define TAB_OFF       rgb(0x00000000)
 #define TAB_TEXT_ON   rgb(0xFFF2F2F7)
@@ -385,6 +386,21 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
           Text(num).font(Body).color(line == cur_line ? C_GUTTER_CUR : C_GUTTER);
           em_flush(); }
 
+        /* EVERY MATCH ON THIS LINE, not just the one the caret is on. A find that
+         * shows you one hit at a time makes you press Next to discover whether
+         * there are others; showing them all answers that by looking. The current
+         * hit is the selection, so it stays the brighter of the two. */
+        int mlo[48], mhi[48], mn = 0;
+        if (g_find_open && g_find_buf[0]) {
+            int nl = (int)strlen(g_find_buf);
+            for (int m = ed_find(&ED, g_find_buf, ls, g_find_icase, 0);
+                 m >= 0 && m < le && mn < 48;
+                 m = ed_find(&ED, g_find_buf, m + nl, g_find_icase, 0)) {
+                if (m + nl > le) break;
+                mlo[mn] = m; mhi[mn] = m + nl; mn++;
+            }
+        }
+
         struct syn_span sp[128];
         int st = syn_state_in;
         int ns = (lang == SYN_PLAIN || n <= 0) ? 0
@@ -405,11 +421,18 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
                 if (col >= c1) break;                 /* past the right edge */
                 int abs = ls + col;
                 int in_sel = (sel_lo < sel_hi && abs >= sel_lo && abs < sel_hi);
+                int in_hit = 0;
+                for (int m = 0; m < mn; m++)
+                    if (abs >= mlo[m] && abs < mhi[m]) { in_hit = 1; break; }
                 int run = 1;
                 while (i + run < sl && col + run < c1) {
                     int a2 = ls + off + i + run;
                     int s2 = (sel_lo < sel_hi && a2 >= sel_lo && a2 < sel_hi);
                     if (s2 != in_sel) break;
+                    int h2 = 0;
+                    for (int m = 0; m < mn; m++)
+                        if (a2 >= mlo[m] && a2 < mhi[m]) { h2 = 1; break; }
+                    if (h2 != in_hit) break;
                     if (a2 == ED.cursor) break;
                     run++;
                 }
@@ -421,10 +444,18 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
                 memcpy(tmp, ED.buf + abs + skip, (size_t)keep); tmp[keep] = 0;
                 run = skip + keep;
                 Color fg = role_color(sp[k].role);
+                /* A run that carries a BACKGROUND is given its exact width. Left to
+                 * size itself the tinted box grew to the next sibling, so a
+                 * highlighted word painted a bar reaching across the rest of the
+                 * line. Monospace makes the right number exact rather than a
+                 * measurement: one advance per character. */
+                float w = (float)keep * g_char_w;
                 if (g_match >= 0 && abs <= g_match && g_match < abs + run)
-                    Text(tmp).font(Body).color(fg).bg(C_MATCH);
+                    Text(tmp).font(Body).color(fg).bg(C_MATCH).width(w);
                 else if (in_sel)
-                    Text(tmp).font(Body).color(fg).bg(C_SEL);
+                    Text(tmp).font(Body).color(fg).bg(C_SEL).width(w);
+                else if (in_hit)
+                    Text(tmp).font(Body).color(fg).bg(C_FIND).width(w);
                 else
                     Text(tmp).font(Body).color(fg);
                 em_flush();                       /* tmp is about to change */

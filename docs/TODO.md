@@ -62,7 +62,16 @@ missing, roughly in the order a user meets it:
       wheel or a gesture -- only the caret moves the window.
 - [ ] No word wrap.
 - [x] ~~Find shows no match count~~ -- it says "3 of 12", or "none".
-- [ ] Find still does not HIGHLIGHT the other matches, only the current one.
+- [x] ~~Find does not highlight the other matches~~ -- every hit on every
+      visible line is tinted, with the current one still the brighter
+      selection. Runs break at match boundaries as well as selection ones so a
+      hit that starts mid-token is highlighted exactly.
+- [ ] Ctrl+F and the other shortcuts cannot be driven through QMP: a
+      synthesized Ctrl+letter arrives as a printable character with the
+      modifier set, and a printable character is deliberately never treated as
+      a shortcut (that rule is what stopped a paste running delete-line). Real
+      hardware sends control codes and works. To see the find bar in a test,
+      default g_find_open to 1 for that build.
 - [ ] Ctrl+G (go to line) opens the find box and asks for a number instead of
       being its own thing.
 - [x] ~~No auto-close, no comment toggle~~ -- an opener brings its partner and
