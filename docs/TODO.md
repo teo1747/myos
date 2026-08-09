@@ -125,9 +125,11 @@ missing, roughly in the order a user meets it:
 - [x] ~~No file picker~~ -- Browse lists the directory, folders bright and
       files dimmed, `..` to go up, click a file to open it. It starts where the
       current file lives, else at $HOME.
-- [ ] The picker cannot CREATE a file or a directory, and it does not mark
-      which subtrees are writable -- $HOME is, /system is not, and you still
-      find that out by trying to save.
+- [x] ~~The picker does not mark which subtrees are writable~~ -- it says
+      `writable` or `read-only` beside the path, decided by TRYING (create a
+      probe file, remove it) rather than by keeping a second copy of what
+      notepp.ns already declares.
+- [ ] The picker still cannot CREATE a file or a directory.
 
 ## The JavaScript gap -- it is the PLATFORM, not the engine
 

@@ -186,11 +186,33 @@ static char g_pick_dir[DOC_PATH_MAX];
 static struct embk_dirent g_pick[PICK_MAX];
 static int  g_pick_n;
 static float g_pick_scroll;
+static int  g_pick_writable;      /* is the listed directory writable BY US? */
+
+/* CAN WE WRITE HERE? Asked by trying, not by consulting a copy of the manifest.
+ * The app's authority is declared in notepp.ns, which the app cannot read (its
+ * namespace does not include /data/apps), and a second list of the same fact
+ * kept here would be a list that drifts. Creating a file and removing it again
+ * asks the kernel the real question and gets the real answer, including for a
+ * directory that is writable for a reason nobody wrote down.
+ *
+ * Once per directory listed, not once per entry: the point is which PLACES
+ * accept a save, and every entry in one directory shares that answer. */
+static int dir_writable(const char *dir) {
+    char probe[DOC_PATH_MAX + 24];
+    snprintf(probe, sizeof probe, "%s%s.notepp-probe", dir,
+             strcmp(dir, "/") ? "/" : "");
+    FILE *f = fopen(probe, "w");
+    if (!f) return 0;
+    fclose(f);
+    embk_unlink(probe);
+    return 1;
+}
 
 static void pick_scan(const char *dir) {
     snprintf(g_pick_dir, sizeof g_pick_dir, "%s", dir);
     int64_t n = embk_readdir(g_pick_dir, g_pick, PICK_MAX);
     g_pick_n = n < 0 ? 0 : (int)n;
+    g_pick_writable = dir_writable(g_pick_dir);
     g_pick_scroll = 0;
 }
 
@@ -856,6 +878,12 @@ static void app(void) {
                 Dialog(.width = 460, .spacing = 10, .padding = 18) {
                     HStack(.align = Center, .spacing = 8) {
                         Text(g_pick_dir).caption().secondary(); em_flush();
+                        /* Say it here, once, rather than letting a save find out
+                         * later: this is the question the picker exists to
+                         * answer. */
+                        Text(g_pick_writable ? "writable" : "read-only")
+                            .caption().color(g_pick_writable ? rgb(0xFF7FC98A) : rgb(0xFFD08A6A));
+                        em_flush();
                         Spacer();
                         if (Button("Close").ghost().font(Caption).py(2).clicked())
                             g_pick_open = 0;
@@ -884,9 +912,19 @@ static void app(void) {
                                 if (Button(lbl).ghost().font(Caption).py(3).leading()
                                         .color(isdir ? TAB_TEXT_ON : TAB_TEXT_OFF)
                                         .id(PK[i]).clicked()) {
+                                    /* Bounded on BOTH parts. A path assembled from
+                                     * a directory that is already near the cap plus
+                                     * a long name would otherwise be silently cut,
+                                     * and a truncated path is a different file. */
                                     char full[DOC_PATH_MAX];
-                                    snprintf(full, sizeof full, "%s%s%s", g_pick_dir,
-                                             strcmp(g_pick_dir, "/") ? "/" : "", g_pick[i].name);
+                                    int fn = snprintf(full, sizeof full, "%s%s%s", g_pick_dir,
+                                                      strcmp(g_pick_dir, "/") ? "/" : "",
+                                                      g_pick[i].name);
+                                    if (fn < 0 || fn >= (int)sizeof full) {
+                                        snprintf(g_msg, sizeof g_msg, "Path too long");
+                                        g_pick_open = 0;
+                                        break;
+                                    }
                                     if (isdir) pick_scan(full);
                                     else {
                                         snprintf(g_path_field, sizeof g_path_field, "%s", full);
