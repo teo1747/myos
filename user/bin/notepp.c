@@ -100,6 +100,7 @@ static float g_doc_top;           /* screen y of the first drawn line          *
 static float g_char_w;            /* one monospace advance, measured once      */
 static float g_gutter_w;          /* the number column, in pixels              */
 static int   g_dragging;          /* a selection drag is in progress           */
+static int   g_track_drag;        /* the scroll thumb is being dragged         */
 static int   g_confirm_close = -1;/* a modified document asking before it goes */
 static uint64_t g_last_click_ms;  /* for double / triple click                 */
 static int   g_click_streak;
@@ -722,10 +723,35 @@ static void document_view(float height) {
      * file is a control that says nothing and takes width to say it. */
     if (total > g_rows) {
         VStack(.spacing = EmZero, .align = Fill, .padding = EmZero,
-               .width = 8, .height = height, .background = C_EDITOR_BG,
+               .width = 10, .height = height, .background = C_EDITOR_BG,
                .key = "track") {
+            /* DRAGGABLE. A track that only reports the position is half a
+             * control: the thing it draws is exactly the thing you want to
+             * grab. The pointer's offset down the track maps straight to the
+             * first visible line, with the thumb's own height taken out of the
+             * range so the bottom of the travel is the bottom of the file
+             * rather than somewhere past it. */
+            struct instance_handle th = ui_open();
+            if (ui_is_active()) {
+                float px, py; ui_pointer_pos(&px, &py);
+                float span = height - thumb;
+                float rel  = (py - g_doc_top) - thumb * 0.5f;
+                if (rel < 0) rel = 0;
+                if (rel > span) rel = span;
+                int line = (span > 0.5f)
+                         ? (int)((rel / span) * (float)(total - g_rows) + 0.5f) : 0;
+                if (line < 0) line = 0;
+                if (line > total - g_rows) line = total - g_rows;
+                g_scroll = (float)line;
+                first = line;
+                above = (height - thumb) * (float)first / (float)(total - g_rows);
+                g_track_drag = 1;
+                em_request_frame();
+            } else g_track_drag = 0;
+            (void)th;
             if (above > 0) { VStack(.height = above, .key = "above") { } }
-            VStack(.height = thumb, .corner = 3, .background = C_GUTTER,
+            VStack(.height = thumb, .corner = 3,
+                   .background = g_track_drag ? C_GUTTER_CUR : C_GUTTER,
                    .key = "thumb") { }
             Spacer();
         }

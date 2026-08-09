@@ -112,8 +112,8 @@ missing, roughly in the order a user meets it:
       click is another thing QMP will not do); the rule is one branch and the
       engine's half is tested.
 - [x] ~~No scrollbar~~ -- a thin track beside the text, thumb sized to the
-      visible fraction, shown only when there is something to scroll. It does
-      not DRAG yet: it reports position, it does not set it.
+      visible fraction, shown only when there is something to scroll, and
+      DRAGGABLE -- the thumb brightens while held.
 - [ ] Undo cannot redo an insert (the pool stores removed text only), and undo
       is per-document only while that document is bound.
 - [ ] No column selection, no multiple carets, no folding, no minimap.
