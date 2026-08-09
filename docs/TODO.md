@@ -75,9 +75,10 @@ missing, roughly in the order a user meets it:
 - [x] ~~Ctrl+G hijacked the find box~~ -- it is its own dialog, showing the
       file's real line range, and it puts the line in the MIDDLE of the view
       rather than at the top.
-- [ ] The go-to and picker sheets dismiss on the FIRST click anywhere outside
-      them, with no debounce -- the launcher has one for exactly this reason.
-      Not yet a reported problem, but the same shape of bug.
+- [x] ~~The sheets dismissed on the first click outside them~~ -- all three
+      debounce now, the way the launcher already did. The unsaved-changes sheet
+      deliberately has no click-off dismiss at all: a question about losing
+      work should not be answerable by missing.
 - [x] ~~No auto-close, no comment toggle~~ -- an opener brings its partner and
       typing the closer steps over it; Ctrl+/ comments a block and uncomments
       it only when every line already is.

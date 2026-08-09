@@ -103,6 +103,12 @@ static int   g_dragging;          /* a selection drag is in progress           *
 static int   g_track_drag;        /* the scroll thumb is being dragged         */
 static int   g_goto_open;
 static char  g_goto_buf[16];
+/* Frames each sheet has been up. A modal must not honour a click-off on the
+ * frame it appears: the press that OPENED it is still being delivered, and a
+ * sheet that opens and shuts in the same gesture reads as a button that does
+ * nothing. The launcher learned this; these three inherited the bug instead. */
+static int   g_goto_frames, g_pick_frames, g_confirm_frames;
+#define SHEET_SETTLED 3
 static int   g_confirm_close = -1;/* a modified document asking before it goes */
 static uint64_t g_last_click_ms;  /* for double / triple click                 */
 static int   g_click_streak;
@@ -232,7 +238,7 @@ static void pick_begin(void) {
         if (slash != start) *slash = 0; else start[1] = 0;
     } else snprintf(start, sizeof start, "%s", (h && h[0]) ? h : "/");
     pick_scan(start);
-    g_pick_open = 1;
+    g_pick_open = 1;     g_pick_frames = 0;
 }
 
 /* ---- the session ---------------------------------------------------------
@@ -373,7 +379,7 @@ static int on_key(int ch) {
             case '/': { const char *tk = comment_tok(d_lang());
                         if (tk) ed_toggle_comment(&ED, tk);
                         scroll_to_caret(); return 1; }
-            case 'g': g_goto_open = 1; g_goto_buf[0] = 0; return 1;
+            case 'g': g_goto_open = 1; g_goto_buf[0] = 0; g_goto_frames = 0; return 1;
             case 'c': case 'x': {
                 char tmp[4096];
                 int n = ed_copy(&ED, tmp, sizeof tmp);
@@ -789,7 +795,7 @@ static void app(void) {
         /* ASK BEFORE LOSING EDITS. Closing a modified document used to just
          * take it, and that is the only item on this app's list that costs
          * something you cannot get back. */
-        if (doc_dirty(g_close)) { g_confirm_close = g_close; g_close = -1; }
+        if (doc_dirty(g_close)) { g_confirm_close = g_close; g_close = -1; g_confirm_frames = 0; }
         else { doc_close(g_close); g_close = -1; g_bound = -1; session_save(); }
     }
     bind_current();
@@ -902,6 +908,7 @@ static void app(void) {
          * for a number that nothing then read -- a prompt that lies about what
          * it will do with the answer is worse than no prompt. */
         if (g_goto_open) {
+            g_goto_frames++;
             Overlay() {
                 Dialog(.width = 300, .spacing = 12, .padding = 18) {
                     char cap[64];
@@ -928,10 +935,11 @@ static void app(void) {
                     }
                 }
             }
-            if (OverlayDismissed()) g_goto_open = 0;
+            if (g_goto_frames >= SHEET_SETTLED && OverlayDismissed()) g_goto_open = 0;
         }
 
         if (g_pick_open) {
+            g_pick_frames++;
             Overlay() {
                 Dialog(.width = 460, .spacing = 10, .padding = 18) {
                     HStack(.align = Center, .spacing = 8) {
@@ -996,12 +1004,13 @@ static void app(void) {
                     }
                 }
             }
-            if (OverlayDismissed()) g_pick_open = 0;
+            if (g_pick_frames >= SHEET_SETTLED && OverlayDismissed()) g_pick_open = 0;
         }
 
         /* The one question this app asks: a modified document is not closed out
          * from under the person who modified it. */
         if (g_confirm_close >= 0) {
+            g_confirm_frames++;
             Overlay() {
                 Dialog(.width = 380, .spacing = 14, .padding = 20) {
                     char q[96];
