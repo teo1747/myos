@@ -90,6 +90,10 @@ static char  g_find_buf[80], g_repl_buf[80];
 static float g_scroll;            /* first visible line                        */
 static int   g_rows = 20;         /* visible lines, recomputed from the window */
 static int   g_match = -1;        /* bracket matching the caret's, or -1       */
+static float g_doc_top;           /* screen y of the first drawn line          */
+static float g_char_w;            /* one monospace advance, measured once      */
+static float g_gutter_w;          /* the number column, in pixels              */
+static int   g_dragging;          /* a selection drag is in progress           */
 
 /* ---- files --------------------------------------------------------------- */
 
@@ -245,6 +249,29 @@ static int on_key(int ch) {
     return 1;
 }
 
+/* ---- pointer -> caret ---------------------------------------------------- *
+ * The whole reason em_text_width exists: turning a click into a position in
+ * the text needs the width of the text, and only the font knows it. Monospace
+ * makes the column arithmetic exact rather than a search -- one advance, one
+ * character -- which is another reason this editor is monospace. */
+
+static int offset_at_point(float px, float py) {
+    if (g_char_w <= 0.0f) return ED.cursor;
+    int line = (int)g_scroll + (int)((py - g_doc_top) / NOTE_LINE_H);
+    int last = ed_line_count(&ED) - 1;
+    if (line < 0) line = 0;
+    if (line > last) line = last;
+    int ls = ed_offset_of_line(&ED, line), le = ed_line_end(&ED, ls);
+    /* Round to the NEAREST gap between characters, not the one to the left:
+     * clicking the right half of a glyph must put the caret after it, which is
+     * the difference between a caret that lands where you pointed and one that
+     * is always one character early. */
+    int col = (int)(((px - g_gutter_w) / g_char_w) + 0.5f);
+    if (col < 0) col = 0;
+    if (ls + col > le) col = le - ls;
+    return ls + col;
+}
+
 /* ---- the document view --------------------------------------------------- */
 
 /* One line: gutter number, then the text as coloured spans, with the selection
@@ -355,9 +382,40 @@ static void document_view(float height) {
         off = le + 1;
     }
 
+    /* Measured once, from the font actually in use, rather than assumed. */
+    if (g_char_w <= 0.0f) {
+        g_char_w   = em_text_width("M", 15.0f);
+        g_gutter_w = em_text_width("    0 ", 15.0f);
+    }
+
     VStack(.spacing = EmZero, .align = Fill, .padding = EmZero,
            .background = C_EDITOR_BG, .corner = 8, .clip = 1,
            .height = height, .key = "doc") {
+        struct instance_handle self = ui_open();
+        /* THE WHEEL scrolls the view; the box only takes it while the pointer
+         * is over it, so a wheel meant for something else is left alone. */
+        float w = ui_take_wheel();
+        if (w != 0.0f) {
+            g_scroll -= w * 3.0f;
+            if (g_scroll < 0) g_scroll = 0;
+            if (g_scroll > (float)(total - 1)) g_scroll = (float)(total - 1);
+            first = (int)g_scroll;
+        }
+        /* CLICK places the caret, DRAG extends the selection. ui_is_active is
+         * true while the button is held on this box, which is exactly the span
+         * of a drag -- so press, move and release need no state of their own
+         * beyond remembering that one began. */
+        if (ui_is_active()) {
+            float px, py; ui_pointer_pos(&px, &py);
+            int at = offset_at_point(px, py);
+            if (!g_dragging) { g_dragging = 1; ED.anchor = ED.cursor = at; }
+            else             { ED.cursor = at; }
+            em_request_frame();
+        } else if (g_dragging) {
+            g_dragging = 0;
+        }
+        (void)self;
+        g_doc_top = em_viewport_height() - height - 26.0f;   /* the rows start here */
         for (int l = first; l < total && l < first + g_rows; l++) {
             int ls = off;
             int le = ed_line_end(&ED, ls);

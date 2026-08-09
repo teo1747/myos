@@ -25,51 +25,35 @@ left to do.
       and needs care: the bar's window GROWS to 792x340 for its dropdowns, so
       naively it covers the launcher instead.
 
-## Note++ -- the OS's own editor (started)
+## Note++ -- the OS's own editor
 
-Foundations in, app shell next:
-- [x] `user/note/syntax.{c,h}` -- per-line highlighter for C, Python, JS,
-      shell and Markdown, with the block-comment/string state carried between
-      lines so scrolling a long file stays linear. 33 host tests.
-- [x] C's keywords GENERATED from EmbCC's lexer (tools/mkkeywords.py), so the
-      editor and the compiler cannot disagree about what C is. The lexing is
-      deliberately not shared -- see that file for why.
-- [x] Toolkit: `em_editor_syntax()` colours the editor's lines, and
-      `em_editor_gutter()` draws line numbers inside it so they scroll in step.
-- [ ] `user/note/doc.{c,h}` -- the open-documents model: path, buffer, cursor,
-      dirty flag, language. One per tab.
-- [ ] `user/bin/notepp.c` -- the app: own chrome (tab strip + toolbar, the
-      shape Vellum now uses), Open/Save against EMBKFS, status bar with
-      line:col and language. Monospace throughout, the way term.c picks
-      /system/fonts/mono.ttf.
-- [ ] 🐛 **THE SECOND LINE DOES NOT DRAW.** Type a line, press Return, type
-      another: the buffer is right and the screen is not. Evidence gathered,
-      so the next person does not repeat it:
-        * the text IS there -- after typing two lines the editor reports
-          `focus=1 len=22 cur=22`, exactly the bytes typed, cursor at the end;
-        * focus is held throughout, so no input is being lost;
-        * the draw loop is correct by inspection -- walked by hand against that
-          buffer it makes three te_draw_line calls, for "int x = 42;",
-          "return 0;" and the empty line holding the caret;
-        * only the first appears on screen.
-      So it is neither input nor drawing but the declare layer's handling of a
-      child list that GROWS -- the same family as the DragHandle key and the
-      document key, one level down. It reproduces in the pre-existing
-      user/bin/edit.c too, so it predates Note++ and means the toolkit's
-      multi-line editor has never actually accepted a second line.
-      Tried and did NOT fix it: making the line rows positional instead of
-      keyed by line number (that keying is wrong anyway -- inserting a line
-      renumbers every line below it -- but it is not this bug, and the change
-      was reverted rather than shipped unverified).
-- [ ] Launching from the LAUNCHER cannot be driven under QMP here (synthesized
-      clicks do not open the grid), so that path is verified by reading the
-      authority rules, not by running it. Every earlier check launched the app
-      from the Terminal -- which inherits the full session and never reads a
-      manifest, i.e. exactly the path that bypasses the thing being tested.
-      Any future app needs its FIRST launch tested from the launcher.
-- [ ] Find/replace, and undo. Neither exists yet in the toolkit's editor.
-- [ ] The editor caps a drawn line at 512 bytes; a longer line is clipped
-      rather than wrapped or scrolled horizontally.
+Working and verified on the metal: multi-file tabs, line numbers, syntax
+colouring for C/Python/JS/shell/Markdown, auto-indent, current-line highlight,
+undo, select-all, CLICK TO PLACE THE CARET and DRAG TO SELECT, wheel scrolling,
+find/replace, the shortcut set (Ctrl+S/N/O/W/A/Z/Y/F/H/D/L, Ctrl+arrows), and a
+status bar tracking line, column, selection size and language. The engine
+(user/note/edit.c) has 45 host tests; `make edit-test`.
+
+Honest score from the person using it: 0.1/10 -- a base, not an editor. What is
+missing, roughly in the order a user meets it:
+
+- [ ] No horizontal scrolling. A line longer than the window is clipped, and
+      the draw caps at 512 bytes per line besides.
+- [ ] No word wrap.
+- [ ] Find shows no match count and does not highlight the other matches.
+- [ ] Ctrl+G (go to line) opens the find box and asks for a number instead of
+      being its own thing.
+- [ ] No auto-close for brackets and quotes; no comment toggle (Ctrl+/).
+- [ ] No prompt when closing a modified file -- it just goes.
+- [ ] No shift-click to extend, no double-click for a word, no triple-click for
+      a line.
+- [ ] No scrollbar; the only indication of position is the line number.
+- [ ] Undo cannot redo an insert (the pool stores removed text only), and undo
+      is per-document only while that document is bound.
+- [ ] No column selection, no multiple carets, no folding, no minimap.
+- [ ] The tab bar does not scroll and caps at 8 documents.
+- [ ] Nothing is remembered between runs: no session, no recent files, no
+      per-file cursor position.
 
 ## The JavaScript gap -- it is the PLATFORM, not the engine
 

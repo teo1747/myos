@@ -741,6 +741,15 @@ int  em_take_frame_request(void);   /* runtime-internal: read-and-clear */
  * palette (Auto currently = Dark). */
 void em_res_set_loader(uint8_t *(*load)(const char *path, size_t *out_len));
 uint32_t em_font(const char *path);
+
+/* The pixel width of `s` in the app's regular face at `size_px`, measured the
+ * way the renderer draws it -- by codepoint, not by byte, which for anything
+ * non-ASCII is a different and much larger number.
+ *
+ * For a caller that has to map pixels back to characters: an editor turning a
+ * click into a caret position cannot do it without knowing how wide the text
+ * is, and nothing else in the toolkit will tell it. */
+float em_text_width(const char *s, float size_px);
 const uint32_t *em_image(const char *path, uint32_t *out_w, uint32_t *out_h);
 /* Icon resolved at the size it will be DRAWN: a .eic container (docs/ICONS.md)
  * carries the icon at several resolutions and this returns the level that fits
