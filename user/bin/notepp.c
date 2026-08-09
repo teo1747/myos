@@ -103,6 +103,10 @@ static int   g_confirm_close = -1;/* a modified document asking before it goes *
 static uint64_t g_last_click_ms;  /* for double / triple click                 */
 static int   g_click_streak;
 static int   g_last_click_off = -1;
+/* Set by whichever ROW was clicked this frame. The click lands on the row, not
+ * on the container around it, so asking the container whether it was clicked
+ * never fired -- and multi-click never counted past one. */
+static int   g_row_clicked;
 
 /* ---- files --------------------------------------------------------------- */
 
@@ -371,8 +375,9 @@ static void draw_line(int line, int ls, int le, int syn_state_in, enum syn_lang 
      * between every line of it. This is also the number the scroller and
      * PgUp/PgDn count in, so it is stated once, here. */
     HStack(.spacing = EmZero, .align = Center, .px = EmZero, .py = EmZero,
-           .height = NOTE_LINE_H,
+           .height = NOTE_LINE_H, .minh = NOTE_LINE_H, .maxh = NOTE_LINE_H,
            .background = (line == cur_line) ? C_CURLINE : rgb(0)) {
+        if (ui_consume_click(ui_open())) g_row_clicked = 1;
         /* EVERY Text IS FLUSHED IMMEDIATELY, and that is not a style choice.
          * The DSL STAGES a leaf and emits it on the next one, so a Text() given
          * a stack buffer keeps a POINTER to it -- and the next loop iteration
@@ -483,7 +488,6 @@ static void document_view(float height) {
     VStack(.spacing = EmZero, .align = Fill, .padding = EmZero,
            .background = C_EDITOR_BG, .corner = 8, .clip = 1,
            .height = height, .key = "doc") {
-        struct instance_handle self = ui_open();
         /* THE WHEEL scrolls the view; the box only takes it while the pointer
          * is over it, so a wheel meant for something else is left alone. */
         float w = ui_take_wheel();
@@ -497,31 +501,38 @@ static void document_view(float height) {
          * true while the button is held on this box, which is exactly the span
          * of a drag -- so press, move and release need no state of their own
          * beyond remembering that one began. */
-        if (ui_is_active()) {
-            float px, py; ui_pointer_pos(&px, &py);
-            int at = offset_at_point(px, py);
-            if (!g_dragging) {
-                g_dragging = 1;
-                /* One press places the caret, two select the word, three the
-                 * line -- counted by TIME AND PLACE together, so a slow second
-                 * click elsewhere is a new selection rather than a word. */
-                uint64_t now = embk_uptime_ms();
-                int near = (g_last_click_off >= 0 && at >= g_last_click_off - 1
-                                                  && at <= g_last_click_off + 1);
-                g_click_streak = (near && now - g_last_click_ms < 500) ? g_click_streak + 1 : 1;
-                g_last_click_ms = now;
-                g_last_click_off = at;
-                if (g_click_streak >= 3)      ed_select_line(&ED, at);
-                else if (g_click_streak == 2) ed_select_word(&ED, at);
-                else                          ED.anchor = ED.cursor = at;
-            } else if (g_click_streak == 1) {
-                ED.cursor = at;                 /* a drag only extends a plain click */
-            }
-            em_request_frame();
-        } else if (g_dragging) {
-            g_dragging = 0;
-        }
-        (void)self;
+        { float px, py; ui_pointer_pos(&px, &py);
+          int at = offset_at_point(px, py);
+
+          /* DRAGGING is sampled -- it is a state, true for as long as the
+           * button is down on this box. */
+          if (ui_is_active()) {
+              if (!g_dragging) { g_dragging = 1; ED.anchor = ED.cursor = at; }
+              else if (g_click_streak <= 1) ED.cursor = at;
+              em_request_frame();
+          } else if (g_dragging) {
+              g_dragging = 0;
+          }
+
+          /* COUNTING CLICKS is an EDGE, and must not be sampled. Counting them
+           * from ui_is_active meant asking "is the button down?" once a frame,
+           * and under TCG a whole press and release can happen between two
+           * frames -- so a real triple-click was seen as one press and only
+           * ever placed the caret. ui_consume_click fires once per completed
+           * click however the frames fall. */
+          if (g_row_clicked) {
+              g_row_clicked = 0;
+              uint64_t now = embk_uptime_ms();
+              int near = (g_last_click_off >= 0 && at >= g_last_click_off - 1
+                                                && at <= g_last_click_off + 1);
+              g_click_streak = (near && now - g_last_click_ms < 500)
+                             ? g_click_streak + 1 : 1;
+              g_last_click_ms = now;
+              g_last_click_off = at;
+              if (g_click_streak >= 3)      ed_select_line(&ED, at);
+              else if (g_click_streak == 2) ed_select_word(&ED, at);
+              em_request_frame();
+          } }
         g_doc_top = em_viewport_height() - height - 26.0f;   /* the rows start here */
         for (int l = first; l < total && l < first + g_rows; l++) {
             int ls = off;

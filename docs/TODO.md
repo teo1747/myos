@@ -35,7 +35,9 @@ left to do.
 - [x] ~~Pasting flattened newlines to spaces~~ -- correct for a terminal, wrong
       here. The key hook gets first refusal on 0x16 so an editor can take the
       clipboard raw.
-- [x] ~~Uneven line spacing over the first few lines~~ -- EmProps' EmZero
+- [x] ~~Uneven line spacing over the first few lines~~ (twice: the EmZero fix
+      was necessary and not sufficient -- rows also needed min == max == the
+      line height, because a stated height alone was not being honoured) -- EmProps' EmZero
       ("explicitly zero") was tested with `> 0` everywhere in em_apply_box and
       thrown away with the unset values, so asking for no padding got the
       default padding. It is honoured now, which fixes it for every app.
@@ -70,10 +72,17 @@ missing, roughly in the order a user meets it:
 - [ ] 🐛 That confirm sheet draws in the TOP-LEFT instead of centred, over the
       tab bar. Dialog inside Window() is not being centred by its overlay; it
       works and it looks broken.
-- [x] ~~No double-click for a word, no triple-click for a line~~ -- both in,
-      counted by time AND place so a slow second click elsewhere is a new
-      selection. (Not confirmed on hardware: QMP cannot click fast enough to
-      make a double-click; the engine's half is covered by tests.)
+- [ ] 🐛 DOUBLE AND TRIPLE CLICK DO NOT COUNT. The engine's half works and is
+      tested (ed_select_word / ed_select_line); the app never reaches them
+      because it cannot tell a second click from a first. Two attempts, both
+      wrong and both worth knowing:
+        * sampling ui_is_active() once a frame -- under TCG a whole press and
+          release falls between two frames, so three clicks look like one;
+        * ui_consume_click() on the document container -- the click lands on
+          the ROW, not the container, so it never fires there;
+        * ui_consume_click() on the row itself -- also does not fire, and that
+          is where the next attempt should start: find out what instance the
+          click IS being attributed to before writing more code.
 - [ ] Still no shift-click to extend a selection.
 - [ ] No scrollbar; the only indication of position is the line number.
 - [ ] Undo cannot redo an insert (the pool stores removed text only), and undo
