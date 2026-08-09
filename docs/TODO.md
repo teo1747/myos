@@ -122,10 +122,12 @@ missing, roughly in the order a user meets it:
       one was in front, and the caret in each, in $HOME/.notepp-session. A flat
       text file on purpose: it is a list of paths, and a format nobody can read
       is one nobody can fix.
-- [ ] The editor can only write under $HOME -- notepp.ns grants `rw $HOME` and
-      nothing else, so a save to /data is refused. That is correct and the
-      status bar says so, but there is no file PICKER, so the only way to learn
-      it is to try.
+- [x] ~~No file picker~~ -- Browse lists the directory, folders bright and
+      files dimmed, `..` to go up, click a file to open it. It starts where the
+      current file lives, else at $HOME.
+- [ ] The picker cannot CREATE a file or a directory, and it does not mark
+      which subtrees are writable -- $HOME is, /system is not, and you still
+      find that out by trying to save.
 
 ## The JavaScript gap -- it is the PLATFORM, not the engine
 

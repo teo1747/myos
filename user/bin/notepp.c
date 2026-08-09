@@ -175,6 +175,41 @@ static enum syn_lang d_lang(void) {
     return d ? d->lang : SYN_PLAIN;
 }
 
+/* ---- the file picker -----------------------------------------------------
+ * A path field alone means the only way to find out where you may write is to
+ * type somewhere and read the error. This app can name exactly two subtrees --
+ * $HOME to read and write, /system to read (notepp.ns) -- and a list is a far
+ * better way to say that than a refusal after the fact. */
+#define PICK_MAX 64
+static int  g_pick_open;
+static char g_pick_dir[DOC_PATH_MAX];
+static struct embk_dirent g_pick[PICK_MAX];
+static int  g_pick_n;
+static float g_pick_scroll;
+
+static void pick_scan(const char *dir) {
+    snprintf(g_pick_dir, sizeof g_pick_dir, "%s", dir);
+    int64_t n = embk_readdir(g_pick_dir, g_pick, PICK_MAX);
+    g_pick_n = n < 0 ? 0 : (int)n;
+    g_pick_scroll = 0;
+}
+
+static void pick_begin(void) {
+    const char *h = getenv("HOME");
+    /* Start where the caret's file lives, else at home -- the two places a
+     * person is most likely to mean. */
+    struct doc *d = doc_cur();
+    char start[DOC_PATH_MAX];
+    if (d && d->path[0]) {
+        snprintf(start, sizeof start, "%s", d->path);
+        char *slash = start;
+        for (char *q = start; *q; q++) if (*q == '/') slash = q;
+        if (slash != start) *slash = 0; else start[1] = 0;
+    } else snprintf(start, sizeof start, "%s", (h && h[0]) ? h : "/");
+    pick_scan(start);
+    g_pick_open = 1;
+}
+
 /* ---- the session ---------------------------------------------------------
  * Which files were open, and where the caret was in each. Reopening an editor
  * to an empty Untitled after it was full of work is the friction you meet
@@ -755,6 +790,7 @@ static void app(void) {
             if (TextField(g_path_field, sizeof g_path_field, "Path to open or save as").submitted())
                 g_want_open = 1;
             if (Button("Open").ghost().font(Caption).py(2).clicked()) g_want_open = 1;
+            if (Button("Browse").ghost().font(Caption).py(2).clicked()) pick_begin();
             if (Button("Save").primary().font(Caption).py(2).clicked()) {
                 if (d && strcmp(d->path, g_path_field)) {
                     snprintf(d->path, sizeof d->path, "%s", g_path_field);
@@ -814,6 +850,58 @@ static void app(void) {
         Divider("editsep");
 
         document_view(em_viewport_height() - chrome);
+
+        if (g_pick_open) {
+            Overlay() {
+                Dialog(.width = 460, .spacing = 10, .padding = 18) {
+                    HStack(.align = Center, .spacing = 8) {
+                        Text(g_pick_dir).caption().secondary(); em_flush();
+                        Spacer();
+                        if (Button("Close").ghost().font(Caption).py(2).clicked())
+                            g_pick_open = 0;
+                    }
+                    ScrollView(&g_pick_scroll, 300, .key = "picklist") {
+                        VStack(.spacing = 2, .align = Fill) {
+                            /* Up first, always -- a picker you cannot leave is a
+                             * trap, and the root has no parent to offer. */
+                            if (strcmp(g_pick_dir, "/") != 0 &&
+                                Button("..").ghost().font(Caption).py(3).leading()
+                                    .id("pkup").clicked()) {
+                                char up[DOC_PATH_MAX];
+                                snprintf(up, sizeof up, "%s", g_pick_dir);
+                                char *slash = up;
+                                for (char *q = up; *q; q++) if (*q == '/') slash = q;
+                                if (slash == up) up[1] = 0; else *slash = 0;
+                                pick_scan(up[0] ? up : "/");
+                            }
+                            static const char *PK[PICK_MAX];
+                            for (int i = 0; i < g_pick_n; i++) {
+                                if (g_pick[i].name[0] == '.') continue;
+                                int isdir = (g_pick[i].type == EMBK_DT_DIR);
+                                char lbl[160];
+                                snprintf(lbl, sizeof lbl, "%.150s%s", g_pick[i].name, isdir ? "/" : "");
+                                PK[i] = g_pick[i].name;
+                                if (Button(lbl).ghost().font(Caption).py(3).leading()
+                                        .color(isdir ? TAB_TEXT_ON : TAB_TEXT_OFF)
+                                        .id(PK[i]).clicked()) {
+                                    char full[DOC_PATH_MAX];
+                                    snprintf(full, sizeof full, "%s%s%s", g_pick_dir,
+                                             strcmp(g_pick_dir, "/") ? "/" : "", g_pick[i].name);
+                                    if (isdir) pick_scan(full);
+                                    else {
+                                        snprintf(g_path_field, sizeof g_path_field, "%s", full);
+                                        g_want_open = 1;
+                                        g_pick_open = 0;
+                                    }
+                                    break;      /* the list just changed under us */
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (OverlayDismissed()) g_pick_open = 0;
+        }
 
         /* The one question this app asks: a modified document is not closed out
          * from under the person who modified it. */
