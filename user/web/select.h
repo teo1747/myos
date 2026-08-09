@@ -44,6 +44,11 @@ int  vsel_clear(void);
 /* Is anything selected? */
 int  vsel_active(void);
 
+/* True when the document had more text runs than the index can hold, so the
+ * tail is neither selectable nor copyable. A caller that reports a copy as
+ * complete must ask. */
+int  vsel_overflowed(void);
+
 /* Write the selected text into `out`. Returns the number of bytes written, or
  * 0 if nothing was selected. Words are joined by spaces and rows by newlines,
  * so a copied paragraph pastes as a paragraph.

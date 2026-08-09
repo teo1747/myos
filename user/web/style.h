@@ -16,6 +16,13 @@
 
 enum {
     VD_INLINE = 0, VD_BLOCK, VD_LIST_ITEM, VD_NONE,
+    /* A BOX that flows with the text. `display: inline-block` was folded into
+     * VD_INLINE, which threw the box away with it: its padding, width, height
+     * and background all stopped existing, and a row of nav links written as
+     * inline-blocks welded into one word -- google.com's "GmailImages". It is
+     * neither of the two it was being made into: a block would take the whole
+     * line, an inline has no box at all. */
+    VD_INLINE_BLOCK,
     /* A REPLACED element: its content is not markup but a picture. Named in
      * the display enum rather than sniffed by tag in the renderer, because
      * render.c's rule is that it reads this struct and never a tag -- and the
@@ -39,7 +46,15 @@ enum {
     VD_FLEX, VD_GRID,
 };
 /* justify-content / align-items, in the small set that decides real layouts. */
-enum { VJ_START = 0, VJ_CENTER, VJ_END, VJ_BETWEEN, VJ_STRETCH };
+enum { VJ_START = 0, VJ_CENTER, VJ_END, VJ_BETWEEN, VJ_STRETCH,
+       /* AROUND and EVENLY used to fall back to BETWEEN, which pins the first
+        * and last items to the container's edges -- the one thing neither
+        * keyword means. The layout engine distinguishes them now, so this can
+        * too. */
+       VJ_AROUND, VJ_EVENLY,
+       /* align-self only: "no override, use the container's align-items".
+        * Must not be 0, because 0 is a real value (flex-start). */
+       VJ_AUTO = 15 };
 /* position. STATIC is the default and means "wherever the flow puts it".
  * FIXED is treated as ABSOLUTE against the nearest positioned ancestor rather
  * than the viewport -- an honest approximation, and the difference only shows
@@ -47,7 +62,10 @@ enum { VJ_START = 0, VJ_CENTER, VJ_END, VJ_BETWEEN, VJ_STRETCH };
 enum { VP_STATIC = 0, VP_RELATIVE, VP_ABSOLUTE, VP_FIXED };
 /* float / clear. */
 enum { VF_NONE = 0, VF_LEFT, VF_RIGHT };
-enum { VM_NONE = 0, VM_BULLET, VM_DECIMAL };
+/* list-style-type. 0 is UNSET, not `none`: the two must be distinguishable or
+ * `ul { list-style: none }` reads as "nobody said", and the item's own default
+ * puts the bullet straight back. */
+enum { VM_UNSET = 0, VM_BULLET, VM_DECIMAL, VM_NONE };
 /* text-align. Justify is accepted and treated as left: a justified paragraph
  * needs inter-word stretching the line breaker does not do, and silently
  * left-aligning is what every browser did before it could justify. */
@@ -112,6 +130,14 @@ struct vstyle {
      * comment exists; read one without the other and you get a sidebar layout
      * that is exactly one sidebar too wide. */
     unsigned char width_pct, height_pct;
+    /* max-width, in px. ITS OWN FIELD, because it was written into `width`
+     * above and that channel was already taken: `.w-100 { width: 100% }`
+     * followed by `.mw9-l { max-width: 96rem }` left width_pct 100 AND width
+     * 1536, which the calc() overload reads as "100% PLUS 1536px". rust-lang's
+     * header came out 2592px wide inside a 1056px page, and everything under
+     * it inherited the mistake. A cap and a size are different statements.
+     * min-width has no field yet -- see docs/TODO.md. */
+    short         max_width;
     /* box-sizing: border-box. Nearly every modern stylesheet sets this
      * globally, and without it a box with padding and a stated width is wider
      * than the author asked for -- which on a grid of cards is the difference
@@ -133,10 +159,22 @@ struct vstyle {
     unsigned char flex_col;      /* flex-direction: column                 */
     unsigned char flex_wrap;     /* flex-wrap: wrap                        */
     unsigned char grid_cols;     /* display:grid track count, 0 = not one  */
-    short         gap;           /* gap / row-gap / column-gap, px         */
-    /* flex-grow on THIS element -- a child property, read where the child is
-     * emitted rather than by its parent, which is how the toolkit spells it. */
-    unsigned char grow;
+    short         gap;           /* row-gap: BETWEEN LINES of a wrapping row */
+    short         col_gap;       /* column-gap: between items. -1 = same as gap */
+    unsigned char align_self;    /* VJ_* on THIS element; VJ_AUTO = inherit  */
+    /* --- the three flex-item properties, on THIS element. Read where the
+     * child is emitted rather than by its parent, which is how the toolkit
+     * spells it.
+     *
+     * `grow` was a FLAG, so `flex: 2` and `flex: 1` produced identical boxes
+     * and every two-to-one split on the web came out fifty-fifty. It is the
+     * actual weight now. `basis` is the size the item starts at before any of
+     * the leftover is handed out -- `flex: 0 0 240px` is a 240px sidebar and
+     * was previously a box sized by its text. */
+    unsigned char grow;          /* flex-grow weight, 0 = does not grow      */
+    unsigned char shrink;        /* flex-shrink weight; 1 is CSS's default   */
+    short         basis;         /* flex-basis in px; -1 = auto (not stated) */
+    short         order;         /* flex `order`; items sort by it, then DOM */
 
     /* --- position / overflow. Box properties; not inherited. ------------- */
     unsigned char position;      /* VP_*                                   */

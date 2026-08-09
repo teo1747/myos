@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "html.h"
+#include "charset.h"
+#include "svg.h"
 #include "url.h"
 #include "style.h"
 #include "css.h"
@@ -101,6 +103,48 @@ static void t3_void_and_attrs(void) {
     CHECK(!strcmp(buf, "link"), "anchor text");
     /* a void element must not swallow what follows it */
     CHECK(find(D.nodes[find(r,"br")].first_child, "a") < 0, "br has no children");
+
+    /* XHTML-STYLE `/>`, which is how every React-rendered page and every
+     * inline <svg> writes a void element. The attribute scan stops ON the
+     * slash, so reading the tag's end from the character before it saw a space
+     * and stepped past the SLASH -- leaving the `>` in the stream as a TEXT
+     * NODE. A stray `>` was drawn next to every input, image and icon on every
+     * real page; Brave's search results were more angle brackets than text. */
+    r = parse("<p>A<input type=\"text\" />B<br/>C<img src=\"/p.png\" />D</p>");
+    char sc[64] = {0};
+    gather(find(r, "p"), sc, sizeof sc);
+    CHECK(!strchr(sc, '>'), "`/>` leaks no stray bracket into the text");
+    CHECK(!strcmp(sc, "ABCD"), "...and nothing else is lost with it");
+    CHECK(count(r, "input") == 1 && count(r, "br") == 1 && count(r, "img") == 1,
+          "the self-closed elements are still there");
+    /* ...and a slash INSIDE a quoted value is not an end tag */
+    r = parse("<p><a href=\"/a/b/\">t</a></p>");
+    char q[32] = {0};
+    gather(find(r, "p"), q, sizeof q);
+    CHECK(!strcmp(q, "t"), "a slash inside a quoted attribute is just a slash");
+}
+
+/* A <script> that is not JavaScript is DATA the page is storing, not code it
+ * wants run. JSON-LD is on bbc, Wikipedia and craigslist alike, and running it
+ * threw a SyntaxError on its first colon -- which then counted as "the page's
+ * scripts threw" and hid whatever the real ones did. */
+static void t3b_script_types(void) {
+    printf("T3b <script type> decides whether it runs:\n");
+    int r = parse("<script>var a=1</script>"
+                  "<script type=\"application/ld+json\">{\"@context\":\"x\"}</script>"
+                  "<script type=\"text/template\"><div>t</div></script>"
+                  "<script type=\"text/javascript\">var b=2</script>"
+                  "<script type=\"module\">var c=3</script>"
+                  "<script type=\"application/javascript; charset=utf-8\">var d=4</script>");
+    (void)r;
+    CHECK(D.n_js == 4, "only the four JavaScript blocks are kept");
+    int json = 0, tpl = 0;
+    for (int i = 0; i < D.n_js; i++) {
+        if (strstr(D.js[i], "@context")) json = 1;
+        if (strstr(D.js[i], "<div>t</div>")) tpl = 1;
+    }
+    CHECK(!json, "JSON-LD is not handed to the interpreter");
+    CHECK(!tpl,  "a template block is not either");
 }
 
 static void t4_entities(void) {
@@ -457,7 +501,7 @@ static void t17_bounded(void) {
     CHECK(css_sel_parse(deep, strlen(deep), &sel) == 0, "an over-long selector still parses");
     CHECK(sel.n == CSS_SEL_PARTS, "...filling the parts it has");
     CHECK(!strcmp(sel.part[sel.n - 1].tag, "span") &&
-          !strcmp(sel.part[sel.n - 1].klass, "leaf"),
+          !strcmp(sel.part[sel.n - 1].klass[0], "leaf"),
           "...and the SUBJECT is the last compound, not the first");
     CHECK(sel.part[0].comb == CSS_COMB_DESC,
           "the outermost kept compound is a descendant: its real ancestor is gone");
@@ -544,12 +588,18 @@ static void t17b_image_sizing(void) {
     vstyle_for_node(&CD, i0, &root, &sh, &v);
     CHECK(v.width == 100 && v.height == 50, "CSS width/height beat the attributes");
 
+    /* A CAP IS NOT A SIZE, and it used to be written into the same field.
+     * `width: 100%` stores width_pct=100 with `width` as the calc "+px" term,
+     * so a following max-width landed there and made the box 100% PLUS the
+     * cap -- rust-lang.org's header came out 2592px wide inside 1056px. The
+     * two must survive on the same element without touching each other. */
     memset(&v, 0, sizeof v);
     css_apply_decls("max-width: 200px", strlen("max-width: 200px"), &v);
-    CHECK(v.width == 200, "max-width caps the box");
-    v.width = 120;
-    css_apply_decls("max-width: 400px", strlen("max-width: 400px"), &v);
-    CHECK(v.width == 120, "...but never widens one that is already narrower");
+    CHECK(v.max_width == 200 && v.width == 0, "max-width is a cap, not a width");
+    memset(&v, 0, sizeof v);
+    css_apply_decls("width: 100%; max-width: 64rem", strlen("width: 100%; max-width: 64rem"), &v);
+    CHECK(v.width_pct == 100 && v.width == 0 && v.max_width == 1024,
+          "width:100% and max-width coexist without summing");
 
     memset(&v, 0, sizeof v);
     css_apply_decls("width: 50%", strlen("width: 50%"), &v);
@@ -1024,9 +1074,190 @@ static void t24_tabs(void) {
     CHECK(tab_count() == TAB_MAX, "tabs are capped, and opening past the cap refuses");
 }
 
+
+/* ---- T25: what encoding the bytes are in ------------------------------- *
+ * google.com serves this browser `Content-Type: charset=ISO-8859-1` -- and a
+ * `<meta charset=utf-8>` -- over Latin-1 bytes. Read as UTF-8, every accent is
+ * an invalid sequence and comes out as one replacement character, which looks
+ * like a missing glyph and is nothing of the kind. */
+static void t25_charset(void) {
+    printf("T25 character encoding:\n");
+    char cs[32];
+
+    CHECK(charset_from_content_type("text/html; charset=ISO-8859-1", cs, sizeof cs) &&
+          !strcmp(cs, "iso-8859-1"), "charset read from a Content-Type, lowercased");
+    CHECK(charset_from_content_type("text/html", cs, sizeof cs) == 0,
+          "...and absent when the header does not say");
+    CHECK(charset_from_meta("<html><head><meta charset=\"windows-1252\"></head>", 48,
+                            cs, sizeof cs) && !strcmp(cs, "windows-1252"),
+          "charset read from <meta charset>");
+    {   /* strlen, not a hand-counted length -- the scan needs the closing '>'
+         * and a short count cut the declaration in half. */
+        const char *eq = "<html><head><meta http-equiv=\"Content-Type\" "
+                         "content=\"text/html; charset=iso-8859-1\">";
+        CHECK(charset_from_meta(eq, strlen(eq), cs, sizeof cs) &&
+              !strcmp(cs, "iso-8859-1"), "...and from the http-equiv spelling");
+    }
+    /* A charset= inside a URL is not a declaration about the document. */
+    CHECK(charset_from_meta("<html><body><a href=\"/x?charset=big5\">t</a>", 43,
+                            cs, sizeof cs) == 0,
+          "a charset= outside a <meta> does not answer for the document");
+
+    CHECK(charset_needs_transcode("iso-8859-1") && charset_needs_transcode("windows-1252"),
+          "the single-byte encodings that matter are recognised");
+    CHECK(!charset_needs_transcode("utf-8") && !charset_needs_transcode("shift_jis"),
+          "UTF-8 needs nothing, and an encoding we cannot do is left alone");
+
+    /* THE CONVERSION. 0xE9 is e-acute in Latin-1 and an invalid lead byte in
+     * UTF-8; 0x93/0x94 are windows-1252 smart quotes where ISO-8859-1 has C1
+     * controls, and browsers decode them as the quotes. */
+    char buf[64];
+    memcpy(buf, "Confidentialit\xE9!", 17);
+    size_t n = charset_1252_to_utf8(buf, 16, sizeof buf);
+    CHECK(n == 17 && !memcmp(buf, "Confidentialit\xC3\xA9!", 17),
+          "Latin-1 e-acute becomes UTF-8 e-acute");
+    memcpy(buf, "a\x93q\x94z", 6);
+    n = charset_1252_to_utf8(buf, 5, sizeof buf);
+    /* 1 + 3 + 1 + 3 + 1: each smart quote is a three-byte UTF-8 sequence. */
+    CHECK(n == 9 && !memcmp(buf, "a\xE2\x80\x9Cq\xE2\x80\x9Dz", 9),
+          "the C1 range decodes as windows-1252 smart quotes, not controls");
+    memcpy(buf, "plain ascii", 12);
+    n = charset_1252_to_utf8(buf, 11, sizeof buf);
+    CHECK(n == 11 && !strcmp(buf, "plain ascii"), "ASCII is unchanged");
+    /* A result that will not fit must leave the buffer ALONE, not half-convert
+     * it -- half a conversion is a document unreadable in a brand new way. */
+    memcpy(buf, "\xE9\xE9\xE9", 4);
+    CHECK(charset_1252_to_utf8(buf, 3, 4) == 0 && (unsigned char)buf[0] == 0xE9,
+          "a conversion that would not fit changes nothing");
+
+    CHECK(charset_valid_utf8("caf\xC3\xA9", 5), "valid UTF-8 is recognised");
+    /* Mid-string, because a sequence cut off at the very END is inconclusive
+     * rather than invalid -- see charset.c: our own fetch truncates, and a
+     * good UTF-8 page cut through a character must not be read as Latin-1. */
+    CHECK(!charset_valid_utf8("caf\xE9 au lait", 12), "a lone Latin-1 byte is not UTF-8");
+    CHECK(charset_valid_utf8("caf\xE9", 4),
+          "...but one cut off by the end of the buffer is not judged");
+    /* The policy: the bytes win over a declaration they contradict. */
+    CHECK(charset_should_transcode("utf-8", "caf\xE9 au lait", 12),
+          "a page that declares UTF-8 and is not UTF-8 is read as 1252");
+    CHECK(!charset_should_transcode("utf-8", "caf\xC3\xA9", 5),
+          "...and a page that declares UTF-8 and IS UTF-8 is left alone");
+}
+
+
+/* ---- T26: SVG, the pictures that are described rather than sampled ------ *
+ * Coverage is asserted by SAMPLING the rendered alpha, because that is the
+ * only thing that proves a path was followed: a renderer can parse a document
+ * perfectly and paint nothing. */
+static uint32_t g_svgpx[64 * 64];
+static uint8_t  g_svgscratch[512 * 1024];
+
+static int svg_alpha(const char *doc, int w, int h, int x, int y) {
+    if (svg_render((const uint8_t *)doc, strlen(doc), g_svgpx, sizeof g_svgpx,
+                   g_svgscratch, sizeof g_svgscratch,
+                   (uint32_t)w, (uint32_t)h, 0xFF000000u) != 0) return -1;
+    return (int)((g_svgpx[y * w + x] >> 24) & 0xFF);
+}
+
+static void t26_svg(void) {
+    printf("T26 SVG:\n");
+    uint32_t w = 0, h = 0;
+    CHECK(svg_probe((const uint8_t *)"<svg width='24' height='16'></svg>", 34, &w, &h) == 0
+          && w == 24 && h == 16, "width/height read from the root");
+    w = h = 0;
+    CHECK(svg_probe((const uint8_t *)"<svg viewBox='0 0 32 12'></svg>", 31, &w, &h) == 0
+          && w == 32 && h == 12, "...and from the viewBox when they are absent");
+    CHECK(svg_probe((const uint8_t *)"<html><body>no drawing here</body></html>", 41, &w, &h) != 0,
+          "a document that is not SVG is refused");
+
+    /* A rect over the left half: inside is opaque, outside is untouched. */
+    const char *half = "<svg viewBox='0 0 16 16'><rect x='0' y='0' width='8' height='16'/></svg>";
+    CHECK(svg_alpha(half, 16, 16, 2, 8) > 250, "a filled rect is opaque inside");
+    CHECK(svg_alpha(half, 16, 16, 12, 8) == 0, "...and leaves the rest transparent");
+
+    /* THE VIEWBOX IS WHAT MAKES AN ICON FIT ITS BOX. Rendered at 32px, the
+     * same 16-unit drawing must still cover exactly its left half -- without
+     * the mapping a 16-unit icon only ever fitted a 16px box, by luck. */
+    CHECK(svg_alpha(half, 32, 32, 4, 16) > 250, "scaled up, the fill scales with it");
+    CHECK(svg_alpha(half, 32, 32, 24, 16) == 0, "...and so does the empty half");
+
+    /* Curves and the path grammar: a triangle drawn with M/L/Z is filled in
+     * the middle and empty in its top corners. */
+    const char *tri = "<svg viewBox='0 0 16 16'><path d='M1 15 L8 1 L15 15 Z'/></svg>";
+    CHECK(svg_alpha(tri, 16, 16, 8, 12) > 250, "a path is filled");
+    CHECK(svg_alpha(tri, 16, 16, 1, 1)  == 0,  "...only inside itself");
+
+    /* fill-rule, and arcs: a ring is a disc with a hole, and the hole only
+     * exists if even-odd is honoured AND the arcs were followed. */
+    const char *ring = "<svg viewBox='0 0 16 16'><path fill-rule='evenodd' "
+                       "d='M8 1 A7 7 0 1 1 7.99 1 Z M8 5 A3 3 0 1 0 8.01 5 Z'/></svg>";
+    CHECK(svg_alpha(ring, 16, 16, 8, 2) > 200, "the ring is painted at its rim");
+    CHECK(svg_alpha(ring, 16, 16, 8, 8) == 0,  "...and even-odd leaves the hole empty");
+
+    /* fill=none paints nothing at all -- an icon that states it is unfilled
+     * must not come out as a solid blob. */
+    CHECK(svg_alpha("<svg viewBox='0 0 16 16'><rect fill='none' x='0' y='0' width='16' height='16'/></svg>",
+                    16, 16, 8, 8) == 0, "fill='none' paints nothing");
+    /* ...but a stroke on the same shape does. */
+    CHECK(svg_alpha("<svg viewBox='0 0 16 16'><path fill='none' stroke='#000' stroke-width='4' "
+                    "d='M0 8 L16 8'/></svg>", 16, 16, 8, 8) > 200,
+          "a stroke is drawn along the path");
+
+    /* <defs> is a library, not a drawing: painting its contents puts the whole
+     * icon set on top of the icon. */
+    CHECK(svg_alpha("<svg viewBox='0 0 16 16'><defs><rect x='0' y='0' width='16' height='16'/></defs></svg>",
+                    16, 16, 8, 8) == 0, "<defs> contents are not painted");
+
+    /* transform= on a group moves what is inside it. */
+    const char *g = "<svg viewBox='0 0 16 16'><g transform='translate(8 0)'>"
+                    "<rect x='0' y='0' width='8' height='16'/></g></svg>";
+    CHECK(svg_alpha(g, 16, 16, 12, 8) > 250, "a group transform moves its children");
+    CHECK(svg_alpha(g, 16, 16, 2, 8) == 0,   "...off where they were");
+}
+
+
+/* ---- T27: @media range syntax ------------------------------------------ *
+ * `(width <= 885px)` is what every modern build tool emits -- 224 of the media
+ * queries in Brave's stylesheet are written this way and a handful use
+ * min-width. An unrecognised feature is reported as NOT matching, so the whole
+ * responsive layer of such a sheet evaluated to false. At a wide viewport that
+ * is accidentally right for the max-width cases and wrong for every min-width
+ * one, which is the worst way to be wrong: correct on whatever you check first. */
+static void t27_media_range(void) {
+    printf("T27 @media range syntax:\n");
+    css_media_set(1100, 900, 0);
+    CHECK(!css_media_matches("(width<=885px)", 14), "1100 is not <= 885");
+    CHECK( css_media_matches("(width>=886px)", 14), "...and is >= 886");
+    CHECK( css_media_matches("(width>885px)", 13),  "strict > holds");
+    CHECK(!css_media_matches("(width<885px)", 13),  "...and strict < does not");
+    CHECK( css_media_matches("(width<=1100px)", 15), "<= is inclusive at the boundary");
+    CHECK( css_media_matches("(width>=1100px)", 15), ">= is too");
+    /* The feature may be on either side: `885px < width` reads the other way. */
+    CHECK( css_media_matches("(885px<width)", 13),  "the feature may be on the right");
+    CHECK(!css_media_matches("(1200px<width)", 14), "...and is compared the right way round");
+    /* Two-sided. */
+    CHECK( css_media_matches("(900px<=width<=1200px)", 22), "a two-sided range holds inside");
+    CHECK(!css_media_matches("(400px<=width<=700px)", 21),  "...and not outside");
+    /* Height, and the old spelling, both still work. */
+    CHECK( css_media_matches("(height<=900px)", 15), "height ranges too");
+    CHECK( css_media_matches("(min-width:600px)", 17), "min-width still works");
+    CHECK(!css_media_matches("(min-width:1600px)", 18), "...and still fails when it should");
+
+    /* A desktop has a pointer. Answering "no" gave 42 of Brave's queries the
+     * touch layout. */
+    CHECK( css_media_matches("(hover:hover)", 13), "this machine hovers");
+    CHECK(!css_media_matches("(hover:none)", 12),  "...so hover:none does not hold");
+    CHECK( css_media_matches("(pointer:fine)", 14), "and it has a fine pointer");
+
+    css_media_set(400, 800, 0);
+    CHECK( css_media_matches("(width<=885px)", 14), "a narrow viewport matches the narrow rule");
+    CHECK(!css_media_matches("(width>=886px)", 14), "...and not the wide one");
+    css_media_set(1100, 900, 0);
+}
+
 int main(void) {
     printf("=== html-test ===\n");
-    t1_structure(); t2_implicit_close(); t3_void_and_attrs(); t4_entities();
+    t1_structure(); t2_implicit_close(); t3_void_and_attrs(); t3b_script_types(); t4_entities();
     t5_script_style(); t6_whitespace(); t7_malformed(); t8_urls(); t9_bounded();
     t10_url_parse(); t11_url_resolve();
     t11b_entities(); t12_attrs_and_style_block(); t13_declarations(); t14_selectors();
@@ -1035,6 +1266,9 @@ int main(void) {
     t22_linkcss();
     t23_cookies();
     t24_tabs();
+    t25_charset();
+    t26_svg();
+    t27_media_range();
     t21_jpeg();
     printf("=== html-test: %s (%d failures) ===\n", failures ? "FAIL" : "OK", failures);
     return failures ? 1 : 0;

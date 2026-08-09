@@ -87,5 +87,9 @@ void jsdom_close(void);
 /* Where console.log goes. Set by the app so the browser can show a script's
  * output instead of dropping it. `line` is NUL-terminated and transient. */
 void jsdom_set_console(void (*fn)(const char *line));
+/* How many listeners were declined for an event type this browser does not
+ * deliver. A note for whoever is building the browser: the reader of the page
+ * cannot act on it, so it does not belong on their status line. */
+int  jsdom_declined_listeners(void);
 
 #endif /* _EMBLINK_WEB_JSDOM_H_ */

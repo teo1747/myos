@@ -29,6 +29,10 @@ struct vnet_result {
     int    redirects;       /* how many hops were followed                    */
     char   final_url[512];  /* where we ended up -- redirects change this     */
     char   via[64];         /* "file", "http", "https (authenticated)"        */
+    /* The encoding the SERVER declared, lowercased ("iso-8859-1"), empty if it
+     * said nothing. The document's own <meta> is consulted only when this is
+     * empty, which is the order HTTP and HTML both specify. */
+    char   charset[32];
     char   err[160];        /* human-readable failure, empty on success       */
 };
 

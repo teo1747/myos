@@ -3,6 +3,7 @@
 .aside  { float: right; width: 140px; background: #4a3a5a; padding: 6px }
 .col    { float: left;  width: 30%; background: #2a3a30; padding: 6px }
 .after  { clear: both; color: #f0b060 }
+.grid li { float: left; width: 30%; list-style: none }
 </style></head><body>
 
 <div class="thumb">THUMB</div>
@@ -19,6 +20,15 @@ which is the whole point of a float and the commonest thing one is used for.</p>
 <div class="col">COLONE</div><div class="col">COLTWO</div><div class="col">COLTHREE</div>
 <p class="after">CLEAREDTHREE is below the three float columns.</p>
 
+<!-- A float GRID: more floated siblings than fit on one line. kernel.org's
+     footer floats nine links this way; the row must WRAP rather than run off
+     the edge, and no item may be dropped for being late in the group. -->
+<ul class="grid">
+<li>GRIDA</li><li>GRIDB</li><li>GRIDC</li><li>GRIDD</li><li>GRIDE</li>
+<li>GRIDF</li><li>GRIDG</li><li>GRIDH</li><li>GRIDI</li>
+</ul>
+<p class="after">CLEAREDFOUR is below the whole grid.</p>
+
 <!-- the float and the text beside it share a row, so the text starts to the
      RIGHT of the thumbnail and on the same line -->
 <!-- EXPECT-LEFT-OF: THUMB BESIDETHUMB -->
@@ -31,4 +41,10 @@ which is the whole point of a float and the commonest thing one is used for.</p>
 <!-- EXPECT-LEFT-OF: COLONE COLTWO -->
 <!-- EXPECT-LEFT-OF: COLTWO COLTHREE -->
 <!-- EXPECT-BELOW: CLEAREDTHREE COLONE -->
+<!-- a float grid wraps, and the NINTH item is still drawn (it used to be
+     dropped: the group collected at most eight) -->
+<!-- EXPECT-TEXT: GRIDI -->
+<!-- EXPECT-LEFT-OF: GRIDA GRIDB -->
+<!-- EXPECT-BELOW: GRIDD GRIDA -->
+<!-- EXPECT-BELOW: CLEAREDFOUR GRIDI -->
 </body></html>

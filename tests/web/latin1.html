@@ -1,0 +1,47 @@
+<html><head><meta charset="iso-8859-1"><title>Latin-1</title></head><body>
+<p>ACCENTS Confidentialité avancée à propos Publicité</p>
+<p>QUOTES “smart” and –dash— and …ellipsis</p>
+<p>PLAIN unaffected ascii text</p>
+<p><span style="display:inline-block;padding-left:15px">AAA</span><span style="display:inline-block;padding-left:15px">BBB</span></p>
+<p><span>LABELTEXT </span><a href="/x">SPACEDLINK</a></p>
+<p><button>REALLABEL</button><button></button></p>
+<p><button><svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5"/></svg> ICONANDTEXT</button></p>
+</body></html>
+<!-- The document declares ISO-8859-1 and its accents are SINGLE BYTES, which
+     as UTF-8 are invalid sequences: without a decoder every one of them is a
+     replacement character -- which reads as a broken font rather than as a
+     browser that never asked what encoding the bytes were in. google.com
+     serves exactly this to us. -->
+<!-- EXPECT-TEXT: ConfidentialitÃ© -->
+<!-- EXPECT-TEXT: avancÃ©e -->
+<!-- EXPECT-TEXT: PublicitÃ© -->
+<!-- EXPECT-TEXT: Ã  -->
+<!-- windows-1252's C1 range carries the punctuation ISO-8859-1 leaves as
+     control codes, and every browser decodes it that way -- so the quotes and
+     dashes in real pages survive instead of vanishing. -->
+<!-- EXPECT-TEXT: â€œsmartâ€ -->
+<!-- EXPECT-TEXT: â€“dashâ€” -->
+<!-- EXPECT-TEXT: â€¦ellipsis -->
+<!-- EXPECT-TEXT: unaffected -->
+<!-- inline-block is a BOX in the flow: it keeps its padding, so two of them
+     back to back do not weld into one word. Folded into plain inline, the box
+     and its padding vanished and google.com read "GmailImages". -->
+<!-- 20 of page padding + 15 of its own; then AAA is 28.7 wide + 15 again. -->
+<!-- EXPECT-X: AAA 30 42 -->
+<!-- EXPECT-X: BBB 72 86 -->
+<!-- A trailing space INSIDE an inline element is real: it is what separates
+     it from the next thing on the line. Trimming it (which is right for a
+     block, whose line-end whitespace CSS drops) welded Brave's
+     `<span>Data from </span><a>Wikipedia</a>` into "Data fromWikipedia". -->
+<!-- EXPECT-ORDER: LABELTEXT SPACEDLINK -->
+<!-- EXPECT-X: SPACEDLINK 92 106 -->
+<!-- A button with neither a value nor text is an ICON button. Writing
+     "Submit" on it states something the page never said -- Brave's header read
+     as six Submit buttons. -->
+<!-- EXPECT-TEXT: REALLABEL -->
+<!-- EXPECT-NO-TEXT: Submit -->
+<!-- A button is a BOX WITH CHILDREN, not a caption. Rendering only its label
+     meant an icon-and-text button lost its icon, and everything past the first
+     child was never walked at all -- which is why 33 of Brave's 34 inline
+     <svg> elements were never reached by the renderer. -->
+<!-- EXPECT-TEXT: ICONANDTEXT -->

@@ -1,0 +1,117 @@
+<html><head><title>Flex: weights, basis, self, order</title><style>
+/* Everything here was accepted by the parser and then ignored by the layout.
+   That is the worst kind of gap -- the page renders, so nothing looks broken,
+   it is just laid out wrong -- which is why each one gets a NUMBER below
+   rather than a screenshot somebody has to squint at. */
+.row   { display: flex; background: #1c2030; margin-bottom: 8px }
+.two   { flex: 2; background: #2a3550 }
+.one   { flex: 1; background: #202840 }
+
+/* A stated basis is a decision the author already made. Sized by its content
+   instead, a 240px sidebar is as wide as its longest word. */
+.side  { flex: 0 0 240px; background: #2a3550 }
+.main  { flex: 1; background: #202840 }
+
+/* AROUND and EVENLY differ only at the two ends, which is the entire reason
+   an author picks one of them over the other. */
+.sq     { flex: 0 0 100px; background: #2a3550 }
+.around { display: flex; justify-content: space-around; background: #1c2030; margin-bottom: 8px }
+.evenly { display: flex; justify-content: space-evenly; background: #1c2030; margin-bottom: 8px }
+
+.tallrow { display: flex; align-items: flex-start; height: 60px; background: #1c2030; margin-bottom: 8px }
+.se      { align-self: flex-end }
+
+/* `gap: 40px 10px` is row-gap then column-gap: 10 between the cards, 40
+   between the LINES of cards. One spacing had to be both. */
+.cards2 { display: flex; flex-wrap: wrap; gap: 40px 10px; margin-bottom: 8px }
+.c400   { flex: 0 0 400px; background: #2a3550 }
+
+.ord  { display: flex; background: #1c2030; margin-bottom: 8px }
+.o1 { order: 2 } .o2 { order: 3 } .o3 { order: 1 }
+
+.down { display: flex; flex-direction: column; align-items: stretch; height: 120px; background: #202436 }
+.half { flex: 1; text-align: right; background: #2a3550 }
+/* A COLUMN with no stated height. `flex: 1` on a child of one is still about
+   HEIGHT -- the axis is the container's direction, not a consequence of it
+   knowing its own size -- and reading it as a WIDTH made the child zero wide
+   (flex:1 means basis 0). rust-lang.org's <main> is exactly this. */
+.autocol  { display: flex; flex-direction: column; min-height: 40px; background: #1e2a20 }
+.autoitem { flex: 1; background: #2a4030 }
+/* Three items that each ask for the whole width. CSS shrinks them to a third
+   apiece; a percentage that gave up nothing ran the row off the page. */
+.pct3 { display: flex; background: #2a2036 }
+.pct3 > div { width: 100%; background: #3a2a4a }
+/* A cap is not a size: these must coexist as 100%-but-never-past-300px. */
+.capped { width: 100%; max-width: 300px; background: #402a20 }
+</style></head><body>
+
+<div class="row"><div class="two">WEIGHTA</div><div class="one">WEIGHTB</div><div class="one">WEIGHTC</div></div>
+<!-- 900px of content, weights 2:1:1 -> 450 / 225 / 225. Under a BOOLEAN grow
+     all three were equal and WEIGHTB started at 320. -->
+<!-- EXPECT-X: WEIGHTA 18 24 -->
+<!-- EXPECT-X: WEIGHTB 462 478 -->
+<!-- EXPECT-X: WEIGHTC 687 703 -->
+
+<div class="row"><div class="side">BASISSIDE</div><div class="main">BASISMAIN takes the rest of the row</div></div>
+<!-- The sidebar is 240 wide whatever it says, so the main column starts at
+     20 + 240 -- not at the end of the word "BASISSIDE". -->
+<!-- EXPECT-X: BASISSIDE 18 24 -->
+<!-- EXPECT-X: BASISMAIN 252 268 -->
+
+<div class="around"><div class="sq">AROUNDA</div><div class="sq">AROUNDB</div><div class="sq">AROUNDC</div></div>
+<div class="evenly"><div class="sq">EVENLYA</div><div class="sq">EVENLYB</div><div class="sq">EVENLYC</div></div>
+<!-- 300 used, 600 leftover, three items. AROUND puts half a share (100) before
+     the first; EVENLY puts a whole one of four gaps (150). Neither pins it to
+     the edge, which is what falling back to space-between did. -->
+<!-- EXPECT-X: AROUNDA 112 128 -->
+<!-- EXPECT-X: EVENLYA 162 178 -->
+
+<div class="tallrow"><span>SELFSTART</span><span class="se">SELFEND</span></div>
+<!-- align-items put both at the top; align-self moves ONE of them. -->
+<!-- EXPECT-BELOW: SELFEND SELFSTART -->
+
+<div class="cards2"><div class="c400">GAPA</div><div class="c400">GAPB</div><div class="c400">GAPC</div></div>
+<!-- Two 400s and a 10 gap fit on one line; the third wraps. The COLUMN gap is
+     the 10, so GAPB starts at 20 + 400 + 10 -- if the row gap had leaked
+     sideways it would start at 460. -->
+<!-- EXPECT-X: GAPB 422 438 -->
+<!-- EXPECT-X: GAPC 18 24 -->
+<!-- EXPECT-BELOW: GAPC GAPA -->
+
+<div class="ord"><span class="o1">ORDONE</span><span class="o2">ORDTWO</span><span class="o3">ORDTHREE</span></div>
+<!-- Document order is ONE TWO THREE; `order` lays them out THREE ONE TWO. -->
+<!-- EXPECT-LEFT-OF: ORDTHREE ORDONE -->
+<!-- EXPECT-LEFT-OF: ORDONE ORDTWO -->
+
+<div class="down"><div class="half">DOWNA</div><div class="half">DOWNB</div></div>
+<!-- flex-grow down a COLUMN grows the height, so the second half starts
+     halfway down a 120px box rather than under one line of text. -->
+<!-- EXPECT-BELOW: DOWNB DOWNA -->
+<!-- ...and they are FULL WIDTH, because align-items initial value is stretch.
+     Unset was indistinguishable from flex-start, so every flex container that
+     never mentions align-items -- most of them -- shrank its items to their
+     own text. DOWNB reaches the right-hand edge only if stretch reached it. -->
+<!-- Each half right-aligns its own text, so the label only reaches the far
+     edge if the item actually filled the column. align-items is STATED here
+     because its CSS initial value (stretch) is not yet the default we apply --
+     see docs/TODO.md and the comment in render.c open_box. -->
+<!-- EXPECT-X: DOWNB 830 918 -->
+
+<div class="autocol"><div class="autoitem">AUTOCOLITEM is full width in an auto-height column</div></div>
+<!-- The item fills the column's width. Read as a width, `flex: 1` made it a
+     zero-wide box and its text laid out at its own intrinsic size. -->
+<!-- EXPECT-X: AUTOCOLITEM 22 24 -->
+
+<div class="pct3"><div>PCTONE</div><div>PCTTWO</div><div>PCTTHREE</div></div>
+<!-- 896px of content, three items at 100% each: each ends up about 298. -->
+<!-- EXPECT-LEFT-OF: PCTONE PCTTWO -->
+<!-- EXPECT-LEFT-OF: PCTTWO PCTTHREE -->
+<!-- EXPECT-X: PCTTWO 300 340 -->
+<!-- EXPECT-X: PCTTHREE 590 650 -->
+
+<div class="capped">CAPPEDBOX stops at its max-width</div>
+<!-- width:100% and max-width:300px used to SUM: the box came out 100% + 300px
+     wide, which is how rust-lang.org's header reached 2592px inside 1056. -->
+<!-- EXPECT-X: CAPPEDBOX 22 24 -->
+<!-- EXPECT-NO-TEXT: THISNEVERAPPEARS -->
+</body></html>

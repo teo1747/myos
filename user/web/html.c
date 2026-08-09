@@ -183,14 +183,64 @@ static int  top(struct stack *s) { return s->n ? s->idx[s->n - 1] : -1; }
  * element closes. Leading/trailing whitespace is only insignificant at a
  * BLOCK's edges -- between inline elements it is a real space, which is why
  * trimming every text run turned "Hello <b>world</b>" into "Helloworld". */
+/* Is this tag block-level by default? Used only to decide whose trailing
+ * whitespace may be trimmed. Everything not named here -- span, a, b, i, and
+ * every custom element a framework invents -- is inline by CSS's own default,
+ * and an inline element's trailing space is REAL: it is what separates it from
+ * whatever follows. */
+static int is_block_tag(const char *t) {
+    static const char *b[] = {
+        "document","html","body","div","p","ul","ol","li","dl","dt","dd",
+        "h1","h2","h3","h4","h5","h6","pre","blockquote","hr","section",
+        "article","header","footer","nav","main","aside","form","fieldset",
+        "table","thead","tbody","tfoot","tr","td","th","caption",
+        "figure","figcaption","details","summary","option", 0
+    };
+    for (int i = 0; b[i]; i++) if (ieq(t, b[i])) return 1;
+    return 0;
+}
+
 static void trim_tail(struct html_doc *d, int elem) {
     if (elem < 0) return;
+    /* ONLY A BLOCK'S. CSS drops whitespace at the end of a LINE, not at the end
+     * of every element -- and trimming an inline element's trailing space welds
+     * it to the next thing on the line. Brave writes
+     * `<span>Data from </span><a>Wikipedia</a>` and it read "Data fromWikipedia";
+     * the same shape is on every page that puts a label before a link. */
+    if (!is_block_tag(d->nodes[elem].tag)) return;
     int last = -1;
     for (int c = d->nodes[elem].first_child; c >= 0; c = d->nodes[c].next_sibling) last = c;
     if (last < 0 || d->nodes[last].kind != HTML_TEXT || !d->nodes[last].text) return;
     char *t = d->nodes[last].text;
     size_t l = strlen(t);
     while (l && t[l - 1] == ' ') t[--l] = 0;
+}
+
+/* Does this <script type> name JavaScript? Empty/absent does, "module" does,
+ * and the handful of MIME spellings the web actually uses do. Everything else
+ * is a data block the page is storing, not code it wants run. */
+static int script_is_js(const char *type) {
+    if (!type || !type[0]) return 1;
+    while (*type == ' ' || *type == '\t') type++;
+    /* a MIME may carry parameters: `text/javascript; charset=utf-8` */
+    char t[64]; size_t n = 0;
+    for (; type[n] && type[n] != ';' && n < sizeof t - 1; n++) {
+        char c = type[n];
+        t[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+    while (n && (t[n-1] == ' ' || t[n-1] == '\t')) n--;
+    t[n] = 0;
+    static const char *ok[] = {
+        "module", "text/javascript", "application/javascript",
+        "text/ecmascript", "application/ecmascript", "text/jscript",
+        "application/x-javascript", 0
+    };
+    for (int i = 0; ok[i]; i++) {
+        const char *a = t, *b = ok[i];
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (!*a && !*b) return 1;
+    }
+    return 0;
 }
 
 /* Close the nearest open element named `tag`; if none is open, do nothing --
@@ -314,6 +364,7 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
         char fval[256];  fval[0] = 0;
         char ftype[24];  ftype[0] = 0;
         char frel[32];   frel[0] = 0;
+        char fmedia[64]; fmedia[0] = 0;
         int  tbord = 0;
         while (p < len && src[p] != '>') {
             while (p < len && (src[p]==' '||src[p]=='\t'||src[p]=='\n'||src[p]=='\r')) p++;
@@ -421,6 +472,8 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
                         if (c2 < '0' || c2 > '9') ok2 = 0; else v2 = v2 * 10 + (c2 - '0');
                     }
                     if (ok2) tbord = v2 > 255 ? 255 : v2;
+                } else if (ieq(aname,"media") && !fmedia[0]) {
+                    attr_copy(fmedia, sizeof fmedia, src + vs, vl);
                 } else if (ieq(aname,"rel") && !frel[0]) {
                     attr_copy(frel, sizeof frel, src + vs, vl);
                 } else if (ieq(aname,"alt") && !alt[0]) {
@@ -432,7 +485,21 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
                 if (q && p < len) p++;
             }
         }
-        int self_closing = (p > i && src[p-1] == '/');
+        /* `/>` -- XHTML-style self-closing, which is how every React-rendered
+         * page and every inline <svg> writes a void element.
+         *
+         * The attribute loop above BREAKS on the slash, leaving p ON it. Read
+         * from there, `src[p-1]` is the space before the slash rather than the
+         * slash itself, so the tag was not recognised as self-closing -- and
+         * worse, the single p++ below stepped past the SLASH and left the `>`
+         * in the stream, where it became a text node. Every `<input />`,
+         * `<img />`, `<br/>` and `<path/>` on a page put a stray `>` on screen
+         * next to it. Consume the slash here, remember it, and only then look
+         * for the bracket. */
+        while (p < len && (src[p]==' '||src[p]=='\t'||src[p]=='\n'||src[p]=='\r')) p++;
+        int self_closing = 0;
+        if (p < len && src[p] == '/') { self_closing = 1; p++; }
+        while (p < len && src[p] != '>') p++;          /* anything else before it */
         if (p < len) p++;                              /* past '>' */
 
         if (!tag[0]) { i = p; continue; }
@@ -454,7 +521,11 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
             }
             if (is_sheet) {
                 char *held = str_put(d, href, strlen(href));
-                if (held) d->cssref[d->n_cssref++] = held;
+                if (held) {
+                    d->cssmedia[d->n_cssref] =
+                        fmedia[0] ? str_put(d, fmedia, strlen(fmedia)) : 0;
+                    d->cssref[d->n_cssref++] = held;
+                }
             }
         }
 
@@ -482,6 +553,63 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
             continue;
         }
 
+        /* <noscript>: FOR A DIFFERENT BROWSER THAN THIS ONE. Its contents
+         * apply only when scripting is off, and we run scripts -- so the
+         * markup inside is not ours to render and, more sharply, the <style>
+         * inside is not ours to apply. Brave ships
+         * `<noscript><style>.noscript-hide{display:none!important}</style>`,
+         * and capturing that put a rule meant for a scriptless browser into
+         * our cascade. Skipped whole, the way a comment is. */
+        if (ieq(tag, "noscript") && !closing) {
+            size_t k = p;
+            while (k + 11 <= len) {
+                if (src[k] == '<' && src[k+1] == '/' &&
+                    (src[k+2]|32)=='n' && (src[k+3]|32)=='o' && (src[k+4]|32)=='s' &&
+                    (src[k+5]|32)=='c' && (src[k+6]|32)=='r' && (src[k+7]|32)=='i' &&
+                    (src[k+8]|32)=='p' && (src[k+9]|32)=='t') {
+                    while (k < len && src[k] != '>') k++;
+                    if (k < len) k++;
+                    break;
+                }
+                k++;
+            }
+            i = k;
+            continue;
+        }
+
+        /* <svg>: NOT HTML either. Its elements are a different language, and
+         * parsing them as HTML makes a subtree of unknown inline boxes that
+         * draw as nothing. The source is kept whole -- from `<svg` to the
+         * matching `</svg>`, nesting counted -- and rendered by svg.c. */
+        if (ieq(tag, "svg") && !closing) {
+            size_t open_at = i;                  /* the '<' of this <svg */
+            int depth = 1;
+            size_t k = p;
+            while (k < len && depth > 0) {
+                if (src[k] == '<') {
+                    if (k + 4 < len && src[k+1] == '/' &&
+                        (src[k+2]|32) == 's' && (src[k+3]|32) == 'v' && (src[k+4]|32) == 'g') {
+                        depth--;
+                        if (!depth) { while (k < len && src[k] != '>') k++; if (k < len) k++; break; }
+                    } else if (k + 3 < len && (src[k+1]|32) == 's' && (src[k+2]|32) == 'v' &&
+                               (src[k+3]|32) == 'g' && (k + 4 >= len || src[k+4] == '>' ||
+                                                       src[k+4] == ' ' || src[k+4] == '\t' ||
+                                                       src[k+4] == '\n' || src[k+4] == '\r')) {
+                        depth++;
+                    }
+                }
+                k++;
+            }
+            FLUSH();
+            int sv = node_new(d, HTML_ELEM, top(&st));
+            if (sv >= 0) {
+                snprintf(d->nodes[sv].tag, HTML_TAG_MAX, "%s", "svg");
+                d->nodes[sv].svg = str_put(d, src + open_at, k - open_at);
+            }
+            i = k;
+            continue;
+        }
+
         /* <script>/<style>: skip to the matching close without parsing. Their
          * contents are not markup, and treating them as such is how a page
          * ends up displaying its own code. */
@@ -504,9 +632,34 @@ int html_parse(struct html_doc *d, const char *src, size_t len,
              * KEEP it (concatenated across blocks, in document order, which is
              * the order the cascade needs); <script> is still discarded, since
              * nothing downstream can run it. */
-            if (ieq(tag, "script") && k > p && d->n_js < 8) {
+            /* ...and only if it IS JavaScript. A `type` that names anything
+             * else marks a data block the page keeps in a <script> precisely
+             * so the browser will NOT run it: JSON-LD (which bbc, Wikipedia
+             * and craigslist all carry), a template, a preloaded state blob.
+             * Running them threw a SyntaxError on the first colon and took the
+             * page's real scripts down with it -- the error came from the
+             * <script> tag we should never have opened. HTML5's rule is the
+             * one applied here: absent, empty, "module", or a JavaScript MIME
+             * runs; anything else is data. */
+            if (ieq(tag, "script") && k > p && d->n_js < 8 && script_is_js(ftype)) {
                 char *held = str_put(d, src + p, k - p);
-                if (held) { d->js[d->n_js] = held; d->js_len[d->n_js] = k - p; d->n_js++; }
+                if (held) {
+                    /* A NODE for the <script> itself. It has no children and is
+                     * never drawn (render.c skips the tag), but it gives
+                     * `document.currentScript` something to be and puts the
+                     * element in the tree where the page expects to find it. */
+                    /* NO FLUSH here. Flushing the accumulated text at the
+                     * script boundary splits one text node into two, and two
+                     * whitespace runs where there was one opens an extra line
+                     * box -- three corpus pages grew 3px. The script element
+                     * is display:none and skipped, so whether it sorts before
+                     * or after the text around it changes nothing anyone can
+                     * see. */
+                    int sn = node_new(d, HTML_ELEM, top(&st));
+                    if (sn >= 0) snprintf(d->nodes[sn].tag, HTML_TAG_MAX, "%s", "script");
+                    d->js_node[d->n_js] = sn;
+                    d->js[d->n_js] = held; d->js_len[d->n_js] = k - p; d->n_js++;
+                }
             }
             if (ieq(tag, "style") && k > p) {
                 char *held = str_put(d, src + p, k - p);

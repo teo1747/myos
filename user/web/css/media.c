@@ -62,10 +62,81 @@ static float len_px(const char *s, size_t n) {
     return v;
 }
 
+/* teq with the ends trimmed -- a range's operands carry the spaces around the
+ * operator. */
+static int teq_trim(const char *s, size_t n, const char *w) {
+    while (n && is_ws(*s)) { s++; n--; }
+    while (n && is_ws(s[n-1])) n--;
+    return teq(s, n, w);
+}
+
+/* RANGE SYNTAX: `(width <= 885px)`, `(width > 600px)`, and the two-sided
+ * `(400px <= width < 700px)`.
+ *
+ * This is not an exotic corner. It is what every modern build tool now emits --
+ * 224 of the media queries in Brave's stylesheet are written this way and only
+ * a handful use min-width/max-width -- and a feature we do not recognise is
+ * reported as NOT MATCHING, so the entire responsive layer of such a sheet
+ * silently evaluated to false. At a wide viewport that happens to be right for
+ * `width <= 885px` and wrong for everything else, which is the worst kind of
+ * wrong: correct on the cases you check first.
+ *
+ * Returns 1/0 for a match, or -1 if this is not a range test at all. */
+static int range_matches(const char *s, size_t n) {
+    /* Find the comparison operators. A range has one or two. */
+    int op1 = -1, op2 = -1;          /* index of the first char of each */
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] == '<' || s[i] == '>') {
+            if (op1 < 0) op1 = (int)i;
+            else if (op2 < 0) op2 = (int)i;
+        }
+    }
+    if (op1 < 0) return -1;
+
+    /* op text -> a comparison against the viewport. `lhs OP rhs`. */
+    struct { int lt, eq; } o1 = { s[op1] == '<', (size_t)op1 + 1 < n && s[op1+1] == '=' };
+    const char *a = s; size_t an = (size_t)op1;
+    const char *b = s + op1 + 1 + (o1.eq ? 1 : 0);
+    size_t bn = n - (size_t)(b - s);
+    if (op2 > 0) bn = (size_t)(s + op2 - b);
+
+    /* Which side names the feature? `width <= 885px` or `885px <= width`. */
+    int axis = 0;                    /* 1 = width, 2 = height */
+    const char *lenp; size_t lenn;
+    int feature_left;
+    if (teq_trim(a, an, "width"))       { axis = 1; feature_left = 1; lenp = b; lenn = bn; }
+    else if (teq_trim(a, an, "height")) { axis = 2; feature_left = 1; lenp = b; lenn = bn; }
+    else if (teq_trim(b, bn, "width"))  { axis = 1; feature_left = 0; lenp = a; lenn = an; }
+    else if (teq_trim(b, bn, "height")) { axis = 2; feature_left = 0; lenp = a; lenn = an; }
+    else return -1;
+
+    float v = len_px(lenp, lenn);
+    if (v < 0) return -1;
+    float actual = (axis == 1) ? g_vw : g_vh;
+    /* Normalise to `actual OP v`: if the feature was on the right, the
+     * comparison reads the other way round. */
+    int lt = o1.lt, eq = o1.eq;
+    if (!feature_left) lt = !lt;
+    int first = lt ? (eq ? actual <= v : actual < v)
+                   : (eq ? actual >= v : actual > v);
+    if (op2 < 0) return first ? 1 : 0;
+    if (!first) return 0;
+
+    /* The second half of a two-sided range: `lo <= width <= hi`. The feature is
+     * in the middle, so this comparison always reads feature-on-the-left. */
+    int lt2 = s[op2] == '<', eq2 = (size_t)op2 + 1 < n && s[op2+1] == '=';
+    const char *c2 = s + op2 + 1 + (eq2 ? 1 : 0);
+    float v2 = len_px(c2, n - (size_t)(c2 - s));
+    if (v2 < 0) return 0;
+    return lt2 ? (eq2 ? actual <= v2 : actual < v2)
+               : (eq2 ? actual >= v2 : actual > v2);
+}
+
 /* One `(feature: value)` test, or a bare `(feature)`. */
 static int feature_matches(const char *s, size_t n) {
     while (n && is_ws(*s)) { s++; n--; }
     while (n && is_ws(s[n-1])) n--;
+    { int r = range_matches(s, n); if (r >= 0) return r; }
     size_t c = 0;
     while (c < n && s[c] != ':') c++;
     const char *name = s; size_t nn = c;
@@ -90,6 +161,14 @@ static int feature_matches(const char *s, size_t n) {
         while (vn && is_ws(val[vn-1])) vn--;
         return teq(val, vn, g_dark ? "dark" : "light");
     }
+    /* THIS MACHINE HAS A POINTER. `(hover: hover)` and `(pointer: fine)` are
+     * how a page asks whether it is on a desktop, and 42 of Brave's queries
+     * do. Answering "no" to both -- which is what an unknown feature does --
+     * gave every one of them the touch layout. */
+    if (teq(name, nn, "hover"))   return val && teq_trim(val, vn, "hover");
+    if (teq(name, nn, "any-hover")) return val && teq_trim(val, vn, "hover");
+    if (teq(name, nn, "pointer") || teq(name, nn, "any-pointer"))
+        return val && teq_trim(val, vn, "fine");
     /* A feature we do not know cannot be claimed to hold. */
     return 0;
 }

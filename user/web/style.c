@@ -1,5 +1,6 @@
 /* user/web/style.c -- the user-agent stylesheet. See style.h. */
 #include <string.h>
+#include <stdlib.h>
 #include "style.h"
 #include "html.h"
 #include "css.h"
@@ -16,6 +17,18 @@ static int ieq(const char *a, const char *b) {
 
 void vstyle_root(struct vstyle *o) {
     memset(o, 0, sizeof *o);
+    /* THE NON-ZERO INITIAL VALUES. Every other field's initial value is 0, so
+     * the memset states them; these four cannot be, because 0 is a meaningful
+     * value for each: flex-basis 0 is a real basis, column-gap 0 is a real
+     * gap, align-self and align-items 0 are flex-start, and flex-shrink's CSS
+     * initial is 1. */
+    o->basis = -1; o->col_gap = -1; o->align_self = VJ_AUTO; o->shrink = 1;
+    /* UNSET, which 0 could not say: 0 is flex-start, a real value. CSS's
+     * initial value here is STRETCH and open_box does not yet apply it -- see
+     * the comment there -- but the distinction has to exist before the default
+     * can ever be changed, and align-self needs it regardless. */
+    o->align_items = VJ_AUTO;
+
     o->display = VD_BLOCK;
     o->size = 0;                       /* body */
     /* The page's initial values, not the desktop's -- see style.h. */
@@ -28,6 +41,13 @@ void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {
      * CSS's inheritance model; without it a <b> inside an <h1> would fall back
      * to body size, and every nested element would re-indent. */
     memset(o, 0, sizeof *o);
+    /* THE NON-ZERO INITIAL VALUES. Every other field's initial value is 0, so
+     * the memset states them; these four cannot be, because 0 is a meaningful
+     * value for each: flex-basis 0 is a real basis, column-gap 0 is a real
+     * gap, align-self and align-items 0 are flex-start, and flex-shrink's CSS
+     * initial is 1. */
+    o->basis = -1; o->col_gap = -1; o->align_self = VJ_AUTO; o->shrink = 1;
+    o->align_items = VJ_AUTO;
     o->size = p->size; o->bold = p->bold; o->italic = p->italic;
     o->mono = p->mono; o->underline = p->underline; o->link = p->link;
     o->pre = p->pre;
@@ -39,6 +59,7 @@ void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {
      * properties, and inheriting them would paint every descendant. */
     o->align = p->align;
     o->line_height = p->line_height;
+    o->marker = p->marker;        /* list-style-type inherits (see <ul> below) */
     o->display = VD_INLINE;
 
     /* --- headings: size carries the hierarchy, weight reinforces it ---- */
@@ -119,11 +140,20 @@ void vstyle_for(const char *tag, const struct vstyle *p, struct vstyle *o) {
     else if (ieq(tag,"blockquote")) { o->display=VD_BLOCK; o->indent=20; o->margin_bottom=12; }
     else if (ieq(tag,"hr")) { o->display=VD_BLOCK; o->margin_top=10; o->margin_bottom=10; }
 
-    /* --- lists: the marker is a BOX property, so it does not inherit into
-     *     the item's own children (a <b> inside an <li> must not re-bullet) */
-    else if (ieq(tag,"ul")) { o->display=VD_BLOCK; o->indent=22; o->margin_bottom=10; }
-    else if (ieq(tag,"ol")) { o->display=VD_BLOCK; o->indent=22; o->margin_bottom=10; }
-    else if (ieq(tag,"li")) { o->display=VD_LIST_ITEM; o->marker=VM_BULLET; o->margin_bottom=3; }
+    /* --- lists. `list-style-type` INHERITS, and that is not a technicality:
+     *     `ul { list-style: none }` is how every navigation menu on the web
+     *     turns its bullets off, and it is written on the LIST, never on the
+     *     items. So the list sets the marker and the item reads the inherited
+     *     value; only VD_LIST_ITEM ever draws one, so carrying it further down
+     *     (into a <b> inside the item) costs nothing and re-bullets nothing. */
+    else if (ieq(tag,"ul") || ieq(tag,"menu"))
+                            { o->display=VD_BLOCK; o->indent=22; o->margin_bottom=10;
+                              o->marker=VM_BULLET; }
+    else if (ieq(tag,"ol")) { o->display=VD_BLOCK; o->indent=22; o->margin_bottom=10;
+                              o->marker=VM_DECIMAL; }
+    else if (ieq(tag,"li")) { o->display=VD_LIST_ITEM; o->margin_bottom=3;
+                              /* a stray <li> with no list around it still has one */
+                              if (!o->marker) o->marker = VM_BULLET; }
     else if (ieq(tag,"dt")) { o->display=VD_BLOCK; o->bold=1; }
     else if (ieq(tag,"dd")) { o->display=VD_BLOCK; o->indent=20; o->margin_bottom=6; }
 

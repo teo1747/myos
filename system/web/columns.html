@@ -1,0 +1,24 @@
+<html><head><title>Columns</title><style>
+/* The shape rust-lang.org is built from, and the four bugs it exposed:
+   an auto-height column wrapper, children that each ask for the full width,
+   and a capped centred content column. */
+body   { display: flex; flex-direction: column; min-height: 100vh; margin: 0 }
+main   { flex: 1; display: flex; flex-direction: column; padding: 16px }
+.row   { display: flex }
+.col   { width: 100%; padding: 10px; box-sizing: border-box }
+.a     { background: #e8f0ff } .b { background: #eaf7ec } .c { background: #fdf0e4 }
+.capped{ width: 100%; max-width: 420px; background: #eee; padding: 8px; margin-top: 16px }
+</style></head><body><main>
+<h2>Three columns divide the row</h2>
+<div class="row">
+  <section class="col a"><h3>Performance</h3><p>Each of these three sections
+  asks for the whole width. A row that could not shrink a percentage gave each
+  of them all of it and ran three times off the right edge.</p></section>
+  <section class="col b"><h3>Reliability</h3><p>The container is a column with
+  no stated height, so the wrapper's flex:1 is about height and must not be
+  read as a width of zero.</p></section>
+  <section class="col c"><h3>Productivity</h3><p>And the whole page stays
+  inside the window, which is the only thing a reader notices.</p></section>
+</div>
+<div class="capped">CAPPED: width 100% but never past 420px.</div>
+</main></body></html>

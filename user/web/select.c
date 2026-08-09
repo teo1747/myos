@@ -20,8 +20,12 @@
 #include "theme.h"
 
 /* A document's worth of words. Past this the tail is simply not selectable,
- * which is a visible, bounded failure rather than a heap the page controls. */
-#define WORD_MAX 4096
+ * which is a bounded failure rather than a heap the page controls -- but it
+ * was also a SILENT one, and 4096 is not a document: Wikipedia's flex article
+ * draws 10477 runs, so Ctrl+A copied the first 24 KB of it, stopped mid-word,
+ * and said nothing. Raised to cover a real encyclopedia page, and the overflow
+ * is now reportable so a caller can tell a short copy from a complete one. */
+#define WORD_MAX 12288
 
 struct word {
     struct node_handle nh;
@@ -32,6 +36,7 @@ struct word {
 
 static struct word g_word[WORD_MAX];
 static int   g_nword;
+static int   g_overflow;   /* the document had more runs than the index holds */
 static int   g_lo = -1, g_hi = -1;    /* inclusive index range; -1 = none */
 static int   g_anchor = -1;           /* where the drag started */
 static int   g_dragging;
@@ -61,8 +66,9 @@ void vsel_run_mark(int i, int kind) {
     if (i >= 0 && i < g_nword) g_word[i].mark = (unsigned char)kind;
 }
 
-void vsel_reset(void) { g_nword = 0; g_lo = g_hi = g_anchor = -1; g_dragging = 0; }
+void vsel_reset(void) { g_nword = 0; g_overflow = 0; g_lo = g_hi = g_anchor = -1; g_dragging = 0; }
 int  vsel_active(void) { return g_lo >= 0 && g_hi >= g_lo; }
+int  vsel_overflowed(void) { return g_overflow; }
 
 int vsel_clear(void) {
     if (!vsel_active()) return 0;
@@ -79,7 +85,8 @@ int vsel_clear(void) {
 static void collect(struct scene_arena *a, struct node_handle h,
                     float ox, float oy, int inside) {
     struct scene_node *n = scene_resolve(a, h);
-    if (!n || g_nword >= WORD_MAX) return;
+    if (!n) return;
+    if (g_nword >= WORD_MAX) { g_overflow = 1; return; }
     float x = ox + n->tx, y = oy + n->ty;
     if (n->clip_children) inside = 1;
     if (inside && n->kind == SCENE_NODE_TEXT && n->data.text.utf8) {
@@ -97,7 +104,7 @@ static void collect(struct scene_arena *a, struct node_handle h,
 
 void vsel_sync_geometry(void) {
     struct scene_arena *a = ui_scene_arena();
-    g_nword = 0;
+    g_nword = 0; g_overflow = 0;
     collect(a, ui_scene_of(ui_root()), 0, 0, 0);
 
     if (g_hi >= g_nword) g_hi = g_nword - 1;

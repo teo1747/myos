@@ -373,6 +373,24 @@ static float measure_wrap_height(struct layout_arena *la, struct scene_arena *sa
                                  struct layout_handle h, float avail_w);
 static float measure_grid_height(struct layout_arena *la, struct scene_arena *sa,
                                  struct layout_handle h, float avail_w);
+static float stated_px(const struct layout_size *s, float avail, int *has);
+
+/* Which sizes give up space in the SECOND shrink pass -- the one that runs
+ * when the boxes that volunteered were not enough.
+ *
+ * SIZE_FIXED stays out on purpose: a 24px traffic light or a 4px dot is a
+ * decision, not a preference, and squashing it is worse than overflowing.
+ * A PERCENTAGE is the opposite kind of statement. It is a proportion OF THE
+ * CONTAINER, so three children at `width: 100%` in one row is not a request
+ * for 300% -- it is what a page writes when the row is meant to divide, and
+ * CSS's default flex-shrink of 1 divides it. Leaving percentages out of both
+ * passes meant they never gave at all: rust-lang.org's three pillars each
+ * took the full width, so the row ran 3300px wide inside an 1100px page and
+ * the third column began at x=14792 with its paragraph unwrapped. Every
+ * multi-column section on the web is written this way. */
+static int shrinkable_default(int mode) {
+    return mode == SIZE_INTRINSIC || mode == SIZE_PERCENT;
+}
 
 /* Height of a subtree at a KNOWN width.
  *
@@ -445,13 +463,29 @@ static float measure_subtree_height(struct layout_arena *la, struct scene_arena 
             if (!cn->is_overlay) {
                 cnt++;
                 if (cn->width.mode == SIZE_FLEX || cn->width.flex_grow > 0) flex++;
-                else fixed_sum += (cn->width.mode == SIZE_FIXED) ? cn->width.fixed_value
-                                                                 : cn->intrinsic_w;
+                else {
+                    /* a PERCENTAGE is a width, and measuring it at the child's
+                     * intrinsic size measures the wrong box entirely */
+                    int hasw = 0;
+                    float bw = stated_px(&cn->width, cw, &hasw);
+                    fixed_sum += hasw ? bw : cn->intrinsic_w;
+                }
             }
             c = cn->next_sibling;
         }
-        if (cnt > 1) fixed_sum += n->spacing * (float)(cnt - 1);
-        float share = flex > 0 ? (cw - fixed_sum) / (float)flex : 0;
+        float gaps = cnt > 1 ? n->spacing * (float)(cnt - 1) : 0;
+        /* AND THE ROW SHRINKS. arrange() takes the deficit out of the children
+         * (CSS's flex-shrink), so a measurement that sizes them at their base
+         * widths measures boxes nobody will draw: three `width: 100%` sections
+         * measured one line of text each at full width, arranged at a third of
+         * it, wrapped to four lines -- and the row, already sized for one, had
+         * its children's heights squeezed to fit. The heading was drawn 10px
+         * tall and its own paragraph landed on top of it. The same scale the
+         * arranger applies is applied here, so the two agree. */
+        float avail_items = cw - gaps;
+        float scale = (fixed_sum > avail_items && fixed_sum > 0 && avail_items > 0)
+                      ? avail_items / fixed_sum : 1.0f;
+        float share = flex > 0 ? (cw - gaps - fixed_sum * scale) / (float)flex : 0;
         if (share < 0) share = 0;
 
         float mx = 0;
@@ -460,9 +494,21 @@ static float measure_subtree_height(struct layout_arena *la, struct scene_arena 
             if (!cn) break;
             if (!cn->is_overlay) {
                 float w;
-                if (cn->width.mode == SIZE_FIXED)                        w = cn->width.fixed_value;
-                else if (cn->width.mode == SIZE_FLEX || cn->width.flex_grow > 0) w = share;
-                else w = cn->intrinsic_w > 0 ? cn->intrinsic_w : cw;
+                /* GROW IS CHECKED FIRST, and must be: the loop above counted
+                 * this child as flexible on exactly that test and left its
+                 * basis out of fixed_sum, so sizing it here by its basis
+                 * instead measures it at a width nobody will give it. A
+                 * `flex: 1` item has a basis of ZERO, which made this measure
+                 * its text at width 0 -- the item wrapped to five lines here
+                 * and to one on screen, and the row was drawn five lines tall
+                 * with four of them empty. The two loops have to agree. */
+                if (cn->width.mode == SIZE_FLEX || cn->width.flex_grow > 0) w = share;
+                else {
+                    int hasw = 0;
+                    w = stated_px(&cn->width, cw, &hasw);
+                    if (!hasw) w = cn->intrinsic_w > 0 ? cn->intrinsic_w : cw;
+                    w *= scale;          /* the row shrinks; measure what it draws */
+                }
                 float ch = measure_subtree_height(la, sa, c, w);
                 if (ch > mx) mx = ch;
             }
@@ -501,14 +547,25 @@ static float measure_wrap_height(struct layout_arena *la, struct scene_arena *sa
         if (!cn) break;
         if (!cn->is_overlay) {
             if (nk < WRAP_MAX) {
-                float cw = (cn->width.mode == SIZE_FIXED) ? cn->width.fixed_value : cn->intrinsic_w;
+                /* A PERCENTAGE-WIDTH child measured at its intrinsic width is
+                 * the difference between "these nine 30% boxes need three
+                 * lines" and "they all fit on one" -- and the row arranges on
+                 * three regardless, so the container comes out a line short
+                 * and whatever follows is painted over the overflow. Resolve
+                 * it here the same way stated_px does when arranging. */
+                int hasw = 0;
+                float cw = stated_px(&cn->width, content_w, &hasw);
+                if (!hasw) cw = cn->intrinsic_w;
                 float ch = is_text(sa, cn) ? layout_measure_height_at_width(la, sa, c, cw)
-                         : (cn->height.mode == SIZE_FIXED ? cn->height.fixed_value : cn->intrinsic_h);
+                         : (cn->height.mode == SIZE_FIXED ? cn->height.fixed_value
+                            : (cn->is_container ? measure_subtree_height(la, sa, c, cw)
+                                                : cn->intrinsic_h));
                 bm[nk] = cw; bc[nk] = ch; nk++;
             } else dropped++;
         }
         c = cn->next_sibling;
     }
+    float line_gap = n->cross_spacing > 0 ? n->cross_spacing : n->spacing;
     float total = 0; int i = 0, nlines = 0;
     while (i < nk) {
         int j = i; float lm = 0, lc = 0;
@@ -518,7 +575,13 @@ static float measure_wrap_height(struct layout_arena *la, struct scene_arena *sa
             lm += add; if (bc[j] > lc) lc = bc[j]; j++;
         }
         if (j == i) j = i + 1;
-        total += lc + (nlines > 0 ? n->spacing : 0);
+        /* BETWEEN LINES is the cross gap, the same number arrange() steps by.
+         * Measuring with the main gap while arranging with the cross one makes
+         * the container the wrong height: with `gap: 40px 10px` it was measured
+         * two lines and 10px tall and drawn two lines and 40px, so the second
+         * line was painted 30px below the box and landed on whatever came
+         * after it. The two have to read the same field. */
+        total += lc + (nlines > 0 ? line_gap : 0);
         nlines++; i = j;
     }
     /* the overflow past the cap: charge it the average line, so a very long
@@ -849,6 +912,15 @@ static float stated_px(const struct layout_size *s, float avail, int *has) {
  * Tracked as a saved/restored global rather than threaded through arrange():
  * arrange is strictly depth-first, so a save on entry and a restore on exit is
  * the same discipline the child pool already uses. */
+/* Which cross alignment applies to one child: its own align-self if it stated
+ * one, else its container's align-items. The +1 encoding is explained in
+ * layout.h -- 0 is "auto", not "start". */
+static enum layout_align child_align(const struct layout_node *n,
+                                     const struct layout_node *k) {
+    if (k->align_self) return (enum layout_align)(k->align_self - 1);
+    return n->align;
+}
+
 static void place_positioned(struct layout_arena *la, struct scene_arena *sa,
                              struct layout_handle kh, struct layout_node *k,
                              struct layout_node *n, float W, float H) {
@@ -1036,23 +1108,23 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
         } else if (k->grid_cols > 0 && !is_row) {
             /* COLUMN: a grid child's HEIGHT is its auto-flowed grid height at the
              * width it will get. */
-            float cw = (n->align == ALIGN_STRETCH) ? content_cross : k->intrinsic_w;
+            float cw = (child_align(n, k) == ALIGN_STRETCH) ? content_cross : k->intrinsic_w;
             base[i] = measure_grid_height(la, sa, kids[i], cw);
         } else if (k->wrap && k->is_container && !is_row) {
             /* COLUMN: a wrap-row child's HEIGHT is its wrapped-line height at the
              * width it will get (stretch -> our content width, else intrinsic). */
-            float cw = (n->align == ALIGN_STRETCH) ? content_cross : k->intrinsic_w;
+            float cw = (child_align(n, k) == ALIGN_STRETCH) ? content_cross : k->intrinsic_w;
             base[i] = measure_wrap_height(la, sa, kids[i], cw);
         } else if (k->is_container && !is_row) {
             /* COLUMN: a container child's HEIGHT measured at the width it will
              * get, so a wrap row NESTED inside it is counted (see
              * measure_subtree_height). Without this a paragraph gets one line's
              * budget and the next block lands on top of it. */
-            float cw = (n->align == ALIGN_STRETCH) ? content_cross : k->intrinsic_w;
+            float cw = (child_align(n, k) == ALIGN_STRETCH) ? content_cross : k->intrinsic_w;
             base[i] = measure_subtree_height(la, sa, kids[i], cw);
         } else if (ktext && !is_row) {
             /* COLUMN: main size is HEIGHT -> wrap at the child's cross WIDTH */
-            float cw = (n->align == ALIGN_STRETCH) ? content_cross : k->intrinsic_w;
+            float cw = (child_align(n, k) == ALIGN_STRETCH) ? content_cross : k->intrinsic_w;
             base[i] = layout_measure_height_at_width(la, sa, kids[i], cw);
         } else {
             base[i] = is_row ? k->intrinsic_w : k->intrinsic_h;   /* incl. text one-line width (ROW flex-basis) */
@@ -1167,7 +1239,7 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
                 struct layout_size *ms = is_row ? &k->width : &k->height;
                 int expl = ms->flex_shrink > 0;
                 int eligible = (pass == 0) ? (expl || ms->mode == SIZE_FLEX)
-                                           : (!expl && ms->mode == SIZE_INTRINSIC);
+                                           : (!expl && shrinkable_default(ms->mode));
                 if (!eligible) continue;
                 sum_w += (expl ? ms->flex_shrink : 1.0f) * finalm[i];
             }
@@ -1179,7 +1251,7 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
                 struct layout_size *ms = is_row ? &k->width : &k->height;
                 int expl = ms->flex_shrink > 0;
                 int eligible = (pass == 0) ? (expl || ms->mode == SIZE_FLEX)
-                                           : (!expl && ms->mode == SIZE_INTRINSIC);
+                                           : (!expl && shrinkable_default(ms->mode));
                 if (!eligible) continue;
                 float w = expl ? ms->flex_shrink : 1.0f;
                 float want = deficit * ((w * finalm[i]) / sum_w);
@@ -1222,8 +1294,14 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
              * a stretch column). A percentage is definite too, once the
              * containing block is known, which is here. */
             crossv[i] = stated_cross;
-        } else if (n->align == ALIGN_STRETCH) {
+        } else if (child_align(n, k) == ALIGN_STRETCH && !(n->wrap && is_row)) {
             crossv[i] = content_cross;
+            /* ...but NOT in a wrapping row. There, stretch means "as tall as
+             * your LINE", and a line's height is not known until the lines are
+             * packed -- which happens below. Taking the container's cross size
+             * here makes every card as tall as all the lines together, the
+             * first line then IS that tall, and the second is pushed off the
+             * bottom of the box entirely. The wrap arm stretches to `lc`. */
         } else if (ktext && is_row) {
             crossv[i] = layout_measure_height_at_width(la, sa, kids[i], finalm[i]); /* height at final width */
         } else if (is_row && k->is_container && subtree_wraps(la, kids[i])) {
@@ -1258,7 +1336,9 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
      * across lines); each line's cross size is its tallest child; align applies
      * within a line. Row-wrap (the common case). --- */
     if (n->wrap && is_row) {
-        float line_gap = n->spacing;
+        /* Between LINES, which is the cross axis -- a different gap from the
+         * one between items when the author stated two. */
+        float line_gap = n->cross_spacing > 0 ? n->cross_spacing : n->spacing;
         float cross_cursor = cross_pad0 - n->scroll_offset;   /* vertical scroll shifts lines up */
         int i = 0;
         while (i < nk) {
@@ -1278,29 +1358,43 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
              * nothing at all. Each line box justifies on its own, which is what
              * text-align means: centre every line, not the paragraph as a
              * block. `lm` is already this line's used width including gaps. */
-            float cursor = main_pad0;
+            float cursor = main_pad0, lgap = n->spacing;
+            int  online = j - i;
             if (n->justify != JUSTIFY_START) {
                 float slack = content_main - lm;
                 if (slack > 0) switch (n->justify) {
                     case JUSTIFY_CENTER: cursor += slack * 0.5f; break;
                     case JUSTIFY_END:    cursor += slack;        break;
-                    default:             break;   /* SPACE_BETWEEN: see below */
+                    case JUSTIFY_SPACE_BETWEEN:
+                        if (online > 1) lgap += slack / (online - 1);
+                        break;
+                    case JUSTIFY_SPACE_AROUND:
+                        if (online > 0) { float sh = slack / online;
+                                          cursor += sh * 0.5f; lgap += sh; }
+                        break;
+                    case JUSTIFY_SPACE_EVENLY:
+                        if (online > 0) { float sh = slack / (online + 1);
+                                          cursor += sh; lgap += sh; }
+                        break;
+                    default:             break;
                 }
             }
             for (int q = i; q < j; q++) {
                 struct layout_node *k = layout_resolve(la, kids[q]);
                 if (k->is_overlay) continue;
                 float cross_pos = cross_cursor;
-                switch (n->align) {
+                switch (child_align(n, k)) {
                     case ALIGN_CENTER: cross_pos = cross_cursor + (lc - crossv[q]) * 0.5f; break;
                     case ALIGN_END:    cross_pos = cross_cursor + (lc - crossv[q]);        break;
                     default:           break;   /* START / STRETCH -> line top */
                 }
                 k->resolved_x = cursor;   k->resolved_y = cross_pos;
-                k->resolved_w = base[q];  k->resolved_h = crossv[q];
+                k->resolved_w = base[q];
+                /* stretch fills THIS LINE, which is what it means here */
+                k->resolved_h = (child_align(n, k) == ALIGN_STRETCH) ? lc : crossv[q];
                 if (k->is_container) arrange(la, sa, kids[q], k->resolved_w, k->resolved_h);
                 else                 write_scene(sa, k);
-                cursor += base[q] + n->spacing;
+                cursor += base[q] + lgap;
             }
             cross_cursor += lc + line_gap;
             i = j;
@@ -1318,6 +1412,14 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
         case JUSTIFY_CENTER:        cursor += leftover * 0.5f; break;
         case JUSTIFY_END:           cursor += leftover; break;
         case JUSTIFY_SPACE_BETWEEN: if (nk > 1) gap = n->spacing + leftover / (nk - 1); break;
+        /* AROUND: each item carries half a share on each side, so the ends get
+         * half a gap and the middles a whole one. EVENLY: n+1 equal gaps. */
+        case JUSTIFY_SPACE_AROUND:
+            if (nk > 0) { float sh = leftover / nk; cursor += sh * 0.5f; gap = n->spacing + sh; }
+            break;
+        case JUSTIFY_SPACE_EVENLY:
+            if (nk > 0) { float sh = leftover / (nk + 1); cursor += sh; gap = n->spacing + sh; }
+            break;
     }
     if (!is_row) cursor -= n->scroll_offset;   /* vertical scroll shifts children up */
 
@@ -1344,7 +1446,7 @@ static void arrange_inner(struct layout_arena *la, struct scene_arena *sa,
         }
         float main_pos = cursor;
         float cross_pos = cross_pad0;
-        switch (n->align) {
+        switch (child_align(n, k)) {
             case ALIGN_START:   cross_pos = cross_pad0; break;
             case ALIGN_CENTER:  cross_pos = cross_pad0 + (content_cross - crossv[i]) * 0.5f; break;
             case ALIGN_END:     cross_pos = cross_pad0 + (content_cross - crossv[i]); break;

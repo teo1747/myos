@@ -523,7 +523,7 @@ build/nbsock.elf: build/crt0.o build/syscalls.o build/nbsock.o user/lib/newlib.l
 # Vellum -- the browser (docs/BROWSER.md). user/web/ = the engine: html (the
 # parser), style (the user-agent stylesheet), render (document -> EmUI).
 build/web_html.o: user/web/html.c user/web/html.h | $(BUILD)
-	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -Iuser/web/css -c $< -o $@
 # ---- QuickJS: JavaScript on the OS (docs/BROWSER.md B7) ---------------------
 # Ported, not written: §9's position is own the CORE, port the TOOLS, and this
 # OS already ports CPython, TCC and git. Absent source => js.elf is simply not
@@ -612,6 +612,10 @@ build/web_ico.o: user/web/ico.c user/web/ico.h user/web/png.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
 build/web_favicon.o: user/web/favicon.c user/web/favicon.h user/web/ico.h user/web/png.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
+build/web_svg.o: user/web/svg.c user/web/svg.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
+build/web_charset.o: user/web/charset.c user/web/charset.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
 build/web_cookie.o: user/web/cookie.c user/web/cookie.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
 build/web_store.o: user/web/store.c user/web/store.h | $(BUILD)
@@ -625,13 +629,13 @@ build/web_tabs.o: user/web/tabs.c user/web/tabs.h | $(BUILD)
 build/web_select.o: user/web/select.c user/web/select.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(UIDEMO_INC) -Iuser/web -c $< -o $@
 build/web_cssref.o: user/web/cssref.c user/web/cssref.h user/web/html.h | $(BUILD)
-	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -c $< -o $@
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/web -Iuser/web/css -c $< -o $@
 VELLUM_OBJS := build/vellum.o build/web_html.o build/web_style.o build/web_render.o \
                build/web_url.o build/web_net.o build/web_fetchjob.o \
                build/web_css_decl.o build/web_css_sel.o build/web_css_sheet.o build/web_css_vars.o build/web_css_media.o build/web_css_calc.o \
                build/web_png.o build/web_jpeg.o build/web_imgcache.o build/pkg_inflate.o \
                build/web_ico.o build/web_favicon.o \
-               build/web_form.o build/web_select.o build/web_cssref.o build/web_cookie.o build/web_store.o build/web_find.o build/web_history.o build/web_tabs.o
+               build/web_form.o build/web_select.o build/web_cssref.o build/web_cookie.o build/web_store.o build/web_find.o build/web_history.o build/web_tabs.o build/web_charset.o build/web_svg.o
 VELLUM_JS := $(if $(HAVE_QJS),build/web_jsdom.o $(QJS_OBJS),)
 # DEFINED BEFORE ITS FIRST USE, and that is not style. Make expands a rule's
 # PREREQUISITES when the rule is read, so a := variable defined later expands
@@ -1907,8 +1911,8 @@ html-test:
 	    user/web/html.c user/web/url.c user/web/style.c \
 	    user/web/css/decl.c user/web/css/sel.c user/web/css/sheet.c user/web/css/vars.c user/web/css/media.c user/web/css/calc.c \
 	    user/web/png.c user/web/jpeg.c user/lib/inflate.c user/web/form.c \
-	    user/web/cookie.c user/web/store.c user/web/tabs.c \
-	    user/web/html_test.c -o $(BUILD)/html_test
+	    user/web/cookie.c user/web/store.c user/web/tabs.c user/web/charset.c user/web/svg.c \
+	    user/web/html_test.c -lm -o $(BUILD)/html_test
 	$(BUILD)/html_test
 
 backend-test:
@@ -2044,6 +2048,22 @@ browser-render:
 # build/webreal (gitignored, refetch by deleting it); SHOTS=1 also writes a PNG
 # of each so they can be LOOKED at, which is a different question from whether
 # they produced text. See tools/web_real.py.
+# web-verify -- our render against what FIREFOX says is visible on the page.
+# The corpus checks what somebody thought to assert; this needs no expectation
+# written first, and reports both directions: content we dropped, and content
+# we revealed that the page had hidden. See tools/web_verify.py.
+web-verify:
+	@$(MAKE) --no-print-directory build/browser_render
+	@python3 tools/web_verify.py $(PAGES)
+
+# web-verify asks whether the CONTENT is there. This asks the other half a
+# reader actually judges -- whether it is in the right PLACE -- by putting our
+# render and Firefox's side by side as pictures and comparing where the words
+# ended up. Not a pixel diff: our fonts and colours are our own.
+web-shots:
+	@$(MAKE) --no-print-directory build/browser_render
+	@python3 tools/web_shots.py $(PAGES)
+
 web-real:
 	@$(MAKE) --no-print-directory build/browser_render
 	@python3 tools/web_real.py
@@ -2072,7 +2092,7 @@ BROWSER_RENDER_SRCS := $(V2_SRC) user/web/html.c user/web/style.c user/web/rende
                        user/web/css/decl.c user/web/css/sel.c user/web/css/sheet.c \
                        user/web/css/vars.c user/web/css/media.c user/web/css/calc.c \
                        user/web/url.c user/web/png.c user/web/jpeg.c user/lib/inflate.c \
-                       user/web/form.c user/web/select.c user/web/cookie.c \
+                       user/web/form.c user/web/select.c user/web/cookie.c user/web/charset.c user/web/svg.c \
                        user/web/store.c user/web/find.c user/web/history.c \
                        user/web/tabs.c \
                        user/web/render_host.c \

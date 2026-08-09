@@ -1,0 +1,93 @@
+<html><head><title>The DOM a real page assumes</title></head><body>
+<div id="box" class="a b"><span class="x">ONE</span><span class="y">TWO</span></div>
+<p id="out">OUTPLACEHOLDER</p>
+<p id="two">TWOPLACEHOLDER</p>
+<p id="hidden">HIDDENTEXT</p>
+<p id="three">THREEPLACEHOLDER</p>
+<script>
+/* Everything here is what a page written for a browser actually says. This DOM
+   spelled the same operations `setText`, `setValue`, `setStyle` and had no
+   getElementById at all -- so a real script died on its first line and the page
+   sat there looking merely unstyled. */
+var box = document.getElementById("box");          /* the most-used call on the web */
+var x = box.querySelector(".x");                   /* scoped, and must not match box */
+var made = document.createElement("em");
+made.textContent = "INSERTED";                     /* property, not setText() */
+box.insertBefore(made, box.querySelector(".y"));
+
+document.getElementById("hidden").style.display = "none";   /* style as an object */
+
+var u = new URL("/search?q=embLink&n=2#frag", "https://example.org/a/b");
+var p = new URLSearchParams("a=1&b=hello+world&a=2");
+
+document.getElementById("out").textContent =
+  "PARENT=" + x.parentElement.id +
+  " KIDS=" + box.children.length +
+  " NEXT=" + x.nextElementSibling.tagName +
+  " PREV=" + box.querySelector(".y").previousElementSibling.tagName +
+  " FIRST=" + box.firstElementChild.tagName +
+  " SELF=" + (box.querySelector("#box") === null) +
+  " ROOT=" + (document.documentElement === null ? "none" : "html") +
+  " WIN=" + (window === globalThis);
+
+document.getElementById("two").textContent =
+  "HOST=" + u.hostname + " PATH=" + u.pathname + " Q=" + u.searchParams.get("q") +
+  " HASH=" + u.hash + " SP=" + p.get("b") + " ALL=" + p.getAll("a").join("+");
+
+console.warn("warn exists");   /* log was the only method; warn threw */
+
+/* document.currentScript is how a modern page finds where it was written --
+   SvelteKit's whole bootstrap is `document.currentScript.parentElement`, and
+   Brave's search page died on it because <script> had no node at all. */
+var cur = document.currentScript;
+/* An event type we do not deliver must not THROW: `addEventListener` on the
+   first line of a script used to destroy everything after it. */
+var threw = "no";
+try { window.addEventListener("DOMContentLoaded", function () {}); }
+catch (e) { threw = "yes"; }
+document.getElementById("three").textContent =
+  "CUR=" + (cur ? cur.tagName : "none") +
+  " CURPARENT=" + (cur && cur.parentElement ? cur.parentElement.tagName : "none") +
+  " THREW=" + threw;
+</script>
+
+<!-- The inserted node landed BETWEEN the two spans, which is what insertBefore
+     means and what appending would have got wrong. -->
+<!-- EXPECT-ORDER: ONE INSERTED -->
+<!-- EXPECT-ORDER: INSERTED TWO -->
+
+<!-- Tree navigation: every one of these threw before, because the property did
+     not exist. PREV is the inserted <em>, not the first span. -->
+<!-- EXPECT-TEXT: PARENT=box -->
+<!-- EXPECT-TEXT: KIDS=3 -->
+<!-- EXPECT-TEXT: NEXT=em -->
+<!-- EXPECT-TEXT: PREV=em -->
+<!-- EXPECT-TEXT: FIRST=span -->
+<!-- querySelector on an element searches INSIDE it, so it cannot match itself -->
+<!-- EXPECT-TEXT: SELF=true -->
+<!-- EXPECT-TEXT: ROOT=html -->
+<!-- EXPECT-TEXT: WIN=true -->
+
+<!-- URL is built on url.c's own resolver, so a root-relative href resolves
+     against the base exactly as a link on the page would. -->
+<!-- EXPECT-TEXT: HOST=example.org -->
+<!-- EXPECT-TEXT: PATH=/search -->
+<!-- EXPECT-TEXT: Q=embLink -->
+<!-- EXPECT-TEXT: HASH=#frag -->
+<!-- URLSearchParams decodes `+` as a space, and keeps repeated keys -->
+<!-- (a run is one WORD, so a value with a space in it is asserted by line) -->
+<!-- EXPECT-LINE: SP=hello world -->
+<!-- EXPECT-TEXT: ALL=1+2 -->
+
+<!-- `style.display = "none"` actually hides it, rather than being accepted and
+     dropped: the property is a real object over the cascade. -->
+<!-- EXPECT-NO-TEXT: HIDDENTEXT -->
+<!-- EXPECT-NO-TEXT: OUTPLACEHOLDER -->
+<!-- EXPECT-NO-TEXT: TWOPLACEHOLDER -->
+<!-- EXPECT-TEXT: CUR=script -->
+<!-- EXPECT-TEXT: CURPARENT=body -->
+<!-- An unsupported listener is DECLINED (and said so on the console), not
+     thrown: a page must survive asking for an event we cannot deliver. -->
+<!-- EXPECT-TEXT: THREW=no -->
+<!-- EXPECT-NO-TEXT: THREEPLACEHOLDER -->
+</body></html>

@@ -21,6 +21,7 @@
  * This file reads `struct vstyle` and NEVER a tag name. See docs/BROWSER.md §4.
  */
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #include "ui.h"
@@ -31,6 +32,7 @@
 #include "url.h"
 #include "css.h"
 #include "imgcache.h"
+#include "svg.h"
 #include "form.h"
 #include "kit.h"
 #include "render.h"
@@ -140,7 +142,14 @@ static void emit_text(const char *txt, const struct vstyle *s, const char *href)
             word[n] = 0;
             /* the pool: EmUI keeps the pointer for the frame, so a stack
              * buffer reused per word would render the LAST word everywhere */
-            static char pool[512][68];
+            /* WIDE ENOUGH FOR A URL. At 68 bytes a word longer than about
+             * sixty-six characters was silently cut -- and the words that long
+             * in running text are almost always URLs, which is exactly where
+             * losing the tail changes what the text SAYS. suckless.org prints a
+             * commit link in a paragraph and it came out ending mid-hash. The
+             * scan buffer above is 256, so this matches it rather than
+             * inventing a second, smaller limit. */
+            static char pool[512][260];
             static int  pn;
             if (pn >= 512) pn = 0;
             /* trailing space unless the run ends here: the space is part of
@@ -276,7 +285,8 @@ static int is_inline(struct html_doc *d, int n, const struct vstyle *parent) {
     if (parent && (parent->display == VD_FLEX || parent->display == VD_GRID))
         return 0;
     /* controls flow INLINE with their labels, which is what a form looks like */
-    return s.display == VD_INLINE || s.display == VD_IMAGE ||
+    return s.display == VD_INLINE || s.display == VD_INLINE_BLOCK ||
+           s.display == VD_IMAGE ||
            s.display == VD_FIELD  || s.display == VD_BUTTON ||
            s.display == VD_CHECK  || s.display == VD_RADIO || s.display == VD_SELECT;
 }
@@ -297,10 +307,94 @@ static void emit_select(struct html_doc *d, int n, const struct vstyle *st);
  * a row, a cell or a list item inside a run of inline content is not inline
  * content -- CSS says the inline context ends and a block box begins, and a
  * renderer that walks it as inline anyway flattens the whole subtree. */
+static float g_zoom = 1.0f;
+
+/* A CSS pixel in device pixels: every length the cascade produces passes
+ * through here, so page zoom is one multiply rather than a change at each use.
+ * Declared this early because emit_inline needs it. */
+static float zpx(short v) { return (float)v * g_zoom; }
+
+/* Is the box being emitted sized by its CONTENT rather than by its container?
+ * True for a flex/grid item, a float, and an inline-block -- all three shrink
+ * to fit. Declared here because emit_inline needs it and render_children sets
+ * it; the long note on what it means for flex is at render_children. */
+static int g_flex_item;
+
 static int breaks_inline(unsigned char display) {
     return display == VD_BLOCK || display == VD_LIST_ITEM || display == VD_TABLE ||
            display == VD_ROW   || display == VD_CELL      || display == VD_CAPTION ||
            display == VD_FLEX  || display == VD_GRID;
+}
+
+
+/* ---- inline <svg> -------------------------------------------------------
+ *
+ * The drawing is rasterised ONCE per (node, size) and kept, because a frame is
+ * 16ms and following a path grammar is not free -- re-rendering every icon on
+ * every frame would turn a scroll into a slideshow. Bounded like every other
+ * arena here: a fixed number of slots and a fixed pixel budget, and a page
+ * with more icons than that draws the first ones and nothing for the rest.
+ */
+#define SVG_SLOTS   24
+#define SVG_MAX_SIDE 64
+static struct svg_slot {
+    int      node, w, h, used;
+    uint32_t px[SVG_MAX_SIDE * SVG_MAX_SIDE];
+} g_svg[SVG_SLOTS];
+static int g_svg_n;
+
+void render_svg_cache_reset(void) { g_svg_n = 0; memset(g_svg, 0, sizeof g_svg); }
+
+static struct svg_slot *svg_slot_for(struct html_doc *d, int n, int w, int h) {
+    for (int i = 0; i < g_svg_n; i++)
+        if (g_svg[i].used && g_svg[i].node == n && g_svg[i].w == w && g_svg[i].h == h)
+            return &g_svg[i];
+    if (g_svg_n >= SVG_SLOTS) return 0;
+    struct svg_slot *s = &g_svg[g_svg_n];
+    static uint8_t scratch[512 * 1024];
+    if (svg_render((const uint8_t *)d->nodes[n].svg, strlen(d->nodes[n].svg),
+                   s->px, sizeof s->px, scratch, sizeof scratch,
+                   (uint32_t)w, (uint32_t)h, 0xFF000000u) != 0)
+        return 0;
+    s->node = n; s->w = w; s->h = h; s->used = 1;
+    g_svg_n++;
+    return s;
+}
+
+static void emit_svg(struct html_doc *d, int n, const struct vstyle *st) {
+    if (!d->nodes[n].svg) return;
+    /* SIZE: what CSS said, else what the document says, else the text size --
+     * an icon with no size at all is meant to be as tall as the line it sits
+     * on, which is what `1em` means and what every icon font did before SVG. */
+    uint32_t dw = 0, dh = 0;
+    svg_probe((const uint8_t *)d->nodes[n].svg, strlen(d->nodes[n].svg), &dw, &dh);
+    float w = st->width  ? (float)st->width  : 0;
+    float h = st->height ? (float)st->height : 0;
+    if (!w && !h) {
+        if (dw && dh) { w = (float)dw; h = (float)dh; }
+        else          { w = h = 16.0f; }
+    } else if (w && !h) h = dh && dw ? w * (float)dh / (float)dw : w;
+    else if (h && !w)   w = dh && dw ? h * (float)dw / (float)dh : h;
+    w *= g_zoom; h *= g_zoom;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+
+    int rw = (int)(w + 0.5f), rh = (int)(h + 0.5f);
+    if (rw > SVG_MAX_SIDE) rw = SVG_MAX_SIDE;
+    if (rh > SVG_MAX_SIDE) rh = SVG_MAX_SIDE;
+    struct svg_slot *s = svg_slot_for(d, n, rw, rh);
+    em_flush();
+    if (!s) {
+        /* No slot or an undrawable document: hold the space rather than
+         * collapsing the row around a missing icon. */
+        ui_begin_vstack(0x5A6C0000ULL ^ (uint64_t)(unsigned)n);
+        ui_set_size((struct layout_size){ .mode = SIZE_FIXED, .fixed_value = w },
+                    (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = h });
+        ui_end_stack();
+        return;
+    }
+    ui_image_sized(0x5A6C0000ULL ^ (uint64_t)(unsigned)n, s->px,
+                   (uint32_t)rw, (uint32_t)rh, w, h);
 }
 
 static void emit_inline(struct html_doc *d, int c, const struct vstyle *st,
@@ -346,6 +440,7 @@ static void emit_inline(struct html_doc *d, int c, const struct vstyle *st,
     /* AFTER computing its own style, not before: an image is styled by the
      * rules that match IT (`.half { width: 150px }`), and handing it the
      * parent's vstyle silently ignored every one of them. */
+    if (d->nodes[c].svg)        { emit_svg(d, c, &s); return; }
     if (s.display == VD_IMAGE)  { emit_image(d, c, &s); return; }
     if (s.display == VD_FIELD)  { emit_field(d, c, &s); return; }
     if (s.display == VD_BUTTON) { emit_button(d, c, &s); return; }
@@ -357,6 +452,37 @@ static void emit_inline(struct html_doc *d, int c, const struct vstyle *st,
      * walked as if it were text, and its rows and cells lose all their
      * structure -- which is exactly what a page wrapped in <center> used to do
      * to itself. */
+    /* INLINE-BLOCK: a box, laid out where the words are. It goes through the
+     * same block emitter -- so it keeps its padding, background and border --
+     * but inside the Flow this run has already opened, and sized to its
+     * content rather than to the line. That last part is what `g_flex_item`
+     * means here, and it is the same trick a float uses two functions down. */
+    if (s.display == VD_INLINE_BLOCK) {
+        em_flush();
+        int was = g_flex_item;
+        g_flex_item = 1;                       /* shrink to fit, like an item */
+        /* MARGIN OUTSIDE THE PAINT, which for this one box has to be arranged
+         * here. The block emitter folds margin into padding -- invisible on a
+         * full-width block, and unmissable on a box with a background and a
+         * rounded corner: google.com's "Connexion" pill came out half again
+         * too tall and too wide, painting its own 12px margin blue. Wrapping
+         * it in a transparent box that carries the margin puts the paint back
+         * on the border box where CSS says it lives. (The block path has the
+         * same flaw and is left alone deliberately -- see docs/TODO.md.) */
+        struct vstyle inner = s;
+        short mt = inner.margin_top, mb = inner.margin_bottom, ml = inner.indent;
+        inner.margin_top = inner.margin_bottom = inner.indent = 0;
+        if (mt || mb || ml) {
+            HStack(.spacing = 0, .align = Leading,
+                   .pt = zpx(mt), .pb = zpx(mb), .pl = zpx(ml)) {
+                render_block(d, c, &inner, href, 0);
+            }
+        } else {
+            render_block(d, c, &inner, href, 0);
+        }
+        g_flex_item = was;
+        return;
+    }
     if (breaks_inline(s.display)) { em_flush(); render_block(d, c, &s, href, 0); return; }
     const char *h = d->nodes[c].href ? d->nodes[c].href : href;
     for (int k = d->nodes[c].first_child; k >= 0; k = d->nodes[k].next_sibling)
@@ -389,10 +515,10 @@ static const struct vstyle *g_area_owner;
 /* The page's zoom. Lengths the AUTHOR stated -- a 240px sidebar, 16px of
  * padding -- scale with the text, or a zoomed page is large type inside boxes
  * that did not grow. */
-static float g_zoom = 1.0f;
+/* g_zoom is defined above zpx, which is needed early by emit_inline */
 void vellum_set_zoom(float z) { g_zoom = (z > 0.2f && z < 6.0f) ? z : 1.0f; }
 float vellum_zoom(void) { return g_zoom; }
-static float zpx(short v) { return (float)v * g_zoom; }
+/* zpx is declared above emit_inline, which needs it for inline-block margins */
 
 /* justify-content / align-items in the toolkit's spelling. */
 static EmAlign em_of(unsigned char vj, EmAlign dflt) {
@@ -400,6 +526,8 @@ static EmAlign em_of(unsigned char vj, EmAlign dflt) {
         case VJ_CENTER:  return Center;
         case VJ_END:     return Trailing;
         case VJ_BETWEEN: return SpaceBetween;
+        case VJ_AROUND:  return SpaceAround;
+        case VJ_EVENLY:  return SpaceEvenly;
         case VJ_STRETCH: return Fill;
         case VJ_START:   return Leading;
     }
@@ -416,17 +544,60 @@ static EmAlign em_of(unsigned char vj, EmAlign dflt) {
  * a flex or grid container's children, because a box cannot see its own
  * parent's display and the two want opposite widths: a block-level box fills
  * its container, a flex item is sized by its content unless it grows. */
-static int g_flex_item;
+/* declared above emit_inline, which needs it for inline-block */
+/* ...and whether that container runs down the page WITH A DEFINITE HEIGHT.
+ *
+ * flex-grow and flex-basis are MAIN-AXIS properties, so in a `flex-direction:
+ * column` container `flex: 1` grows a child's HEIGHT. But free space only
+ * exists on an axis whose container has a size to be free of -- CSS says the
+ * same -- and routing grow onto the height of an AUTO-height column is worse
+ * than not routing it at all: the column's height comes from its children, so
+ * there is never anything to grow into, and the flex weight instead makes the
+ * child the first thing squashed when the column overflows (layout.c gives
+ * boxes that asked to flex up their space before intrinsic ones). On
+ * rust-lang.org that collapsed <main> to nothing and drew the footer under the
+ * navbar. So: a STATED height routes grow to the height; anything else keeps
+ * the width behaviour this always had. */
+static int g_flex_col;      /* the container is a COLUMN: basis/grow are height */
+static int g_flex_col_def;  /* ...and it has a definite height, so it can hand out space */
 
 static void open_box(const struct vstyle *s, EmProps bp) {
-    if (s->gap > 0) bp.spacing = (float)s->gap * g_zoom;
+    /* TWO GAPS ON TWO AXES. `gap: 30px 10px` is row-gap then column-gap, and
+     * which one is the MAIN gap depends on the direction: down a column the
+     * row gap separates the items, across a row the column gap does and the
+     * row gap separates the wrapped lines. `spacing` is the engine's main-axis
+     * gap, so the mapping happens here rather than in the engine. */
+    short main_gap = s->gap, cross_gap = -1;
+    if (s->col_gap >= 0) {
+        if (s->flex_col) { main_gap = s->gap; cross_gap = s->col_gap; }
+        else             { main_gap = s->col_gap; cross_gap = s->gap; }
+    }
+    if (main_gap > 0) bp.spacing = (float)main_gap * g_zoom;
+    /* max-width, on every display type -- the engine clamps both the main and
+     * the cross axis by it, so a centred content column stops growing at its
+     * cap whether it is a block, a flex container or a grid. */
+    if (s->max_width > 0) bp.maxw = (float)s->max_width * g_zoom;
     if (s->display == VD_FLEX) {
         bp.justify = em_of(s->justify, Leading);
-        /* align-items DEFAULTS to stretch in CSS, which is Fill here -- and is
-         * also what a block container wants, so the default below is shared. */
+        /* UNSET align-items keeps the start-alignment this has always had,
+         * even though CSS's initial value is STRETCH. The correct default is
+         * written and was measured: it fixes a real bug (a `flex-direction:
+         * column` container shrinks its rows to their own text -- see
+         * tests/web/flex2.html, DOWNB) and it BREAKS rust-lang.org, where it
+         * collapses <main> to nothing and draws the footer under the navbar.
+         * Something else about that page is wrong and stretch only exposes it.
+         * Shipping the fix would trade a bug nobody has hit for one that is
+         * visible on a front page, so it waits for the diagnosis -- which is
+         * logged in docs/TODO.md rather than left as a surprise here. A STATED
+         * align-items is honoured in full; this is only the default. */
         bp.align = em_of(s->align_items, Fill);
         if (s->flex_col)       { em_vstack_(bp); return; }
-        if (s->flex_wrap)      { em_flow_(bp);   return; }
+        if (s->flex_wrap)      { em_flow_(bp);
+                                 /* only a WRAPPING row has a second axis to
+                                  * space, which is why this is set here */
+                                 if (cross_gap >= 0)
+                                     ui_set_cross_spacing((float)cross_gap * g_zoom);
+                                 return; }
         em_hstack_(bp);
         return;
     }
@@ -485,6 +656,22 @@ static void size_box(const struct vstyle *s, int flex_item) {
             }
     }
     struct layout_size w, h;
+    /* flex-shrink, ONLY when the author asked for more than the default.
+     *
+     * CSS's initial shrink is 1, and the engine's IMPLICIT default already
+     * behaves like 1 -- but with a priority CSS lacks: boxes that asked to
+     * flex give up space before intrinsically-sized ones, so a toolbar squashes
+     * its content pane rather than its buttons (layout.c, "pass 1 / pass 2").
+     * An EXPLICIT weight deliberately bypasses that priority, so stating the
+     * default on every item flattened it -- and a row that could no longer
+     * shrink its flexible child in isolation grew two lines taller instead.
+     * Only a stated weight above the default is worth losing the priority for.
+     *
+     * `flex-shrink: 0` is expressed by the SIZE, not here: a stated basis is a
+     * SIZE_FIXED box, and the engine never shrinks one of those. Without a
+     * basis (`flex: none`) an intrinsic box can still give in pass 2, which is
+     * a bounded and visible imperfection rather than a wrong number. */
+    float shr = (s->shrink > 1) ? (float)s->shrink : 0.0f;
     float grow_w = s->border_box ? 0.0f : box_inset(s);
     float grow_h = s->border_box ? 0.0f
                  : (float)(s->pad_top + s->pad_bottom) + 2.0f * (float)s->border_width;
@@ -493,16 +680,54 @@ static void size_box(const struct vstyle *s, int flex_item) {
                                                      .pct_px = (float)s->width };
     else if (s->width > 0) w = (struct layout_size){ .mode = SIZE_FIXED,
                                                      .fixed_value = (float)s->width + grow_w };
-    else if (s->grow)      w = (struct layout_size){ .mode = SIZE_FLEX,  .flex_grow = 1 };
-    else if (flex_item)    w = (struct layout_size){ .mode = SIZE_INTRINSIC };
+    /* THE MAIN AXIS OF THE CONTAINER. flex-grow and flex-basis apply there and
+     * nowhere else; a column's items grow in height. */
+    else if (s->grow && !g_flex_col)
+                           w = (struct layout_size){ .mode = s->basis >= 0 ? SIZE_FIXED : SIZE_FLEX,
+                                                     .fixed_value = s->basis >= 0
+                                                                  ? (float)s->basis * g_zoom + grow_w : 0,
+                                                     .flex_grow = (float)s->grow,
+                                                     .flex_shrink = shr };
+    else if (s->basis >= 0 && !g_flex_col)
+                           w = (struct layout_size){ .mode = SIZE_FIXED,
+                                                     .fixed_value = (float)s->basis * g_zoom + grow_w,
+                                                     .flex_shrink = shr };
+    /* A ROW's item is sized by its content on the main axis. A COLUMN's item
+     * is not: width is its CROSS axis, and CSS stretches it to the column.
+     * We do not apply that default yet (see open_box), so the fill has to be
+     * asked for here -- which is exactly what this did before flex-grow was
+     * routed to the height axis. Dropping it made every `flex: 1` row inside a
+     * `flex-direction: column` shrink to its own text. */
+    else if (flex_item && !g_flex_col)
+                           w = (struct layout_size){ .mode = SIZE_INTRINSIC,
+                                                     .flex_shrink = shr };
     else                   w = (struct layout_size){ .mode = SIZE_FLEX,  .flex_grow = 1 };
     if (s->height_pct)     h = (struct layout_size){ .mode = SIZE_PERCENT,
                                                      .fixed_value = (float)s->height_pct / 100.0f,
                                                      .pct_px = (float)s->height };
     else if (s->height > 0) h = (struct layout_size){ .mode = SIZE_FIXED,
                                                       .fixed_value = (float)s->height + grow_h };
+    else if (s->grow && g_flex_col_def)
+                            h = (struct layout_size){ .mode = s->basis >= 0 ? SIZE_FIXED : SIZE_FLEX,
+                                                      .fixed_value = s->basis >= 0
+                                                                   ? (float)s->basis * g_zoom + grow_h : 0,
+                                                      .flex_grow = (float)s->grow,
+                                                      .flex_shrink = shr };
+    else if (s->basis >= 0 && g_flex_col_def)
+                            h = (struct layout_size){ .mode = SIZE_FIXED,
+                                                      .fixed_value = (float)s->basis * g_zoom + grow_h,
+                                                      .flex_shrink = shr };
     else                   h = (struct layout_size){ .mode = SIZE_INTRINSIC };
     ui_set_size(w, h);
+    /* align-self, last: it is a property of the CHILD about its own cross
+     * alignment, and only the child knows it. VJ_AUTO leaves the container's
+     * align-items in charge, which is the initial value. */
+    if (s->align_self != VJ_AUTO) {
+        int a = s->align_self == VJ_CENTER  ? ALIGN_CENTER
+              : s->align_self == VJ_END     ? ALIGN_END
+              : s->align_self == VJ_STRETCH ? ALIGN_STRETCH : ALIGN_START;
+        ui_set_align_self(a);
+    }
 }
 
 static void render_inline_run(struct html_doc *d, int from, int to,
@@ -684,6 +909,17 @@ static void emit_field(struct html_doc *d, int n, const struct vstyle *st) {
 /* A button. `value` is its label for <input type=submit>, its text content for
  * <button> -- and "Submit" when the page said neither, because an unlabelled
  * button is a control nobody can use. */
+static void render_children(struct html_doc *d, int node, const struct vstyle *s,
+                            const char *href);
+
+/* Does this button have an ELEMENT child -- an icon, a wrapper, anything that
+ * is not just text? Then it has content to render rather than a caption. */
+static int first_elem_child(struct html_doc *d, int n) {
+    for (int c = d->nodes[n].first_child; c >= 0; c = d->nodes[c].next_sibling)
+        if (d->nodes[c].kind == HTML_ELEM) return c;
+    return -1;
+}
+
 static void emit_button(struct html_doc *d, int n, const struct vstyle *st) {
     static char label[128];
     const char *v = d->nodes[n].value;
@@ -695,13 +931,61 @@ static void emit_button(struct html_doc *d, int n, const struct vstyle *st) {
                 int w = snprintf(label + len, sizeof label - len, "%s", d->nodes[c].text);
                 if (w > 0) len += (size_t)w;
             }
-        if (!label[0]) snprintf(label, sizeof label, "Submit");
+        /* NO FALLBACK LABEL. A button with neither a value nor text is an
+         * ICON button, and writing "Submit" on it states something the page
+         * never said -- Brave's header has six and read as six Submit buttons.
+         * The icon itself is drawn below. */
+    }
+    /* WHITESPACE IS NOT A LABEL. A button written across several lines has a
+     * text child of " ", and treating that as its label skipped the icon path
+     * entirely -- the button drew as empty chrome with the icon it actually
+     * contains left undrawn. */
+    { size_t a = 0, b2 = strlen(label);
+      while (a < b2 && (label[a]==' '||label[a]=='\t'||label[a]=='\n'||label[a]=='\r')) a++;
+      while (b2 > a && (label[b2-1]==' '||label[b2-1]=='\t'||label[b2-1]=='\n'||label[b2-1]=='\r')) b2--;
+      memmove(label, label + a, b2 - a); label[b2 - a] = 0; }
+
+    /* A BUTTON WITH CONTENT, rather than a caption.
+     *
+     * Button() takes a string, so this used to render a button's LABEL and
+     * nothing else -- one string, or (once icons could be drawn) its first
+     * icon. A real page's button is a box with children: an icon and a word, or
+     * two icons, or a wrapper around either. Everything past the first was
+     * simply not walked, which is why 33 of Brave's 34 inline <svg> elements
+     * were never even REACHED by the renderer, let alone drawn.
+     *
+     * So: if the button has element children, it is built here from the
+     * primitives Button is itself built from -- a styled box that reports its
+     * own clicks -- and its children are rendered inside it. Text-only buttons
+     * keep the toolkit's Button, which knows how a caption should look. */
+    if (!label[0] || first_elem_child(d, n) >= 0) {
+        int icon = first_elem_child(d, n);
+        if (icon >= 0) {
+            em_flush();
+            HStack(.px = 6, .py = 4, .align = Center, .spacing = 4,
+                   .background = argb(0xFFEFEFEFU), .border = 1,
+                   .border_color = argb(0xFF9A9A9AU), .corner = 6) {
+                struct instance_handle self = ui_open();
+                render_children(d, n, st, 0);
+                if (ui_consume_click(self)) {
+                    if (g_has_listener && g_has_listener(n)) { if (g_on_click) g_on_click(n); }
+                    else if (g_on_submit) g_on_submit(n);
+                }
+            }
+            return;
+        }
     }
     (void)st;
     HStack(.py = 2) {
         /* A page's submit button, not a desktop primary action: the web's
          * button is a light face with dark text and a thin border. */
-        if (Button(label).id(label)
+        /* KEYED BY THE NODE, not by the label. Identity in a retained tree is
+         * the key, and every unlabelled button carried the same one -- six
+         * buttons claiming to be the same instance, which is a reconciliation
+         * bug waiting for the frame that notices. */
+        char bid[24];
+        snprintf(bid, sizeof bid, "btn%d", n);
+        if (Button(label).id(bid)
                 .bg(argb(0xFFEFEFEFU)).color(argb(PAGE_INK))
                 .border(1).clicked()) {
             /* A listener wins over submission: a script that took the click
@@ -781,7 +1065,16 @@ static void render_children(struct html_doc *d, int node, const struct vstyle *s
  * the same at this level of fidelity. */
 static int render_table(struct html_doc *d, int node, const struct vstyle *st,
                         const char *href) {
-    static int rows[TBL_MAX_ROWS];
+    /* ON THE STACK, and it matters: this function RECURSES. A table inside a
+     * table's cell re-enters it, and a `static` row list meant the inner table
+     * overwrote the outer's -- so after the nested table returned, the outer
+     * carried on reading the INNER table's rows. Hacker News (a table whose
+     * third row holds a 92-row table, and whose fourth is the footer) rendered
+     * its footer as a repeat of an item row, and the real footer -- guidelines,
+     * FAQ, lists, API, security, legal -- was never drawn at all. The nesting
+     * is shallow and 128 ints is half a kilobyte; the static saved nothing and
+     * cost the bottom of the page. */
+    int rows[TBL_MAX_ROWS];
     int nrow = table_rows(d, node, rows, TBL_MAX_ROWS, st);
     if (!nrow) return 0;
 
@@ -790,7 +1083,7 @@ static int render_table(struct html_doc *d, int node, const struct vstyle *st,
      * column, which is what makes a ragged table still readable. */
     int ncol = 1;
     for (int i = 0; i < nrow; i++) {
-        static int cells[TBL_MAX_COLS];
+        int cells[TBL_MAX_COLS];
         int nc = row_cells(d, rows[i], cells, TBL_MAX_COLS, st);
         int span_total = 0;
         for (int c = 0; c < nc; c++) {
@@ -826,7 +1119,7 @@ static int render_table(struct html_doc *d, int node, const struct vstyle *st,
                     (struct layout_size){ .mode = SIZE_INTRINSIC });
 
         for (int i = 0; i < nrow; i++) {
-            static int cells[TBL_MAX_COLS];
+            int cells[TBL_MAX_COLS];
             int nc = row_cells(d, rows[i], cells, TBL_MAX_COLS, st);
             int placed = 0;
             for (int c = 0; c < nc && placed < ncol; c++) {
@@ -889,12 +1182,38 @@ static int render_table(struct html_doc *d, int node, const struct vstyle *st,
 }
 
 /* <pre>: one text node per source line, whitespace intact, no wrapping. */
+/* Gather a <pre>'s text, DESCENDANTS INCLUDED, with <br> as a newline.
+ *
+ * Only direct text children were read, and everything else was skipped -- so a
+ * <pre> whose lines are wrapped in <span>s rendered as nothing at all. That is
+ * not an edge case: it is every syntax-highlighted code block on the web,
+ * because highlighting IS spans. MDN's formal-syntax block, which is entirely
+ * spans and <br>s, came out blank on every reference page. */
+static void pre_gather(struct html_doc *d, int n, char *out, size_t cap, size_t *len,
+                       int depth) {
+    if (n < 0 || depth > 16 || *len + 1 >= cap) return;
+    for (int c = d->nodes[n].first_child; c >= 0; c = d->nodes[c].next_sibling) {
+        if (d->nodes[c].kind == HTML_TEXT) {
+            const char *t = d->nodes[c].text;
+            for (; t && *t && *len + 1 < cap; t++) out[(*len)++] = *t;
+        } else if (!strcmp(d->nodes[c].tag, "br")) {
+            if (*len + 1 < cap) out[(*len)++] = '\n';
+        } else {
+            pre_gather(d, c, out, cap, len, depth + 1);
+        }
+        if (*len + 1 >= cap) break;
+    }
+    out[*len] = 0;
+}
+
 static void render_pre(struct html_doc *d, int node, const struct vstyle *s) {
-    for (int c = d->nodes[node].first_child; c >= 0; c = d->nodes[c].next_sibling) {
-        if (d->nodes[c].kind != HTML_TEXT || !d->nodes[c].text) continue;
+    {
+        static char text[8192];
+        size_t tl = 0;
+        pre_gather(d, node, text, sizeof text, &tl, 0);
         static char pool[128][200];
         static int pn;
-        const char *p = d->nodes[c].text;
+        const char *p = text;
         while (*p) {
             size_t n = 0;
             char line[200];
@@ -904,9 +1223,11 @@ static void render_pre(struct html_doc *d, int node, const struct vstyle *s) {
             if (pn >= 128) pn = 0;
             snprintf(pool[pn], sizeof pool[0], "%s", line[0] ? line : " ");
             Text(pool[pn]).font(Caption).color(ui_theme()->text_secondary);
+            em_flush();     /* the DSL stages a leaf: `line` is reused below */
             pn++;
         }
     }
+    (void)s;
 }
 
 /* The style of an element child, or 0 if it is not an element. */
@@ -938,7 +1259,13 @@ static void render_range(struct html_doc *d, int from, int to,
  * Returns the sibling to continue from. */
 static int render_float_group(struct html_doc *d, int c, int to,
                               const struct vstyle *s, const char *href, int *li) {
-    int lf[8], rf[8], nl = 0, nr = 0;
+    /* One group's worth of floats. The old cap was 8 and a float past it was
+     * SKIPPED -- kernel.org floats nine footer links and the ninth simply did
+     * not exist. Now a full group STOPS collecting, so the overflow stays in
+     * the sibling walk and opens the next group: bounded work, nothing lost.
+     * (Progress is guaranteed: a full group consumed FLOATS_MAX siblings.) */
+#define FLOATS_MAX 32
+    int lf[FLOATS_MAX], rf[FLOATS_MAX], nl = 0, nr = 0;
     /* the run of consecutive floated siblings that opens the group */
     while (c >= 0 && c != to) {
         struct vstyle cs;
@@ -948,8 +1275,8 @@ static int render_float_group(struct html_doc *d, int c, int to,
         }
         if (!cs.floatp) break;
         if (cs.display != VD_NONE) {
-            if (cs.floatp == VF_RIGHT) { if (nr < 8) rf[nr++] = c; }
-            else                       { if (nl < 8) lf[nl++] = c; }
+            if (cs.floatp == VF_RIGHT) { if (nr == FLOATS_MAX) break; rf[nr++] = c; }
+            else                       { if (nl == FLOATS_MAX) break; lf[nl++] = c; }
         }
         c = d->nodes[c].next_sibling;
     }
@@ -962,7 +1289,17 @@ static int render_float_group(struct html_doc *d, int c, int to,
         rest_to = d->nodes[rest_to].next_sibling;
     }
 
-    HStack(.spacing = 10, .align = Leading, .grow = 1) {
+    /* A float row that is ONLY floats is the other shape floats are used in: a
+     * grid of columns (`.blogroll li { float: left; width: 33% }`). Those wrap
+     * -- three across, then the next line -- and a row that cannot wrap does
+     * not merely misplace the overflow, it CLIPS it: kernel.org's fifth footer
+     * link was gone off the end of the line. So floats-only becomes a Flow.
+     * With in-flow content beside them the non-wrapping row is still right:
+     * that is the image-with-text-beside-it shape, which must not break. */
+    int grid = (rest_from == rest_to) && (nl + nr > 1);
+    EmProps rowp = { .spacing = 10, .align = Leading, .grow = 1 };
+    if (grid) em_flow_(rowp); else em_hstack_(rowp);
+    {
         int outer = g_flex_item;
         g_flex_item = 1;                 /* a float shrinks to fit, like an item */
         for (int i = 0; i < nl; i++) {
@@ -982,15 +1319,73 @@ static int render_float_group(struct html_doc *d, int c, int to,
         }
         g_flex_item = outer;
     }
+    em_end_();
     return rest_to;
 }
+
+/* How many items a container may REORDER. Past this the children are emitted
+ * in document order, which is what they did before `order` existed -- a
+ * bounded, visible degradation rather than a heap the page controls. */
+#define FLEX_ORDER_MAX 128
 
 static void render_range(struct html_doc *d, int from, int to,
                          const struct vstyle *s, const char *href, int *li) {
     int c = from;
     int flexish = (s->display == VD_FLEX || s->display == VD_GRID);
+
+    /* `order`: flex items are laid out by it, and by document position among
+     * equals. Only taken when SOMEONE STATED ONE and every item is an element
+     * -- a bare text node inside a flex container is an anonymous item this
+     * cannot name, and reordering around it would drop it. Everything else
+     * falls through to the ordinary walk below, unchanged. */
+    if (flexish) {
+        int idx[FLEX_ORDER_MAX]; short ord[FLEX_ORDER_MAX];
+        int n = 0, any = 0, usable = 1;
+        for (int e = from; e >= 0 && e != to; e = d->nodes[e].next_sibling) {
+            if (is_blank_text(d, e)) continue;
+            if (n >= FLEX_ORDER_MAX) { usable = 0; break; }
+            struct vstyle cs2;
+            if (!child_style(d, e, s, &cs2)) { usable = 0; break; }   /* anonymous item */
+            if (cs2.display == VD_NONE) continue;
+            idx[n] = e; ord[n] = cs2.order;
+            if (cs2.order) any = 1;
+            n++;
+        }
+        if (usable && any) {
+            /* Insertion sort, STABLE -- equal orders must keep document order,
+             * which is both what CSS says and the only thing that makes this
+             * safe to apply to a container the author only partly annotated. */
+            for (int i = 1; i < n; i++) {
+                int ki = idx[i]; short ko = ord[i]; int j = i - 1;
+                while (j >= 0 && ord[j] > ko) { idx[j+1] = idx[j]; ord[j+1] = ord[j]; j--; }
+                idx[j+1] = ki; ord[j+1] = ko;
+            }
+            for (int i = 0; i < n; i++) {
+                struct vstyle cs2;
+                if (!child_style(d, idx[i], s, &cs2) || cs2.display == VD_NONE) continue;
+                if (cs2.display == VD_LIST_ITEM) (*li)++;
+                render_block(d, idx[i], &cs2,
+                             d->nodes[idx[i]].href ? d->nodes[idx[i]].href : href, *li);
+            }
+            return;
+        }
+    }
+
     while (c >= 0 && c != to) {
         if (flexish && is_blank_text(d, c)) { c = d->nodes[c].next_sibling; continue; }
+        /* `display: none` is removed from the box tree ENTIRELY -- so it is
+         * skipped HERE, before anything decides whether a run starts or ends.
+         * Left in, it counted as a block and split the inline run around it:
+         * `<span>a</span><script></script><span>b</span>` became two line
+         * boxes, which is how giving <script> a node of its own (so that
+         * document.currentScript could exist) made three corpus pages taller. */
+        if (d->nodes[c].kind == HTML_ELEM) {
+            struct vstyle hid;
+            if (child_style(d, c, s, &hid) && hid.display == VD_NONE) {
+                c = d->nodes[c].next_sibling;
+                continue;
+            }
+        }
         struct vstyle cs;
         /* A FLOAT opens a row that the following content shares. Not inside a
          * flex or grid container, where CSS says float does not apply. */
@@ -1016,8 +1411,26 @@ static void render_children(struct html_doc *d, int node, const struct vstyle *s
                             const char *href) {
     int li = 0;
     int flexish = (s->display == VD_FLEX || s->display == VD_GRID);
-    int outer_item = g_flex_item;
+    int outer_item = g_flex_item, outer_col = g_flex_col, outer_def = g_flex_col_def;
     g_flex_item = flexish;
+    /* TWO DIFFERENT FACTS, and conflating them cost rust-lang.org its layout.
+     *
+     * WHICH AXIS a child's flex-basis and flex-grow land on is decided by the
+     * container's direction alone: in a column they are HEIGHT, always. That
+     * the column has no definite height does not turn them into a width.
+     *
+     * WHETHER the column can hand out space is the other question, and that
+     * one does need a definite height -- with `height: auto` there is no
+     * leftover to distribute, so an item is sized by its content.
+     *
+     * They were one flag. `body { display:flex; flex-direction:column;
+     * min-height:100vh }` states no height, so the flag was false, so
+     * `body > main { flex: 1 }` was read as a WIDTH -- and `flex: 1` means
+     * basis 0, which made <main> a box zero pixels wide. Everything inside it
+     * then sized itself to its own content, so the front page laid out 15000px
+     * across and the third of three columns began off the right edge. */
+    g_flex_col  = flexish && s->display == VD_FLEX && s->flex_col;
+    g_flex_col_def = g_flex_col && (s->height > 0 || s->height_pct);
     /* A child's `grid-area` names a rectangle only its PARENT knows, so the
      * parent leaves itself here for exactly as long as its children are being
      * emitted. Saved and restored because grids nest. */
@@ -1026,6 +1439,8 @@ static void render_children(struct html_doc *d, int node, const struct vstyle *s
     render_range(d, d->nodes[node].first_child, -1, s, href, &li);
     g_area_owner = outer_owner;
     g_flex_item = outer_item;
+    g_flex_col  = outer_col;
+    g_flex_col_def = outer_def;
 }
 
 /* Emit whatever this element's display asks for, with no regard to events. */
@@ -1128,18 +1543,25 @@ static void render_block_inner(struct html_doc *d, int node, const struct vstyle
         }
         return;
     }
+    /* THE LIST MARKER, decided here and drawn below inside the item's own box.
+     *
+     * WHICH marker -- or none at all -- is the LIST's decision, inherited
+     * (style.c, <ul>): `list-style: none` is on essentially every navigation
+     * menu on the web, and an <ol> is numbered, so one hardcoded bullet was
+     * two visible wrongs at once. And the item is drawn through the ordinary
+     * box path rather than a private one, because a list item is an ordinary
+     * block that happens to have a marker -- the private path ignored width,
+     * background, padding and border, so `.blogroll li { width: 33% }` (a
+     * float grid, the second commonest thing a <ul> is) sized to its text. */
+    static char li_num[12];
+    const char *li_mark = 0;
     if (s->display == VD_LIST_ITEM) {
-        /* [marker][content] as a ROW, so wrapped text hangs under itself
-         * instead of sliding back under the bullet */
-        HStack(.spacing = 8, .align = Leading, .grow = 1,
-               .pb = (float)s->margin_bottom) {
-            Text("\xE2\x80\xA2").caption().tertiary();
-            VStack(.spacing = 2, .align = Fill, .grow = 1) {
-                render_children(d, node, s, href);
-            }
+        if (s->marker == VM_DECIMAL) {
+            snprintf(li_num, sizeof li_num, "%d.", list_index > 0 ? list_index : 1);
+            li_mark = li_num;
+        } else if (s->marker != VM_NONE) {
+            li_mark = "\xE2\x80\xA2";
         }
-        (void)list_index;
-        return;
     }
     /* .align = Fill, NOT Leading. A leading-aligned block sizes to its
      * content, so the Flow inside it is handed an unbounded width and never
@@ -1150,6 +1572,7 @@ static void render_block_inner(struct html_doc *d, int node, const struct vstyle
     if (s->display == VD_TABLE && render_table(d, node, s, href)) return;
     if (s->display == VD_FIELD)  { emit_field(d, node, s); return; }
     if (s->display == VD_BUTTON) { emit_button(d, node, s); return; }
+    if (d->nodes[node].svg)      { emit_svg(d, node, s); return; }
     if (s->display == VD_CHECK)  { emit_check(d, node, s, 0); return; }
     if (s->display == VD_RADIO)  { emit_check(d, node, s, 1); return; }
     if (s->display == VD_SELECT) { emit_select(d, node, s); return; }
@@ -1199,8 +1622,18 @@ static void render_block_inner(struct html_doc *d, int node, const struct vstyle
                       s->ins_set, s->position == VP_RELATIVE);
     size_box(s, was_item && !out_of_flow);
     {
-        if (s->pre) render_pre(d, node, s);
-        else        render_children(d, node, s, href);
+        if (li_mark) {
+            /* [marker][content] as a ROW, so wrapped text hangs under itself
+             * instead of sliding back under the bullet. */
+            HStack(.spacing = 8, .align = Leading, .grow = 1) {
+                Text(li_mark).caption().tertiary();
+                VStack(.spacing = 2, .align = Fill, .grow = 1) {
+                    render_children(d, node, s, href);
+                }
+            }
+        }
+        else if (s->pre) render_pre(d, node, s);
+        else             render_children(d, node, s, href);
     }
     em_end_();
 }

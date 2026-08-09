@@ -28,6 +28,14 @@ a.styled         { color: #ff8000 }
 /* Specificity: the id must beat the class, whichever order they are written. */
 .spec            { color: #ff0000 }
 #spec            { color: #30c0a0 }
+
+/* A COMPOUND WITH MORE THAN ONE CLASS. Only the last was stored, so
+   `.logo.scoped` degraded to `.scoped` and matched every element the component
+   had scoped -- and when such a rule carries display:none, the page empties.
+   Brave's search results rendered as a blank white box for exactly this. */
+.logo.scoped   { color: #cc3355 }
+.scoped        { color: #2244cc }
+.mc1.mc2.mc3   { color: #11aa66 }
 </style></head><body>
 
 <nav>
@@ -72,4 +80,17 @@ a.styled         { color: #ff8000 }
      bug rather than the rule. -->
 <!-- EXPECT-COLOR: LINKKEEPSBLUE #1a0dab -->
 <!-- EXPECT-COLOR: LINKSTYLED #ff8000 -->
+
+<p class="logo scoped">TWOCLASS is matched by the two-class rule</p>
+<p class="scoped">ONECLASS keeps the single-class colour</p>
+<p class="mc1 mc2 mc3">THREECLASS needs all three</p>
+<p class="mc1 mc2">TWOOFTHREE must NOT take the three-class rule</p>
+<!-- The two-class rule is more specific AND names both, so it wins on the
+     element that has both -- and must not touch the one that has only one. -->
+<!-- EXPECT-COLOR: TWOCLASS #cc3355 -->
+<!-- EXPECT-COLOR: ONECLASS #2244cc -->
+<!-- EXPECT-COLOR: THREECLASS #11aa66 -->
+<!-- An element missing one of the three classes falls through to the colour it
+     inherits: a compound is an AND, not a bag to pick from. -->
+<!-- EXPECT-COLOR: TWOOFTHREE #d8d8e0 -->
 </body></html>

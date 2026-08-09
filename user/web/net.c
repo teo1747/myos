@@ -22,6 +22,7 @@
 
 #include "url.h"
 #include "net.h"
+#include "charset.h"
 #include "cookie.h"
 
 #define MAX_REDIRECTS 5
@@ -266,6 +267,17 @@ static int http_once(const struct url *u, char *out, size_t cap,
      * arriving at a third of its length rendered as a page, with status 200 and
      * nothing anywhere saying otherwise -- which is how a networking bug spent
      * this long looking like a rendering one. */
+    /* WHAT ENCODING THE BODY IS IN, straight from the header that states it.
+     * Assuming UTF-8 turns every accent on an ISO-8859-1 page into a
+     * replacement character -- which looks like a broken font and is not. */
+    {
+        const char *ct = hdr_find(hdr, "Content-Type");
+        if (ct) {
+            char v[160];
+            hdr_value(ct, v, sizeof v);
+            charset_from_content_type(v, r->charset, sizeof r->charset);
+        }
+    }
     const char *cl = hdr_find(hdr, "Content-Length");
     if (cl && !r->truncated) {
         char v[32];

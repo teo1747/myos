@@ -19,7 +19,7 @@
 #include "html.h"
 #include "css.h"
 
-/* Skip /* ... *\/ comments and whitespace. */
+/* Skip CSS comments and whitespace. */
 static size_t skip_junk(const char *s, size_t len, size_t i) {
     for (;;) {
         while (i < len && (s[i]==' '||s[i]=='\t'||s[i]=='\n'||s[i]=='\r'||s[i]=='\f')) i++;
@@ -74,8 +74,16 @@ static unsigned short css_sheet_parse_into(struct css_sheet *sheet, const char *
          * condition, and a wrongly-applied block rewrites the page. */
         if (text[i] == '@') {
             size_t kw_s = ++i;
+            /* ...and the keyword ENDS AT '(' too. Every minifier writes
+             * `@media(min-width:45em)` without the space, and stopping only at
+             * whitespace read the keyword as `media(min-width:45em)` -- which
+             * is not "media", so the whole block was skipped. A mobile-first
+             * sheet then renders as its phone layout at desktop size, and
+             * gnu.org's `#fsf-support{display:block}` never overrode the
+             * `display:none` above it. */
             while (i < len && text[i] != ' ' && text[i] != '\t' && text[i] != '\n' &&
-                   text[i] != '\r' && text[i] != '{' && text[i] != ';') i++;
+                   text[i] != '\r' && text[i] != '{' && text[i] != ';' &&
+                   text[i] != '(') i++;
             int is_media = (i - kw_s == 5) &&
                            (text[kw_s]=='m'||text[kw_s]=='M') &&
                            !strncmp(text + kw_s + 1, "edia", 4);
@@ -170,7 +178,12 @@ void css_sheet_index(struct css_sheet *sheet) {
         const struct css_sel_part *subj = &sheet->rules[i].sel.part[sheet->rules[i].sel.n - 1];
         unsigned short *head;
         if (subj->id[0])         head = &sheet->bucket[key_hash('#', subj->id, sizeof subj->id)];
-        else if (subj->klass[0]) head = &sheet->bucket[key_hash('.', subj->klass, sizeof subj->klass)];
+        /* Bucketed by the FIRST class of the compound. A rule needs every class
+         * it names, but it can only live in one chain -- and the lookup probes
+         * every class the ELEMENT has, so a rule filed under the first one is
+         * always reached, then rechecked in full by the matcher. */
+        else if (subj->nklass && subj->klass[0][0])
+                                 head = &sheet->bucket[key_hash('.', subj->klass[0], sizeof subj->klass[0])];
         else if (subj->tag[0])   head = &sheet->bucket[key_hash('t', subj->tag, sizeof subj->tag)];
         else                     head = &sheet->keyless;
         sheet->next[i] = *head;

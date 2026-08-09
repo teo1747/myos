@@ -1504,6 +1504,385 @@ anything else is laid out.
 python.org went from a wall of unstyled text to its actual design: dark
 navigation bar, blue hero, the four-column footer grid.
 
+### Phase 31 — A verifier that finds what nobody asserted ✅
+
+`make web-verify` renders the same local page in Firefox under WebDriver, asks
+it for `document.body.innerText` — the visible text and only the visible text —
+and compares both ways: content we dropped, and content we revealed that the
+page had hidden. The corpus can only check what somebody thought to assert;
+this needs no expectation written first, which is the only way to find a gap
+nobody has noticed.
+
+It paid for itself immediately. **github.com segfaulted the renderer** — the
+host harness handed a decoder a pointer past the end of its image arena (the
+metal's imgcache has always checked), which wrote over the document mid-render
+and crashed three frames away in innocent code; AddressSanitizer found it in one
+run. github went 0% → 99.5%.
+
+And **a `<link media="print">` stylesheet was being applied on screen**: gnu.org
+links a screen sheet and a print sheet, nothing looked at the attribute, and the
+print sheet's `#header,#navigation,…{display:none}` took the entire navigation
+off the page. 84.7% → 99.7%.
+
+Working the list it produced found four more bugs, each of which had been
+invisible: a **nested table's static row array** (a table inside a cell
+overwrote the outer's rows, so Hacker News lost its whole footer), **attribute
+selectors being skipped** and **unknown functional pseudos being skipped**
+(both make a selector broader, and MDN hid every code block on the site with
+`.code-example:has(…)`), and a **`<pre>` reading only its direct text** — which
+is every syntax-highlighted code block on the web, since highlighting is spans.
+
+Thirteen of nineteen sampled sites now render **100%** of their visible text,
+and no remaining gap is larger than ten words.
+
+### Phase 31 — SVG, and the responsive layer that never matched ✅
+
+**`<noscript>` was parsed as ordinary markup.** Its contents are meant for a
+browser with scripting *off*, and we run scripts — so Brave's
+`<noscript><style>.noscript-hide{display:none!important}</style>` was going
+straight into our cascade, and its fallback markup was rendering over the real
+page. Skipped whole now: bbc dropped from 1837 nodes to 1530, and craigslist's
+scroll-blit check went green after being red for as long as it has been
+measured.
+
+**`WHATIS=x,y`** names the element covering a point — tag, id, class — because
+three separate explanations for one empty box were each disproved only after
+being acted on. The renderer always knew which element made which box; nothing
+could ask it.
+
+**A button is a box with children, not a caption.** `Button()` takes a string,
+so a `<button>` was drawn as one — its label, or its first icon. A real page's
+button holds an icon *and* a word, and everything past the first child was never
+walked. Buttons with element children now render their content inside a styled
+box that reports its own clicks.
+
+**The browser can now say how a page went.** The status line reports where the
+seconds went (`doc 259K/4s  css 1020K/13s`) and how the pictures went
+(`img 3ok 1fail 2wait 1noslot`) — because a failed image, one still arriving,
+and one the cache had no room for all draw the same grey box. That instrument
+immediately answered a question three fixes had guessed at: Brave's narrow
+header reports `img 0x`, so those empty boxes were never pictures at all.
+
+Building it exposed two bugs that had been wasting readings: the status and a
+script's message were drawn *on top of each other* whenever the row overflowed
+(the left string truncates now), and the image summary was composed before any
+frame had requested a picture, so it always read zero.
+
+**`@media` range syntax.** `(width <= 885px)` is what every modern build tool
+emits — 224 of the media queries in Brave's stylesheet are written that way and
+a handful use `min-width`. An unrecognised feature reports *not matching*, so
+the entire responsive layer of such a sheet evaluated to false; at a wide
+viewport that is accidentally right for the max-width cases and wrong for every
+min-width one, which is the worst way to be wrong. Both operand orders, strict
+and inclusive, two-sided ranges, plus `(hover: hover)` and `(pointer: fine)` —
+42 more queries that were being answered "no", handing every one the touch
+layout. Brave's narrow header is now the one that applies at the browser's real
+window width, which is what its own CSS asks for.
+
+#### SVG: the pictures that are described, not sampled ✅
+
+PNG and JPEG arrive as pixels; an SVG arrives as instructions, and until
+something followed them every icon on the modern web was a grey box — 23 of the
+138 images across the seventeen sites in `make web-real`, plus every inline
+icon, which is nearly every button on a page written this decade.
+
+`user/web/svg.{c,h}` is a renderer, deliberately a small one. It covers what
+icons are made of: the full path grammar including arcs, the basic shapes, `<g>`
+nesting with transforms, fill/fill-rule/opacity, and stroke as a width along the
+path — filled by a scanline rasteriser with 4× vertical subsampling and
+fractional horizontal coverage, so a 24px icon has edges rather than stairs. No
+gradients, filters, masks or text: an icon uses none of them, and half-doing
+them would draw a *wrong* picture instead of a plain one.
+
+Two entry points, because an SVG arrives two ways: `<img src="*.svg">` goes
+through imgcache, which dispatches on the bytes; and inline `<svg>`, whose
+source `html.c` now keeps whole the way `<style>` already does — SVG is not
+HTML, and parsing it as HTML built a subtree of unknown inline boxes that drew
+as nothing. Inline drawings are rasterised once per (node, size) and cached;
+following a path grammar every frame would turn a scroll into a slideshow.
+
+It also turned up three bugs that had nothing to do with SVG: an icon-only
+`<button>` never drew its icon (a button builds a text label and never renders
+children), a button written across lines has a text child of `" "` that counted
+as a label, and `moveto` never recorded its own point — so a two-point line had
+one point in it and stroked to nothing.
+
+### Phase 32 — What the bytes mean, and boxes that flow ✅
+
+**`document.currentScript` did not exist.** The parser captured a script's text
+and never made a node for the element, so a page could not find where it was
+written — SvelteKit's whole bootstrap is `document.currentScript.parentElement`,
+and that is the line Brave's search page died on. Each script has a node now.
+
+**`addEventListener` threw on event types we don't deliver**, which is fatal on
+a real page: it is the first line of a great many scripts, and throwing there
+destroys everything after it. Unsupported listeners are declined and reported
+on the console instead. Brave's search results render.
+
+**A trailing space inside an inline element was trimmed.** `trim_tail` ran when
+any element closed, which is right for a block (CSS drops line-end whitespace)
+and wrong mid-line, where that space separates the element from what follows —
+`<span>Data from </span><a>Wikipedia</a>` read "Data fromWikipedia". Trimming is
+scoped to block-level tags now.
+
+**A button with no text said "Submit"** — it is an icon button, and the label was
+a fabrication; it also keyed every such button identically in a retained tree.
+
+**An inline-block painted its own margin** — the block emitter folds margin into
+padding, invisible on a full-width block and unmissable on a rounded button.
+Google's "Connexion" pill was half again too big, painting its margin blue.
+
+
+**Every accent was a replacement character.** The pipeline assumed UTF-8, and
+google.com serves *this* browser `charset=ISO-8859-1`, where an e-acute is one
+byte that UTF-8 reads as broken. "Confidentialité" rendered
+"Confidentialit�" — which looks like a missing glyph and is nothing of the
+kind. `user/web/charset.{c,h}` answers the one question nobody was asking, and
+converts windows-1252 to UTF-8: header first, `<meta>` second. ISO-8859-1 is
+decoded as windows-1252 because every browser does, and because that range is
+where real pages keep their smart quotes and dashes. A page that declares UTF-8
+while containing bytes that cannot be UTF-8 is converted anyway — google.com
+does exactly that, and a self-contradictory document has no third reading worth
+protecting.
+
+**`display: inline-block` was folded into `inline`**, which threw away the box:
+padding, size, border and background all stopped existing, so rows of nav links
+welded into one word ("GmailImages"). It now goes through the ordinary block
+emitter — keeping everything a box has — but inside the inline run's flow and
+sized to its content, the same shrink-to-fit a float already used.
+
+### Phase 33 — A 1 MB page took two minutes, and it was TCP ✅
+
+"The browser is slow" has too many suspects to guess at, so the first change
+was measurement: every transfer is charged to the caller that asked for it and
+the status line reports where the seconds went. It said `doc 277K/26s  css
+1020K/85s` — 111 of 146 seconds in two transfers, about 8 KB/s. The decisive
+experiment was serving a 1 MB file over **plain HTTP**: 119.8 s, the same rate,
+with no TLS anywhere near it. That moved the search from the cipher to TCP.
+
+The receive window we advertise is `TCP_RXBUF - rx_len`, and it only reached
+the wire from `tcp_seg`, which runs when a segment *arrives*. Once the buffer
+filled we advertised zero, so the sender stopped; because it stopped nothing
+arrived; because nothing arrived we never sent the ACK saying the application
+had drained the buffer. The transfer advanced only when the peer's persist
+timer fired, about twice a second — exactly the ~470 ms per read the arithmetic
+pointed at. A window-update ACK on drain, plus a 64 KB buffer, fixed it.
+
+The 1 MB plain-HTTP document went **119.8 s → under a second**, Brave's
+document **26 s → 3 s**, and the whole page — 284 KB of HTML, a 1 MB
+stylesheet and its images, all over TLS — **146 s → under 70 s**. What remains
+is one TCP+TLS handshake per resource: `net.c` has no keep-alive, and that is
+the next lever.
+
+### Phase 34 — Three bugs that disfigured every real page ✅
+
+**Every `/>` drew a stray `>`.** The attribute scan stops on the slash of a
+self-closing tag, so the self-closing test read the space before it and the
+step "past the bracket" stepped past the slash instead — leaving the `>` in the
+stream as a text node. Every `<input />`, `<img />`, `<br/>` and every `<path/>`
+in an inline SVG put a bracket beside itself. Wikipedia shed 130 junk text
+nodes, bbc 86. The corpus had the bug baked into a reference image, which is
+worth remembering: a golden image pins what the renderer did, not what it
+should have done.
+
+**We ran every `<script>`, whatever its type.** JSON-LD is data a page stores in
+a script tag precisely so the browser will not run it, and bbc, Wikipedia and
+craigslist all carry one; we handed it to the interpreter, which threw on its
+first colon and took the page's real scripts down with it. HTML5's rule applies
+now.
+
+**The DOM used names no page on the web uses.** `setText()`, `setValue()` and
+`setStyle()` are this DOM's own spellings; a real script writes
+`el.textContent = ...`, `el.value = ...` and `el.style.display = 'none'`. Those
+are properties now, alongside `document.getElementById` (the most-used call on
+the web, and it did not exist), `documentElement`/`body`/`head`/`title`,
+`el.style` as a real object, and the `window`, `URL` and `URLSearchParams`
+globals — `URL` built on `url.c`'s own resolver rather than a second,
+differently-wrong parser written in script.
+
+**A compound selector kept only its last class.** `struct css_sel_part` held
+one `klass`, so `.logo-small.svelte-1i43yzn` parsed as `.svelte-1i43yzn` and a
+rule meant for one logo applied to every element its component had scoped. That
+rule carries `display:none`, so Brave's search page rendered as a blank white
+box *with* its stylesheet and correctly *without* it. Multi-class compounds are
+what Tailwind, CSS modules and Svelte scoped styles emit by the thousand. A
+compound now holds four classes and requires all of them, and one too complex
+to store matches nothing — a selector we cannot represent in full must not be
+applied at all.
+
+**A 1 MB stylesheet arrived cut in half.** Brave's sheet is 1.02 MB against a
+512 KB buffer, so the metal saw 3192 rules where the host saw 7257 — and the
+missing half held the layout. An oversized sheet is now dropped whole rather
+than severed, because CSS cut mid-rule leaves a dangling brace that eats every
+rule after it.
+
+Script failures across the 17 real sites went **23 → 2**: bbc 8→0, Wikipedia
+4→0 (and its long-red reflow check went green), lobsters, rust-lang, sqlite,
+mdn and pythonorg to 0. The two that remain are craigslist reaching for a
+global that an external `<script src>` would have defined — and external
+scripts are not fetched, which is a feature rather than a bug to fix.
+
+### Phase 35 — Flexbox, properly ✅
+
+`display: flex` has worked since C2, but the ITEM side of it was a flag: an
+element either took the leftover space or it did not. `flex: 2` and `flex: 1`
+were the same box, so every two-to-one split on the web came out even, and
+`flex: 0 0 240px` lost its 240px and became a sidebar as wide as its longest
+word. The whole shorthand is now read and mapped -- grow weights, basis,
+shrink -- along with `align-self`, `order`, `justify-content: space-around` and
+`space-evenly` (which differ only at the two ends, the entire reason an author
+picks one), and both values of `gap`, which on a wrapping row land on different
+axes: the first separates the lines, the second the items.
+
+The engine grew three things to carry it (`align_self` per node, a cross-axis
+gap, the two spread keywords) and gave up two bugs, both of them one loop
+disagreeing with another: a height-measuring helper counted a child as flexible
+on `flex_grow` but then sized it by its basis, so a `flex: 1` item was measured
+at width 0 and its row drawn five lines tall with four of them empty; and the
+wrap measurer stepped between lines by the main gap while the arranger stepped
+by the cross one, so a wrapped line was painted below its own container, on top
+of whatever came next.
+
+Held back deliberately: `align-items`' CSS initial value is stretch, and
+switching to it fixes a real bug and breaks rust-lang.org's front page. The
+code for it is written, the measurement is in `docs/TODO.md`, and the default
+stays where it was until the page is diagnosed -- a bug nobody has hit is not
+worth trading for one that is visible.
+
+Every claim above is a number in `tests/web/flex2.html` rather than a
+screenshot to squint at, and the whole set was re-rendered against 17 real
+sites and diffed against the pre-change tree.
+
+### Phase 36 — Lists, and the floats that were quietly dropped ✅
+
+Four fixes, all found by pointing `make web-verify` at the sites that were not
+yet at 100% and asking what the missing word had in common.
+
+**Every list item drew one hardcoded bullet.** That is three wrongs from one
+string: `list-style: none` — which is on essentially every navigation menu on
+the web — was neither parsed nor honoured, an `<ol>` was bulleted instead of
+numbered, and the item was drawn through a *private* path that returned before
+the ordinary box code, so its width, background, padding, border and float were
+all ignored. `list-style-type` inherits, because the list states it and the
+item draws it; `VM_NONE` had to stop being zero, or `none` and "nobody said"
+are the same value and the item's own default puts the bullet straight back.
+
+**The float group collected at most eight boxes and skipped the rest.**
+kernel.org floats nine footer links; the ninth did not exist. A full group now
+stops collecting and the overflow opens the next one — bounded work, nothing
+lost. And a group that is *only* floats is a float grid, the second commonest
+thing a `<ul>` is, so it wraps: a non-wrapping row does not merely misplace
+what runs past the edge, it clips it.
+
+**A percentage-width child was measured at its intrinsic width.** Nine 30%
+boxes measured one line and arranged three, so the container came out two lines
+short and the next block was painted over the overflow. The wrap measurer
+resolves percentages the same way the arranger does now.
+
+kernel.org went 98.4% → 100%, and with the previous two fixes (a word pool too
+narrow for suckless's forty-character URLs, and a minified `@media(` read as a
+different at-rule) **sixteen of nineteen sampled sites now render 100% of their
+visible text**. Of the three that do not, brave's eight words are inside a
+`<details>` the page opens with a control of its own — closed by default is
+what the markup says.
+
+### Phase 37 — Where the words are: the layout half of the verifier ✅
+
+`make web-verify` scores 100% on a page that renders as one long column when
+the design is three columns and a hero — because it only asks whether the
+content is *there*. `make web-shots` asks the other half: it puts our render
+and Firefox's side by side as pictures and compares where every word ended up,
+reporting COLUMN (a word in a different third of the page), ORDER (a reading
+order we inverted) and OFFPAGE. Not a pixel diff — our fonts and colours are
+our own, and a number that can never reach zero is a number nobody reads. The
+WebDriver client moved into `tools/ff_driver.py` so both verifiers ask the same
+Firefox the same way.
+
+It found rust-lang.org laying out **15000 pixels wide** inside an 1100px page,
+with the third of three columns beginning at x=14792. Four bugs, in a chain:
+
+**`max-width` was written into `width`.** They are different statements and
+they coexist on the same element constantly. `.w-100 { width: 100% }` stores
+`width_pct=100` with `width` as the calc "+px" term, so a following
+`max-width: 96rem` was read as *100% PLUS 1536px* — the header came out 2592px
+inside 1056, and every box under it inherited the mistake.
+
+**`ui_set_size` erased the bounds `ui_set_size_bounds` had just set**, because
+it assigns the whole struct. The browser sets a cap when it opens a box and the
+size when it closes it, so every `max-width` on the web was being dropped
+between the two calls.
+
+**A percentage-sized flex item never gave up space.** The shrink passes were
+eligible on SIZE_FLEX and SIZE_INTRINSIC; `width: 100%` is neither, so three
+children each asking for the full width took 300% of the row and CSS's default
+flex-shrink of 1 never ran. SIZE_FIXED still stays out — a 24px traffic light
+is a decision, not a preference — but a percentage is a proportion *of the
+container*, which is exactly the thing that divides.
+
+**One flag answered two questions.** Which axis `flex-basis` lands on is the
+container's direction alone; whether the container can hand out space needs a
+definite size. `body { display:flex; flex-direction:column; min-height:100vh }`
+states no height, so the flag was false and `body > main { flex: 1 }` was read
+as a *width* — and `flex: 1` means basis 0, so `<main>` was a box zero pixels
+wide and everything inside it fell back to its own content width.
+
+With those four fixed, **`align-items: stretch` finally shipped as the default**
+it is in CSS. It had been written and withheld for two milestones because it
+"collapsed rust-lang.org's `<main>` to nothing" — that collapse was the
+zero-width `<main>` above, and the diagnosis was the thing that was missing.
+
+rust-lang.org now renders as its own front page: nav across the top, the hero
+with its button, and Performance / Reliability / Productivity as three columns.
+`WIDE=1` reports **nothing overflows its parent** on every real site but one.
+
+A fifth, once the columns divided: **a row's height was measured at widths
+nobody gets.** The measurement sized a percentage child by its intrinsic width
+and ignored the shrink that follows, so each section measured one line, was
+arranged at a third of the width, wrapped to four lines — and the row, already
+sized for one, had its children's *heights* squeezed to fit. Every heading came
+out 10px tall with its own paragraph drawn on top of it. Three separate places
+now resolve percentages and apply the arranger's scale; the measurement and the
+arrangement have to agree or the disagreement is always visible.
+
+Two more, found on the way: **Ctrl+A stopped after 4096 text runs** — a third
+of a Wikipedia article, mid-word, silently (63547 bytes copied now, not 24445,
+and the overflow is reportable rather than indistinguishable from a complete
+copy); and the selection-order check compared its *last* text node untrimmed
+while trimming the first, so a page whose last node ends in a space failed an
+order check over a space the copier does not emit.
+
+### Phase 38 — Note++: the OS's own code editor ✅
+
+`user/bin/edit.c` is the one-file editor: a buffer, a Save button, the path
+Files handed it. Note++ is the other thing — eight documents at once, a caret
+you drive from the keyboard, selection, undo/redo, find and replace, and code
+coloured by the same keyword tables the OS's own compiler reads.
+
+The split is the point. Everything that happens to TEXT lives in `user/note/`
+behind headers that are the contract — `edit.c` (the buffer, selection, undo,
+movement, find/replace, bracket matching, comment toggling, wrap arithmetic),
+`doc.c` (which files are open, which are dirty), `syntax.c` (a highlighter that
+is a pure function of one line and an incoming state) — and is covered by host
+tests: `make edit-test` and `make syntax-test` run on the build machine in
+under a second. An editor is mostly edge cases (a selection dragged backwards,
+an undo that restores the cursor as well as the characters, a replace-all whose
+replacement contains the search term) and none of them are worth discovering on
+a screen. `user/bin/notepp.c` is the part that cannot be tested that way:
+pixels, keys and files.
+
+It draws its own text rather than using the toolkit's TextEditor, which cannot
+show a selection, a current line or a match, and owns the keyboard in a way an
+editor's shortcuts cannot share.
+
+**Word wrap** is a visual-row model: with wrap on a screen row is no longer a
+line, and the five places that assumed otherwise — the row loop, click-to-caret,
+up/down, scroll-to-caret, and the scrollbar's total — all count rows through
+`vis_total`/`vis_row_at`/`vis_row_of`. Only a line's first visual row carries
+its gutter number, the highlighter's state threads row by row so a wrapped
+block comment stays a comment, and a status bar toggle turns the whole thing
+off. Long lines that are not wrapped are WINDOWED rather than truncated: the
+part off the right edge is reached by scrolling, not lost.
+
 ## Major To-Do Buckets (Rough Priority)
 
 Full detail lives in `TODO.md`, organized by subsystem. Rough priority order:

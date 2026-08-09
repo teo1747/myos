@@ -60,18 +60,46 @@ enum {
  * carries six parts and the rule table carries eight thousand selectors, and
  * inlining even a few of these would cost megabytes to hold something most
  * selectors do not have. */
+/* One compound INSIDE :is()/:where()/:not(). Same rule as a top-level part:
+ * every class it names must be present, and one we could not store in full
+ * must match nothing. */
+/* How many classes one compound may carry. `.logo-small.svelte-1i43yzn` is two,
+ * and a Tailwind or CSS-modules sheet routinely writes three or four. ONE was
+ * stored, and the last one won -- so `.logo-small.svelte-1i43yzn` degraded to
+ * `.svelte-1i43yzn`, matching every element of that component instead of one.
+ * On Brave's search page that rule carries `display:none`, and the entire page
+ * disappeared. A compound that is too narrow shows too little; one that is too
+ * WIDE applies somebody else's declarations to the whole document. */
+#define CSS_SEL_CLASSES 4
+
 struct css_fn_arg {
     char tag[16];
-    char klass[32];
+    char klass[CSS_SEL_CLASSES][32];
     char id[32];
+    unsigned char nklass;
+    unsigned char overflow;
 };
 #define CSS_FN_ARGS 3072         /* pool size, shared by every selector */
 
 struct css_sel_part {
     char tag[16];                /* "" = any (or '*')          */
-    char klass[32];              /* "" = none                  */
+    char klass[CSS_SEL_CLASSES][32];   /* ALL of them must be present */
+    unsigned char nklass;
     char id[32];                 /* "" = none                  */
     unsigned char comb;          /* CSS_COMB_* joining to the previous part */
+    unsigned char overflow;      /* more classes than we can store: match NOTHING */
+    unsigned char never;         /* a state pseudo that is false in a render  */
+    /* ONE attribute test: `[type=checkbox]`, `[class*=foo]`, `[hidden]`.
+     * Ignoring these -- which is what happened -- always makes a selector
+     * BROADER, and MDN hides every code block on the site with
+     * `[class*=interactive-example]:is(.code-example pre)`. Dropped to "any
+     * pre", that rule took the formal-syntax block off every reference page.
+     * Evaluated against the attributes the parser actually keeps; anything
+     * else (data-*, aria-*, role) sets `never`, because a test we cannot
+     * answer must not be answered YES. */
+    char attr_name[24];
+    char attr_val[40];
+    unsigned char attr_op;       /* CSS_ATTR_* */
     unsigned char first_child;   /* :first-child */
     unsigned char last_child;    /* :last-child  */
     /* :is()/:where() -- the element must match ONE of these. :not() -- it must
@@ -81,6 +109,10 @@ struct css_sel_part {
     unsigned short fn_any_first, fn_none_first;
     unsigned char  fn_any_n,     fn_none_n;
 };
+
+/* [name] [name=v] [name~=v] [name^=v] [name$=v] [name*=v] */
+enum { CSS_ATTR_NONE = 0, CSS_ATTR_HAS, CSS_ATTR_EQ, CSS_ATTR_WORD,
+       CSS_ATTR_PREFIX, CSS_ATTR_SUFFIX, CSS_ATTR_SUBSTR };
 
 /* Forget every argument parsed so far. Called when a sheet is (re)parsed --
  * the pool is shared, so it has the sheet's lifetime. */
@@ -162,7 +194,11 @@ int css_sel_match(const struct css_sel *sel, struct html_doc *doc, int node);
  *
  * The bound exists because a page can be hostile -- so it stays a bound. It is
  * just no longer a bound that ordinary pages trip over. */
-#define CSS_MAX_RULES 8192
+/* github.com alone parses to more than 8192, and a truncated sheet is a page
+ * styled by whatever half of its rules arrived first. The sheet holds them
+ * inline, so this is real memory -- and still the cheapest thing in a browser
+ * that already reserves megabytes for pictures. */
+#define CSS_MAX_RULES 16384
 
 struct css_rule {
     struct css_sel sel;

@@ -38,6 +38,12 @@ struct html_node {
     char *id;                       /* id="...", or NULL                   */
     char *style;                    /* style="..." declarations, or NULL   */
     char *alt;                      /* <img alt="...">, or NULL            */
+    /* An inline <svg>'s OWN SOURCE, opening tag included. SVG is not HTML: its
+     * elements mean nothing to this parser, and walking them produced a tree of
+     * unknown inline boxes that drew as nothing -- so an icon-only button was
+     * an empty rectangle. Kept whole and handed to svg.c, exactly as <style>
+     * keeps its text for the cascade. NULL for everything else. */
+    char *svg;
     /* Form controls. These are their OWN fields and do NOT share a slot with
      * class/id: those are what CSS selectors match on, so borrowing them would
      * make a styled input unstylable -- a bug that would look like the cascade
@@ -92,6 +98,12 @@ struct html_doc {
      * was an engine to give it to. */
     char  *js[8];
     size_t js_len[8];
+    /* The NODE each script came from. `document.currentScript` is how a modern
+     * page finds the element it was written next to -- SvelteKit's bootstrap
+     * is `document.currentScript.parentElement` -- and without a node for the
+     * <script> there was nothing for it to be. -1 if the node could not be
+     * made. */
+    int    js_node[8];
     int    n_js;
     /* <link rel=stylesheet href=...> targets, in document order. The parser
      * records the URLs and nothing else: fetching them is a NETWORK act, and
@@ -100,6 +112,12 @@ struct html_doc {
      * cascade runs -- which is also why they are in document order, since a
      * later sheet outranks an earlier one at equal specificity. */
     char  *cssref[8];
+    /* The `media` each sheet was linked WITH. A <link media="print"> is for a
+     * printer, and applying it on screen hides everything the page marked
+     * unprintable -- on gnu.org that is the navigation, the header and the
+     * breadcrumbs, which simply vanished. NULL means the link said nothing,
+     * which means all media. */
+    char  *cssmedia[8];
     int    n_cssref;
     /* <link rel="icon"> -- the page's own name for its favicon, which is not
      * always /favicon.ico and on some sites is the only one that exists. The

@@ -33,6 +33,7 @@ static const struct css_sheet *g_sheet;
 static const char *g_url;      /* the page's own address, for location */
 static int  g_dirty;
 static void (*g_console)(const char *line);
+static int g_declined;        /* listeners for events we do not deliver */
 
 /* ---- listeners + timers -------------------------------------------------
  * Fixed tables, like everything else that a stranger's page can grow. A page
@@ -80,6 +81,34 @@ static unsigned long long g_now;   /* last time the app pumped */
 static JSValue js_set_timeout(JSContext *, JSValueConst, int, JSValueConst *);
 static JSValue js_set_interval(JSContext *, JSValueConst, int, JSValueConst *);
 static JSValue js_clear_timer(JSContext *, JSValueConst, int, JSValueConst *);
+/* Resolve href against base with the document's own resolver. Returns the
+ * absolute string, or the href unchanged when it cannot be resolved -- a URL
+ * that stays relative is wrong, but throwing here would take the whole script
+ * down over a link nobody followed. */
+static void jsdom_prelude(void);   /* defined with the prelude source below */
+
+static JSValue js_noop(JSContext *ctx, JSValueConst t, int argc, JSValueConst *argv) {
+    (void)ctx; (void)t; (void)argc; (void)argv; return JS_UNDEFINED;
+}
+
+static JSValue js_url_resolve(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv) {
+    (void)this_val;
+    const char *href = argc > 0 ? JS_ToCString(ctx, argv[0]) : 0;
+    const char *base = argc > 1 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])
+                     ? JS_ToCString(ctx, argv[1]) : 0;
+    char out[1024];
+    JSValue r;
+    if (href && url_resolve(base && base[0] ? base : (g_url ? g_url : ""),
+                            href, out, sizeof out) == 0)
+        r = JS_NewString(ctx, out);
+    else
+        r = JS_NewString(ctx, href ? href : "");
+    if (href) JS_FreeCString(ctx, href);
+    if (base) JS_FreeCString(ctx, base);
+    return r;
+}
+
 static JSValue js_fetch(JSContext *, JSValueConst, int, JSValueConst *);
 
 /* ---- element objects ---------------------------------------------------- */
@@ -207,11 +236,24 @@ static JSValue elem_add_listener(JSContext *ctx, JSValueConst this_val,
     int ev = -1;
     for (int t = 0; t < EV_N; t++) if (!strcmp(type, EV_NAME[t])) { ev = t; break; }
     if (ev < 0) {
+        /* NOT AN EXCEPTION. Refusing loudly was right when the scripts were
+         * ours; on a real page it is fatal. `addEventListener('DOMContentLoaded')`
+         * is the first line of a great many scripts, and throwing there
+         * destroyed everything the script went on to do -- Brave's whole
+         * bootstrap died on one listener it did not need us to deliver.
+         *
+         * So the listener is DECLINED, not registered: it will never fire, and
+         * the console says which type was dropped so it is not silent either.
+         * A listener that never runs is a hard bug to see; a page that stops
+         * executing is a harder one. */
+        /* COUNTED, NOT ANNOUNCED. This is a note for whoever is building the
+         * browser, not for the person reading the page: they cannot act on it,
+         * and it was crowding the status line off the screen on every page
+         * that registers a DOMContentLoaded handler -- which is most of them.
+         * jsdom_declined_listeners() hands the count to whoever wants it. */
+        g_declined++;
         JS_FreeCString(ctx, type);
-        /* Still refused LOUDLY. A listener that never runs is the hardest kind
-         * of bug to see, and silence is what makes it hard. */
-        return JS_ThrowTypeError(ctx,
-            "this browser delivers only click, submit, input and change");
+        return JS_UNDEFINED;
     }
     JS_FreeCString(ctx, type);
     if (!JS_IsFunction(ctx, argv[1]))
@@ -376,11 +418,140 @@ static JSValue elem_class_tog(JSContext *c, JSValueConst t, int n, JSValueConst 
 static JSValue elem_class_has(JSContext *c, JSValueConst t, int n, JSValueConst *a)
     { return elem_class_op(c, t, n, a, 3); }
 
+/* THE STANDARD SPELLINGS. `setText(x)` and `setValue(x)` are this DOM's own
+ * names and no page on the web uses them: a real script writes
+ * `el.textContent = "..."` and `el.value = x`. The methods stay (they are what
+ * our own pages call), but the PROPERTIES are what a page actually assigns to,
+ * and without a setter every one of those assignments silently did nothing --
+ * or threw, once the script read back what it had just written. */
+static JSValue elem_put_text(JSContext *ctx, JSValueConst this_val, JSValueConst v) {
+    return elem_set_text(ctx, this_val, 1, &v);
+}
+static JSValue elem_put_value(JSContext *ctx, JSValueConst this_val, JSValueConst v) {
+    return elem_set_value(ctx, this_val, 1, &v);
+}
+
+
+/* ---- tree navigation ----------------------------------------------------
+ *
+ * A DOM you can find a node in but not walk is half a DOM, and every script
+ * that reached for `parentElement` -- which is most of them, since that is how
+ * you get from the thing you matched to the thing you want to change -- died
+ * on the property access before it ever ran. All of these are the same three
+ * lines over html.h's index fields; they were simply never written.
+ */
+static int next_elem_sibling(int i) {
+    for (int k = g_doc->nodes[i].next_sibling; k >= 0; k = g_doc->nodes[k].next_sibling)
+        if (g_doc->nodes[k].kind == HTML_ELEM) return k;
+    return -1;
+}
+static int prev_elem_sibling(int i) {
+    int p = g_doc->nodes[i].parent, last = -1;
+    if (p < 0) return -1;
+    for (int k = g_doc->nodes[p].first_child; k >= 0 && k != i; k = g_doc->nodes[k].next_sibling)
+        if (g_doc->nodes[k].kind == HTML_ELEM) last = k;
+    return last;
+}
+
+static JSValue elem_get_parent(JSContext *ctx, JSValueConst t) {
+    int i = elem_index(ctx, t);
+    if (i < 0) return JS_NULL;
+    int p = g_doc->nodes[i].parent;
+    return p >= 0 ? make_elem(ctx, p) : JS_NULL;
+}
+static JSValue elem_get_children(JSContext *ctx, JSValueConst t) {
+    int i = elem_index(ctx, t);
+    JSValue a = JS_NewArray(ctx);
+    if (i < 0) return a;
+    uint32_t n = 0;
+    for (int k = g_doc->nodes[i].first_child; k >= 0; k = g_doc->nodes[k].next_sibling)
+        if (g_doc->nodes[k].kind == HTML_ELEM)
+            JS_SetPropertyUint32(ctx, a, n++, make_elem(ctx, k));
+    return a;
+}
+static JSValue elem_get_first_child(JSContext *ctx, JSValueConst t) {
+    int i = elem_index(ctx, t);
+    if (i < 0) return JS_NULL;
+    for (int k = g_doc->nodes[i].first_child; k >= 0; k = g_doc->nodes[k].next_sibling)
+        if (g_doc->nodes[k].kind == HTML_ELEM) return make_elem(ctx, k);
+    return JS_NULL;
+}
+static JSValue elem_get_last_child(JSContext *ctx, JSValueConst t) {
+    int i = elem_index(ctx, t), last = -1;
+    if (i < 0) return JS_NULL;
+    for (int k = g_doc->nodes[i].first_child; k >= 0; k = g_doc->nodes[k].next_sibling)
+        if (g_doc->nodes[k].kind == HTML_ELEM) last = k;
+    return last >= 0 ? make_elem(ctx, last) : JS_NULL;
+}
+static JSValue elem_get_next(JSContext *ctx, JSValueConst t) {
+    int i = elem_index(ctx, t);
+    if (i < 0) return JS_NULL;
+    int k = next_elem_sibling(i);
+    return k >= 0 ? make_elem(ctx, k) : JS_NULL;
+}
+static JSValue elem_get_prev(JSContext *ctx, JSValueConst t) {
+    int i = elem_index(ctx, t);
+    if (i < 0) return JS_NULL;
+    int k = prev_elem_sibling(i);
+    return k >= 0 ? make_elem(ctx, k) : JS_NULL;
+}
+static JSValue elem_get_id(JSContext *ctx, JSValueConst t) {
+    int i = elem_index(ctx, t);
+    if (i < 0) return JS_NewString(ctx, "");
+    const char *v = g_doc->nodes[i].id;
+    return JS_NewString(ctx, v ? v : "");
+}
+
+/* insertBefore(newNode, refNode) -- append when ref is null, which is what the
+ * DOM says and what half the callers rely on. */
+static JSValue elem_insert_before(JSContext *ctx, JSValueConst t,
+                                  int argc, JSValueConst *argv) {
+    int p = elem_index(ctx, t);
+    int c = argc > 0 ? elem_index(ctx, argv[0]) : -1;
+    if (p < 0 || c < 0) return JS_UNDEFINED;
+    int ref = (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
+            ? elem_index(ctx, argv[1]) : -1;
+    if (ref < 0 || g_doc->nodes[ref].parent != p) {
+        html_append_child(g_doc, p, c);
+        g_dirty = 1;
+        return JS_DupValue(ctx, argv[0]);
+    }
+    /* Append first so the node is detached from wherever it was, then move it
+     * into place -- the list is singly linked, so this is a relink, not a
+     * shuffle. */
+    html_append_child(g_doc, p, c);
+    int prev = -1;
+    for (int k = g_doc->nodes[p].first_child; k >= 0; k = g_doc->nodes[k].next_sibling) {
+        if (k == c) break;
+        prev = k;
+    }
+    if (prev >= 0) g_doc->nodes[prev].next_sibling = g_doc->nodes[c].next_sibling;
+    else           g_doc->nodes[p].first_child     = g_doc->nodes[c].next_sibling;
+    prev = -1;
+    for (int k = g_doc->nodes[p].first_child; k >= 0; k = g_doc->nodes[k].next_sibling) {
+        if (k == ref) break;
+        prev = k;
+    }
+    g_doc->nodes[c].next_sibling = ref;
+    if (prev >= 0) g_doc->nodes[prev].next_sibling = c;
+    else           g_doc->nodes[p].first_child     = c;
+    g_dirty = 1;
+    return JS_DupValue(ctx, argv[0]);
+}
+
+/* querySelector scoped to a subtree: `el.querySelector(...)` is as common as
+ * the document-level one, and a page that has one container and searches
+ * inside it uses nothing else. */
+static JSValue elem_query(JSContext *ctx, JSValueConst t, int argc, JSValueConst *argv);
+static JSValue elem_query_all(JSContext *ctx, JSValueConst t, int argc, JSValueConst *argv);
+
 static const JSCFunctionListEntry elem_proto[] = {
-    JS_CGETSET_DEF("value", elem_get_value, 0),
+    JS_CGETSET_DEF("value", elem_get_value, elem_put_value),
     JS_CFUNC_DEF("setValue", 1, elem_set_value),
     JS_CFUNC_DEF("addEventListener", 2, elem_add_listener),
-    JS_CGETSET_DEF("textContent", elem_get_text, 0),
+    JS_CGETSET_DEF("textContent", elem_get_text, elem_put_text),
+    /* innerText is textContent's other name; pages use both. */
+    JS_CGETSET_DEF("innerText", elem_get_text, elem_put_text),
     JS_CGETSET_DEF("tagName", elem_get_tag, 0),
     JS_CFUNC_DEF("setText", 1, elem_set_text),
     JS_CFUNC_DEF("getAttribute", 1, elem_get_attr),
@@ -394,6 +565,22 @@ static const JSCFunctionListEntry elem_proto[] = {
     JS_CFUNC_DEF("classRemove", 1, elem_class_rm),
     JS_CFUNC_DEF("classToggle", 1, elem_class_tog),
     JS_CFUNC_DEF("classContains", 1, elem_class_has),
+    JS_CGETSET_DEF("parentElement", elem_get_parent, 0),
+    JS_CGETSET_DEF("parentNode", elem_get_parent, 0),
+    JS_CGETSET_DEF("children", elem_get_children, 0),
+    JS_CGETSET_DEF("childNodes", elem_get_children, 0),
+    JS_CGETSET_DEF("firstElementChild", elem_get_first_child, 0),
+    JS_CGETSET_DEF("firstChild", elem_get_first_child, 0),
+    JS_CGETSET_DEF("lastElementChild", elem_get_last_child, 0),
+    JS_CGETSET_DEF("lastChild", elem_get_last_child, 0),
+    JS_CGETSET_DEF("nextElementSibling", elem_get_next, 0),
+    JS_CGETSET_DEF("nextSibling", elem_get_next, 0),
+    JS_CGETSET_DEF("previousElementSibling", elem_get_prev, 0),
+    JS_CGETSET_DEF("previousSibling", elem_get_prev, 0),
+    JS_CGETSET_DEF("id", elem_get_id, 0),
+    JS_CFUNC_DEF("insertBefore", 2, elem_insert_before),
+    JS_CFUNC_DEF("querySelector", 1, elem_query),
+    JS_CFUNC_DEF("querySelectorAll", 1, elem_query_all),
 };
 
 static JSValue make_elem(JSContext *ctx, int idx);
@@ -569,6 +756,47 @@ static int find_match(struct html_doc *d, int n, const struct css_sel *sel,
     return -1;
 }
 
+
+/* Element-scoped search: the same walk, rooted at the element and skipping the
+ * element itself -- `el.querySelector('.x')` must not match `el`. Pages that
+ * grab one container and then search inside it use nothing else. */
+static JSValue elem_query(JSContext *ctx, JSValueConst t, int argc, JSValueConst *argv) {
+    int i = elem_index(ctx, t);
+    if (i < 0 || argc < 1) return JS_NULL;
+    const char *sn = JS_ToCString(ctx, argv[0]);
+    if (!sn) return JS_EXCEPTION;
+    struct css_sel sel;
+    int ok = css_sel_parse(sn, strlen(sn), &sel) == 0;
+    JS_FreeCString(ctx, sn);
+    if (!ok) return JS_NULL;
+    int count = 0;
+    for (int c = g_doc->nodes[i].first_child; c >= 0; c = g_doc->nodes[c].next_sibling) {
+        int hit = find_match(g_doc, c, &sel, 0, 0, &count);
+        if (hit >= 0) return make_elem(ctx, hit);
+    }
+    return JS_NULL;
+}
+
+static JSValue elem_query_all(JSContext *ctx, JSValueConst t, int argc, JSValueConst *argv) {
+    int i = elem_index(ctx, t);
+    JSValue arr = JS_NewArray(ctx);
+    if (i < 0 || argc < 1) return arr;
+    const char *sn = JS_ToCString(ctx, argv[0]);
+    if (!sn) return arr;
+    struct css_sel sel;
+    int ok = css_sel_parse(sn, strlen(sn), &sel) == 0;
+    JS_FreeCString(ctx, sn);
+    if (!ok) return arr;
+    enum { QMAX = 256 };
+    int hits[QMAX], count = 0;
+    for (int c = g_doc->nodes[i].first_child; c >= 0; c = g_doc->nodes[c].next_sibling)
+        find_match(g_doc, c, &sel, hits, QMAX, &count);
+    int n = count < QMAX ? count : QMAX;
+    for (int k = 0; k < n; k++)
+        JS_SetPropertyUint32(ctx, arr, (uint32_t)k, make_elem(ctx, hits[k]));
+    return arr;
+}
+
 static JSValue doc_query(JSContext *ctx, JSValueConst this_val,
                          int argc, JSValueConst *argv) {
     (void)this_val;
@@ -641,6 +869,7 @@ static JSValue js_console_log(JSContext *ctx, JSValueConst this_val,
 /* ---- lifecycle ---------------------------------------------------------- */
 
 void jsdom_set_console(void (*fn)(const char *line)) { g_console = fn; }
+int  jsdom_declined_listeners(void) { return g_declined; }
 int  jsdom_take_dirty(void) { int d = g_dirty; g_dirty = 0; return d; }
 
 void jsdom_close(void) {
@@ -682,8 +911,26 @@ int jsdom_open(struct html_doc *doc, const struct css_sheet *sheet) {
     JSValue g = JS_GetGlobalObject(g_ctx);
 
     JSValue console = JS_NewObject(g_ctx);
-    JS_SetPropertyStr(g_ctx, console, "log",
-                      JS_NewCFunction(g_ctx, js_console_log, "log", 1));
+    /* log was the ONLY method, so `console.warn(...)` -- which is what a page
+     * writes in the catch block it wrapped around a feature it expected to be
+     * missing -- threw inside the handler and took the script down anyway. The
+     * whole family goes to the same place; a browser console distinguishes
+     * them by colour, and we do not have colours. */
+    static const char *const CONSOLE_FNS[] = {
+        "log", "warn", "error", "info", "debug", "trace", "dir", 0
+    };
+    for (int ci2 = 0; CONSOLE_FNS[ci2]; ci2++)
+        JS_SetPropertyStr(g_ctx, console, CONSOLE_FNS[ci2],
+                          JS_NewCFunction(g_ctx, js_console_log, CONSOLE_FNS[ci2], 1));
+    /* ...and the no-ops a page calls for timing and grouping. Absent, they
+     * throw; present and silent, the page carries on. */
+    {
+        static const char *const NOOPS[] = { "group", "groupEnd", "time",
+                                             "timeEnd", "count", "assert", 0 };
+        for (int ci2 = 0; NOOPS[ci2]; ci2++)
+            JS_SetPropertyStr(g_ctx, console, NOOPS[ci2],
+                              JS_NewCFunction(g_ctx, js_noop, NOOPS[ci2], 0));
+    }
     JS_SetPropertyStr(g_ctx, g, "console", console);
 
     {
@@ -702,6 +949,20 @@ int jsdom_open(struct html_doc *doc, const struct css_sheet *sheet) {
     }
 
     JSValue d = JS_NewObject(g_ctx);
+    /* document.write: a NO-OP that does not throw.
+     *
+     * Nearly every use left on the web is the feature-detect fallback --
+     * `window.jQuery || document.write('<script src=...>')` -- and since we do
+     * not fetch external scripts there is nothing useful to do with it. But
+     * ABSENT it threw a TypeError, which killed the script at that line and
+     * took everything after it with it; present and silent, the page carries on
+     * exactly as it would with a script that failed to load. Writing document
+     * CONTENT this way would need the parser to splice a fragment mid-parse,
+     * which is a different feature and is logged as one. */
+    JS_SetPropertyStr(g_ctx, d, "write",
+                      JS_NewCFunction(g_ctx, js_noop, "write", 1));
+    JS_SetPropertyStr(g_ctx, d, "writeln",
+                      JS_NewCFunction(g_ctx, js_noop, "writeln", 1));
     JS_SetPropertyStr(g_ctx, d, "querySelector",
                       JS_NewCFunction(g_ctx, doc_query, "querySelector", 1));
     JS_SetPropertyStr(g_ctx, d, "querySelectorAll",
@@ -754,6 +1015,18 @@ int jsdom_open(struct html_doc *doc, const struct css_sheet *sheet) {
     }
     JS_SetPropertyStr(g_ctx, g, "location", loc);
 
+    /* `window` IS the global object. Scripts written for a browser say
+     * `window.addEventListener` and `window.location` far more often than they
+     * say the bare name, and every one of them threw a ReferenceError. */
+    JS_SetPropertyStr(g_ctx, g, "window", JS_DupValue(g_ctx, g));
+
+    /* The one primitive the URL class cannot do in script: resolution against
+     * a base. url.c already does it, is tested on the host, and is what every
+     * link on a page goes through -- so the class calls THAT rather than
+     * carrying a second, differently-wrong implementation in JavaScript. */
+    JS_SetPropertyStr(g_ctx, g, "__url_resolve",
+                      JS_NewCFunction(g_ctx, js_url_resolve, "__url_resolve", 2));
+
     JS_SetPropertyStr(g_ctx, g, "document", d);
 
     JS_SetPropertyStr(g_ctx, g, "setTimeout",
@@ -767,17 +1040,159 @@ int jsdom_open(struct html_doc *doc, const struct css_sheet *sheet) {
     JS_SetPropertyStr(g_ctx, g, "fetch",
                       JS_NewCFunction(g_ctx, js_fetch, "fetch", 1));
 
+    /* ...and the script-level globals built on top of them. */
+    jsdom_prelude();
+
     JS_FreeValue(g_ctx, g);
     (void)g_elem_class;
     return 0;
 }
+
+/* THE PRELUDE: the handful of globals every modern page assumes exist.
+ *
+ * Written in JavaScript rather than as C bindings because it is all string
+ * work over one primitive (__url_resolve) that already exists and is tested --
+ * a second URL parser in C would be more code and a second thing to get wrong.
+ * Deliberately not the whole spec: this is what pages actually touch.
+ */
+static const char JSDOM_PRELUDE[] =
+"(function(){\n"
+"var RE=/^(?:([A-Za-z][A-Za-z0-9+.-]*:))?(?:\\/\\/([^\\/?#]*))?([^?#]*)(\\?[^#]*)?(#.*)?$/;\n"
+"function SP(init){ this._p=[];\n"
+"  if(init && typeof init==='object' && init._p){ for(var i=0;i<init._p.length;i++) this._p.push([init._p[i][0],init._p[i][1]]); return; }\n"
+"  var s=(init==null?'':String(init)); if(s.charAt(0)==='?') s=s.slice(1);\n"
+"  if(!s) return;\n"
+"  var parts=s.split('&');\n"
+"  for(var i=0;i<parts.length;i++){ if(!parts[i]) continue;\n"
+"    var e=parts[i].indexOf('='), k=e<0?parts[i]:parts[i].slice(0,e), v=e<0?'':parts[i].slice(e+1);\n"
+"    this._p.push([dec(k),dec(v)]); } }\n"
+"function dec(x){ try{ return decodeURIComponent(String(x).replace(/\\+/g,' ')); }catch(_){ return String(x); } }\n"
+"function enc(x){ try{ return encodeURIComponent(String(x)); }catch(_){ return String(x); } }\n"
+"SP.prototype.get=function(k){ k=String(k); for(var i=0;i<this._p.length;i++) if(this._p[i][0]===k) return this._p[i][1]; return null; };\n"
+"SP.prototype.getAll=function(k){ k=String(k); var r=[]; for(var i=0;i<this._p.length;i++) if(this._p[i][0]===k) r.push(this._p[i][1]); return r; };\n"
+"SP.prototype.has=function(k){ return this.get(k)!==null; };\n"
+"SP.prototype.append=function(k,v){ this._p.push([String(k),String(v)]); };\n"
+"SP.prototype.set=function(k,v){ k=String(k); for(var i=0;i<this._p.length;i++) if(this._p[i][0]===k){ this._p[i][1]=String(v); for(var j=this._p.length-1;j>i;j--) if(this._p[j][0]===k) this._p.splice(j,1); return; } this.append(k,v); };\n"
+"SP.prototype['delete']=function(k){ k=String(k); for(var i=this._p.length-1;i>=0;i--) if(this._p[i][0]===k) this._p.splice(i,1); };\n"
+"SP.prototype.forEach=function(f,t){ for(var i=0;i<this._p.length;i++) f.call(t,this._p[i][1],this._p[i][0],this); };\n"
+"SP.prototype.keys=function(){ var r=[]; for(var i=0;i<this._p.length;i++) r.push(this._p[i][0]); return r; };\n"
+"SP.prototype.toString=function(){ var r=[]; for(var i=0;i<this._p.length;i++) r.push(enc(this._p[i][0])+'='+enc(this._p[i][1])); return r.join('&'); };\n"
+"function URL(url,base){\n"
+"  if(!(this instanceof URL)) return new URL(url,base);\n"
+"  var abs=__url_resolve(String(url), base==null?undefined:String(base));\n"
+"  var m=RE.exec(abs)||[];\n"
+"  this.href=abs;\n"
+"  this.protocol=m[1]||'';\n"
+"  var auth=m[2]||'';\n"
+"  this.host=auth; this.hostname=auth; this.port='';\n"
+"  var at=auth.lastIndexOf('@'); if(at>=0){ auth=auth.slice(at+1); this.host=auth; this.hostname=auth; }\n"
+"  var c=auth.lastIndexOf(':');\n"
+"  if(c>=0 && auth.indexOf(']')<c){ this.hostname=auth.slice(0,c); this.port=auth.slice(c+1); }\n"
+"  this.pathname=m[3]||'';\n"
+"  this.search=m[4]||'';\n"
+"  this.hash=m[5]||'';\n"
+"  this.origin=this.protocol&&this.host?(this.protocol+'//'+this.host):'';\n"
+"  this.searchParams=new SP(this.search);\n"
+"}\n"
+"URL.prototype.toString=function(){ return this.href; };\n"
+"if(typeof globalThis.URL==='undefined') globalThis.URL=URL;\n"
+/* getElementById is the most-used call on the web and this DOM did not have
+ * it -- every page that reached for one got a TypeError and stopped there.
+ * It is querySelector with the id escaped, so it costs nothing and cannot
+ * drift from the selector engine's own idea of what an id is. */
+/* documentElement / body / head / title. A page that cannot reach its own
+ * root cannot set a class on it, which is how half the web turns on its own
+ * JavaScript-enabled styling. */
+"if(document){\n"
+"  if(!document.documentElement) document.documentElement=document.querySelector('html');\n"
+"  if(!document.body) document.body=document.querySelector('body');\n"
+"  if(!document.head) document.head=document.querySelector('head');\n"
+"  if(document.title===undefined){ var __t=document.querySelector('title');\n"
+"    document.title=__t?__t.textContent:''; }\n"
+"}\n"
+/* el.style.display = 'none' is the single most common thing a script does to
+ * an element, and `style` did not exist -- so it threw on the property before
+ * it ever got to the assignment. A Proxy turns each set into the setStyle the
+ * DOM already has, with the JS spelling (backgroundColor) folded back to the
+ * CSS one (background-color). Declarations accumulate, because a script that
+ * sets display and then color means both. */
+/* classList over the classAdd/classRemove/classToggle/classContains this DOM
+ * already had under its own names. `el.classList.add('x')` is how a page turns
+ * anything on; `classAdd` is how nobody does. */
+"(function(){ var pr=null;\n"
+"  try{ pr=Object.getPrototypeOf(document.createElement('div')); }catch(_){}\n"
+"  if(!pr || ('classList' in pr)) return;\n"
+"  Object.defineProperty(pr,'classList',{get:function(){ var el=this;\n"
+"    function list(){ var c=el.className||''; c=c.trim(); return c?c.split(/\\s+/):[]; }\n"
+"    var o={ add:function(){ for(var i=0;i<arguments.length;i++) el.classAdd(String(arguments[i])); },\n"
+"            remove:function(){ for(var i=0;i<arguments.length;i++) el.classRemove(String(arguments[i])); },\n"
+"            toggle:function(n,f){ if(f===undefined) return el.classToggle(String(n));\n"
+"                                  if(f) el.classAdd(String(n)); else el.classRemove(String(n)); return !!f; },\n"
+"            contains:function(n){ return !!el.classContains(String(n)); },\n"
+"            item:function(i){ return list()[i]||null; },\n"
+"            forEach:function(f,t){ list().forEach(f,t); },\n"
+"            toString:function(){ return el.className||''; } };\n"
+"    Object.defineProperty(o,'length',{get:function(){ return list().length; }});\n"
+"    return o; }, configurable:true});\n"
+"})();\n"
+"(function(){ var pr=null;\n"
+"  try{ pr=Object.getPrototypeOf(document.createElement('div')); }catch(_){}\n"
+"  if(!pr || ('style' in pr) || typeof Proxy==='undefined') return;\n"
+"  function dash(k){ return String(k).replace(/[A-Z]/g,function(m){return '-'+m.toLowerCase();}); }\n"
+"  Object.defineProperty(pr,'style',{get:function(){ var el=this;\n"
+"    if(!el.__decl) el.__decl={};\n"
+"    return new Proxy(el.__decl,{\n"
+"      get:function(t,k){ if(k==='setProperty') return function(n,v){ t[dash(n)]=v; flush(el,t); };\n"
+"                         if(k==='removeProperty') return function(n){ delete t[dash(n)]; flush(el,t); };\n"
+"                         if(k==='cssText') return text(t);\n"
+"                         return t[dash(k)]; },\n"
+"      set:function(t,k,v){ if(k==='cssText'){ el.setStyle(String(v)); return true; }\n"
+"                           t[dash(k)]=String(v); flush(el,t); return true; },\n"
+"      deleteProperty:function(t,k){ delete t[dash(k)]; flush(el,t); return true; }\n"
+"    }); }, configurable:true});\n"
+"  function text(t){ var r=[]; for(var k in t) if(t[k]!=='') r.push(k+':'+t[k]); return r.join(';'); }\n"
+"  function flush(el,t){ el.setStyle(text(t)); }\n"
+"})();\n"
+/* addEventListener at the TOP LEVEL. Pages call it bare as often as they call
+ * it on window, and it threw a ReferenceError -- which killed the script on
+ * its first line, before anything it went on to do. Forwarded to the document
+ * element so a real listener is registered rather than swallowed. */
+"if(typeof globalThis.addEventListener!=='function'){\n"
+"  globalThis.addEventListener=function(t,f,o){\n"
+"    var el=document&&document.documentElement;\n"
+"    if(el&&el.addEventListener) el.addEventListener(t,f,o); };\n"
+"  globalThis.removeEventListener=function(){};\n"
+"  globalThis.dispatchEvent=function(){ return true; };\n"
+"}\n"
+"if(document && !document.getElementById) document.getElementById=function(id){\n"
+"  id=String(id); if(!/^[A-Za-z_][-A-Za-z0-9_]*$/.test(id)) return null;\n"
+"  return document.querySelector('#'+id)||null; };\n"
+"if(document && !document.getElementsByTagName) document.getElementsByTagName=function(t){\n"
+"  return document.querySelectorAll(String(t)); };\n"
+"if(document && !document.getElementsByClassName) document.getElementsByClassName=function(c){\n"
+"  c=String(c).trim().split(/\\s+/).map(function(x){return '.'+x;}).join('');\n"
+"  return c?document.querySelectorAll(c):[]; };\n"
+"if(typeof globalThis.URLSearchParams==='undefined') globalThis.URLSearchParams=SP;\n"
+"})();\n";
 
 static int eval_one(const char *src, size_t len, const char *name) {
     JSValue v = JS_Eval(g_ctx, src, len, name, JS_EVAL_TYPE_GLOBAL);
     if (JS_IsException(v)) {
         JSValue e = JS_GetException(g_ctx);
         const char *m = JS_ToCString(g_ctx, e);
-        if (g_console && m) { char b[512]; snprintf(b, sizeof b, "%s", m); g_console(b); }
+        /* ...WITH THE STACK. "TypeError: not a function" names neither the
+         * function nor the line, which is the one thing needed to fix it; the
+         * stack turns a shrug into an address. */
+        JSValue st = JS_GetPropertyStr(g_ctx, e, "stack");
+        const char *sm = JS_IsUndefined(st) ? 0 : JS_ToCString(g_ctx, st);
+        if (g_console && m) {
+            char b[512];
+            snprintf(b, sizeof b, "%s%s%.200s", m, sm ? " | " : "", sm ? sm : "");
+            for (char *q = b; *q; q++) if (*q == '\n') *q = ' ';
+            g_console(b);
+        }
+        if (sm) JS_FreeCString(g_ctx, sm);
+        JS_FreeValue(g_ctx, st);
         if (m) JS_FreeCString(g_ctx, m);
         JS_FreeValue(g_ctx, e);
         JS_FreeValue(g_ctx, v);
@@ -785,6 +1200,10 @@ static int eval_one(const char *src, size_t len, const char *name) {
     }
     JS_FreeValue(g_ctx, v);
     return 0;
+}
+
+static void jsdom_prelude(void) {
+    eval_one(JSDOM_PRELUDE, sizeof JSDOM_PRELUDE - 1, "<prelude>");
 }
 
 int jsdom_eval(const char *src, const char *name) {
@@ -801,7 +1220,28 @@ int jsdom_run_scripts(void) {
         /* One script throwing must not stop the next: a page's scripts are
          * independent, and in a browser a broken third-party tag does not
          * blank the document. */
+        /* `document.currentScript` IS the element being run, and a page uses it
+         * to find where it was written -- SvelteKit's whole bootstrap is
+         * `document.currentScript.parentElement`. It is only meaningful DURING
+         * a script, so it is set around each one and cleared afterwards, which
+         * is also what the DOM specifies. */
+        {
+            JSValue g = JS_GetGlobalObject(g_ctx);
+            JSValue d = JS_GetPropertyStr(g_ctx, g, "document");
+            int sn = g_doc->js_node[i];
+            JS_SetPropertyStr(g_ctx, d, "currentScript",
+                              (sn >= 0 && sn < g_doc->n) ? make_elem(g_ctx, sn) : JS_NULL);
+            JS_FreeValue(g_ctx, d);
+            JS_FreeValue(g_ctx, g);
+        }
         if (eval_one(g_doc->js[i], g_doc->js_len[i], name) != 0) failed++;
+        {
+            JSValue g = JS_GetGlobalObject(g_ctx);
+            JSValue d = JS_GetPropertyStr(g_ctx, g, "document");
+            JS_SetPropertyStr(g_ctx, d, "currentScript", JS_NULL);
+            JS_FreeValue(g_ctx, d);
+            JS_FreeValue(g_ctx, g);
+        }
     }
     return failed;
 }

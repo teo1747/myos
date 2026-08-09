@@ -398,6 +398,87 @@ static void t6_writeback(uint32_t fh) {
     layout_arena_destroy(&LA); scene_arena_destroy(&SA);
 }
 
+
+/* ---- T7: SPACE_AROUND and SPACE_EVENLY differ at the ENDS ---------------
+ * The whole reason an author picks one over the other is what happens at the
+ * two edges, so that is what is asserted -- a test that only checked the
+ * middle gaps would have passed while both collapsed onto SPACE_BETWEEN. */
+static void t7_space_around_evenly(void) {
+    printf("T7 SPACE_AROUND / SPACE_EVENLY:\n");
+    for (int evenly = 0; evenly < 2; evenly++) {
+        scene_arena_init(&SA); layout_arena_init(&LA);
+        struct layout_handle root = mk(LAYOUT_HANDLE_NULL, NODE_HANDLE_NULL, SCENE_NODE_GROUP, 0);
+        L(root)->is_container = true; L(root)->axis = AXIS_ROW;
+        L(root)->justify = evenly ? JUSTIFY_SPACE_EVENLY : JUSTIFY_SPACE_AROUND;
+        struct layout_handle c[3];
+        for (int i = 0; i < 3; i++) {
+            c[i] = mk(root, NODE_HANDLE_NULL, SCENE_NODE_RECT, 0);
+            L(c[i])->width  = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 20 };
+            L(c[i])->height = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 10 };
+        }
+        layout_run(&LA, &SA, root, 120, 50);   /* 60 used, 60 leftover, 3 items */
+        if (!evenly) {
+            /* share 20 each, half (10) before the first */
+            CHECK(feq(L(c[0])->resolved_x, 10), "AROUND: first at half a share");
+            CHECK(feq(L(c[1])->resolved_x, 50), "AROUND: second a whole share on");
+            CHECK(feq(L(c[2])->resolved_x + 20, 110), "AROUND: last ends half a share short");
+        } else {
+            /* four equal gaps of 15 */
+            CHECK(feq(L(c[0])->resolved_x, 15), "EVENLY: first at one gap");
+            CHECK(feq(L(c[1])->resolved_x, 50), "EVENLY: gaps are all equal");
+            CHECK(feq(L(c[2])->resolved_x + 20, 105), "EVENLY: last leaves one gap");
+        }
+        layout_arena_destroy(&LA); scene_arena_destroy(&SA);
+    }
+}
+
+/* ---- T8: align-self overrides the container, and only for that child ---- */
+static void t8_align_self(void) {
+    printf("T8 align-self overrides align-items:\n");
+    scene_arena_init(&SA); layout_arena_init(&LA);
+    struct layout_handle root = mk(LAYOUT_HANDLE_NULL, NODE_HANDLE_NULL, SCENE_NODE_GROUP, 0);
+    L(root)->is_container = true; L(root)->axis = AXIS_ROW; L(root)->align = ALIGN_START;
+    struct layout_handle a = mk(root, NODE_HANDLE_NULL, SCENE_NODE_RECT, 0);
+    struct layout_handle b = mk(root, NODE_HANDLE_NULL, SCENE_NODE_RECT, 0);
+    struct layout_handle c = mk(root, NODE_HANDLE_NULL, SCENE_NODE_RECT, 0);
+    L(a)->width = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 10 };
+    L(b)->width = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 10 };
+    L(c)->width = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 10 };
+    L(a)->height = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 20 };
+    L(b)->height = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 20 };
+    L(c)->height = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 20 };
+    L(b)->align_self = ALIGN_CENTER + 1;
+    L(c)->align_self = ALIGN_END + 1;
+
+    layout_run(&LA, &SA, root, 100, 100);
+    CHECK(feq(L(a)->resolved_y, 0),  "no align-self: the container's START applies");
+    CHECK(feq(L(b)->resolved_y, 40), "align-self:center centres just that child");
+    CHECK(feq(L(c)->resolved_y, 80), "align-self:end pushes just that child down");
+    layout_arena_destroy(&LA); scene_arena_destroy(&SA);
+}
+
+/* ---- T9: the cross gap separates LINES, the main gap separates items ----
+ * `gap: 30px 10px` on a wrapping row means 10 between cards and 30 between
+ * rows of cards. One spacing served both, so the row gap leaked sideways. */
+static void t9_cross_gap(void) {
+    printf("T9 separate cross-axis gap:\n");
+    scene_arena_init(&SA); layout_arena_init(&LA);
+    struct layout_handle root = mk(LAYOUT_HANDLE_NULL, NODE_HANDLE_NULL, SCENE_NODE_GROUP, 0);
+    L(root)->is_container = true; L(root)->axis = AXIS_ROW; L(root)->wrap = true;
+    L(root)->spacing = 10; L(root)->cross_spacing = 30;
+    struct layout_handle c[4];
+    for (int i = 0; i < 4; i++) {
+        c[i] = mk(root, NODE_HANDLE_NULL, SCENE_NODE_RECT, 0);
+        L(c[i])->width  = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 40 };
+        L(c[i])->height = (struct layout_size){ .mode = SIZE_FIXED, .fixed_value = 20 };
+    }
+    layout_run(&LA, &SA, root, 100, 200);      /* 2 per line: 40 + 10 + 40 = 90 */
+    CHECK(feq(L(c[1])->resolved_x, 50), "items are separated by the MAIN gap (10)");
+    CHECK(feq(L(c[2])->resolved_y, 50), "lines are separated by the CROSS gap (30)");
+    CHECK(feq(L(c[2])->resolved_x, 0),  "the second line starts at the left again");
+    layout_arena_destroy(&LA); scene_arena_destroy(&SA);
+}
+
 int main(void) {
     printf("=== EmbLink UI Piece 5: layout-engine selftests ===\n");
     uint32_t fh = font_load(g_ttf, build_font());
@@ -411,6 +492,9 @@ int main(void) {
     t4_stretch();
     t5_wrap(fh);
     t6_writeback(fh);
+    t7_space_around_evenly();
+    t8_align_self();
+    t9_cross_gap();
     printf("=== layout-test: %s (%d failures) ===\n", g_fail ? "FAIL" : "OK", g_fail);
     return g_fail ? 1 : 0;
 }

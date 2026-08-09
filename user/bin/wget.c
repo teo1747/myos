@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "embk.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -67,6 +68,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "wget: bad URL '%s'\n", url); return 2;
     }
 
+    uint64_t t_start = embk_uptime_ms(), t_ready = t_start;
+
     struct in_addr addr;
     if (emb_resolve(host, &addr) != 0) { fprintf(stderr, "wget: cannot resolve %s\n", host); return 3; }
     unsigned int h = ntohl(addr.s_addr);
@@ -94,6 +97,8 @@ int main(int argc, char **argv)
         }
         fprintf(stderr, "wget: TLS 1.3 established -- server authenticated\n");
     }
+
+    t_ready = embk_uptime_ms();     /* resolve + connect + handshake are done */
 
     char req[512];
     int rl = snprintf(req, sizeof req,
@@ -139,7 +144,17 @@ int main(int argc, char **argv)
     x_close(&x);
     if (outfile) close(out);
 
-    fprintf(stderr, "wget: HTTP %d, %d bytes%s%s\n",
-            status, body, outfile ? " -> " : "", outfile ? outfile : "");
+    /* THE RATE, not just the total. A downloader that reports only bytes cannot
+     * answer the only question anyone asks when a page takes two minutes --
+     * and the rate is the number that separates "the file is big" from "the
+     * stack is slow". Split from the handshake, because on a small file the
+     * handshake IS the download time. */
+    unsigned long total_ms = (unsigned long)(embk_uptime_ms() - t_start);
+    unsigned long xfer_ms  = (unsigned long)(embk_uptime_ms() - t_ready);
+    fprintf(stderr, "wget: HTTP %d, %d bytes in %lu.%lus (%lu KB/s), setup %lu.%lus%s%s\n",
+            status, body, xfer_ms / 1000, (xfer_ms % 1000) / 100,
+            xfer_ms ? ((unsigned long)body * 1000UL / xfer_ms) / 1024 : 0,
+            (total_ms - xfer_ms) / 1000, ((total_ms - xfer_ms) % 1000) / 100,
+            outfile ? " -> " : "", outfile ? outfile : "");
     return (status / 100 == 2) ? 0 : 7;
 }

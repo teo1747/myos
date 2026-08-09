@@ -65,4 +65,11 @@ int imgcache_pump(void);
 /* Is any image still outstanding? For the status line. */
 int imgcache_pending(void);
 
+/* HOW THE PICTURES WENT: how many are ready, how many FAILED, how many are
+ * still coming, and how many the page asked for that there was no slot for.
+ * A failed image and a slot-less one both draw the same grey box, and telling
+ * them apart from a screenshot is guesswork -- which is how "the icons do not
+ * draw" stayed a mystery through three separate fixes that were not it. */
+void imgcache_stats(int *ready, int *failed, int *pending, int *refused);
+
 #endif /* _EMBLINK_WEB_IMGCACHE_H_ */

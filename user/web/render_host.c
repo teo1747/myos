@@ -26,6 +26,7 @@
 #include "jpeg.h"
 #include "select.h"
 #include "cssref.h"
+#include "charset.h"
 #include "find.h"
 #include "net.h"
 #include "fetchjob.h"
@@ -188,6 +189,34 @@ static void box_hook(int node, unsigned idx, unsigned gen) {
     if (node >= 0 && node < NODE_MAX) { g_box[node].idx = idx; g_box[node].gen = gen; }
 }
 
+/* WHATIS=x,y -- name the element whose box covers that point.
+ *
+ * Written because the alternative is inference: a screenshot shows a box, and
+ * three separate explanations for one of Brave's ("it is an image", "it is a
+ * button", "it is the svg inside it") were each disproved only after being
+ * acted on. The renderer already knows which element made which box; it simply
+ * had no way to be asked. Prints the whole ancestor chain, because a box is
+ * usually drawn by a parent of the thing you are looking for. */
+static void dump_whatis(struct html_doc *d, const char *spec) {
+    float qx = 0, qy = 0;
+    if (sscanf(spec, "%f,%f", &qx, &qy) != 2) return;
+    printf("--- WHATIS %.0f,%.0f ---\n", qx, qy);
+    for (int i = 0; i < d->n; i++) {
+        if (d->nodes[i].kind != HTML_ELEM || !g_box[i].idx) continue;
+        struct instance_handle h = { g_box[i].idx, g_box[i].gen };
+        float x, y, w, ht;
+        if (!ui_rect_of(h, &x, &y, &w, &ht)) continue;
+        if (qx < x || qx > x + w || qy < y || qy > y + ht) continue;
+        printf("  <%s%s%s%s%s%s>  %.0f,%.0f %.0fx%.0f%s\n",
+               d->nodes[i].tag,
+               d->nodes[i].id ? " id=" : "",    d->nodes[i].id ? d->nodes[i].id : "",
+               d->nodes[i].klass ? " class=" : "", d->nodes[i].klass ? d->nodes[i].klass : "",
+               d->nodes[i].svg ? " [SVG]" : "",
+               x, y, w, ht,
+               d->nodes[i].href ? " href" : "");
+    }
+}
+
 static void dump_tall(struct html_doc *d, struct scene_arena *sa) {
     struct tall_ent { float h; int node; };
     struct tall_ent top[12];
@@ -213,6 +242,48 @@ static void dump_tall(struct html_doc *d, struct scene_arena *sa) {
                d->nodes[k].klass ? " class=" : "",
                d->nodes[k].klass ? d->nodes[k].klass : "");
     }
+}
+
+/* WHICH BOX BROKE OUT, and which one let it.
+ *
+ * A page that runs off the right edge is never wrong at the word: it is wrong
+ * at some ancestor that sized itself to its content instead of to its parent,
+ * and every box under it inherits the mistake. Reading the widths from the
+ * inside out means walking up a chain that is all equally wrong; what is
+ * wanted is the OUTERMOST offender -- the first box on the way down that is
+ * wider than the thing containing it. That one is the bug; the rest are its
+ * children. Printed with the parent's width beside it so the comparison is on
+ * the same line. */
+static void dump_wide(struct html_doc *d, struct scene_arena *sa, float page_w) {
+    printf("WIDE| boxes wider than their parent (page is %.0f px)\n", page_w);
+    int shown = 0;
+    for (int i = 0; i < d->n && shown < 14; i++) {
+        if (d->nodes[i].kind != HTML_ELEM || !g_box[i].idx) continue;
+        struct instance_handle h = { g_box[i].idx, g_box[i].gen };
+        struct scene_node *sn = scene_resolve(sa, ui_scene_of(h));
+        if (!sn || sn->width <= page_w + 1.0f) continue;
+        /* the nearest ANCESTOR that has a box of its own */
+        int p = d->nodes[i].parent, pw = 0;
+        float parent_w = page_w;
+        while (p >= 0) {
+            if (d->nodes[p].kind == HTML_ELEM && g_box[p].idx) {
+                struct instance_handle ph = { g_box[p].idx, g_box[p].gen };
+                struct scene_node *psn = scene_resolve(sa, ui_scene_of(ph));
+                if (psn) { parent_w = psn->width; pw = p; break; }
+            }
+            p = d->nodes[p].parent;
+        }
+        /* Only the OUTERMOST: if the parent is over too, it is the real one. */
+        if (parent_w > page_w + 1.0f) continue;
+        printf("WIDE| %7.0f px inside %-7.0f  <%s%s%s%s%s>  (parent <%s>)\n",
+               sn->width, parent_w, d->nodes[i].tag,
+               d->nodes[i].id ? " id=" : "", d->nodes[i].id ? d->nodes[i].id : "",
+               d->nodes[i].klass ? " class=" : "",
+               d->nodes[i].klass ? d->nodes[i].klass : "",
+               pw >= 0 ? d->nodes[pw].tag : "root");
+        shown++;
+    }
+    if (!shown) printf("WIDE| nothing overflows its parent\n");
 }
 
 static void dump_grids(struct html_doc *d, int node, const struct vstyle *parent,
@@ -271,14 +342,27 @@ static void dump_hidden(struct html_doc *d, int node, const struct vstyle *paren
                     /* every matching rule, not only the ones that mention display:
                      * the point is to see what the cascade actually applied. */
                     printf("HIDDEN|   matched by spec=%u: ", ru->sel.spec);
-                    for (int k = 0; k < ru->sel.n; k++)
-                        printf("%s%s%s%s%s ",
-                               k ? (ru->sel.part[k].comb == CSS_COMB_CHILD ? "> " :
-                                    ru->sel.part[k].comb == CSS_COMB_ADJ   ? "+ " :
-                                    ru->sel.part[k].comb == CSS_COMB_SIB   ? "~ " : "") : "",
-                               ru->sel.part[k].tag,
-                               ru->sel.part[k].id[0] ? "#" : "", ru->sel.part[k].id,
-                               ru->sel.part[k].klass[0] ? "." : "");
+                    for (int k = 0; k < ru->sel.n; k++) {
+                        const struct css_sel_part *pt = &ru->sel.part[k];
+                        printf("%s%s%s%s",
+                               k ? (pt->comb == CSS_COMB_CHILD ? "> " :
+                                    pt->comb == CSS_COMB_ADJ   ? "+ " :
+                                    pt->comb == CSS_COMB_SIB   ? "~ " : "") : "",
+                               pt->tag,
+                               pt->id[0] ? "#" : "", pt->id);
+                        /* EVERY class, by name. This printed a bare "." for any
+                         * rule at all once a compound could hold several --
+                         * `klass` became an array, and `klass[0]` is then a
+                         * pointer that is never null. A diagnostic that cannot
+                         * name the selector it found sends you to grep the
+                         * stylesheet, which is the search it exists to end. */
+                        for (int ci = 0; ci < pt->nklass; ci++)
+                            printf(".%s", pt->klass[ci]);
+                        if (!pt->tag[0] && !pt->id[0] && !pt->nklass) printf("*");
+                        if (pt->never)    printf(":<state-off>");
+                        if (pt->overflow) printf(":<too-complex>");
+                        printf(" ");
+                    }
                     printf("  {%.*s}\n", (int)(ru->decls_len > 90 ? 90 : ru->decls_len), ru->decls);
                 }
             }
@@ -401,6 +485,8 @@ static void survey(struct node_handle h, float oy, int depth) {
 /* Assertions that must HOLD, not merely print. `make browser-render` is the
  * fast loop for this whole stack, and a loop that always exits 0 is a report,
  * not a test. */
+static void host_console(const char *line) { printf("JS| %s\n", line); }
+
 static int g_fail;
 
 int main(int argc, char **argv) {
@@ -417,6 +503,25 @@ int main(int argc, char **argv) {
     uint8_t *src  = read_file(doc, &dl);
     if (!reg || !bold) { fprintf(stderr, "could not load DejaVu fonts\n"); return 1; }
     if (!src) { fprintf(stderr, "could not read %s\n", doc); return 1; }
+    /* The host loop has no HTTP header, so the document's own <meta> is the
+     * only declaration there is -- and honouring it keeps the corpus and the
+     * fast loop rendering the same bytes the metal will. The conversion grows
+     * the text, so it gets its own buffer with room to grow into. */
+    {
+        char cs[32] = "";
+        charset_from_meta((const char *)src, dl, cs, sizeof cs);
+        if (charset_should_transcode(cs, (const char *)src, dl)) {
+            size_t cap = dl * 2 + 8;
+            char *wide = malloc(cap);
+            if (wide) {
+                memcpy(wide, src, dl); wide[dl] = 0;
+                size_t m = charset_1252_to_utf8(wide, dl, cap);
+                if (m) { src = (uint8_t *)wide; dl = m; }
+                else   free(wide);
+            }
+        }
+    }
+
     uint32_t fr = font_load(reg, rl), fb = font_load(bold, bl);
     font_install_backend();
 
@@ -436,7 +541,11 @@ int main(int argc, char **argv) {
     if (getenv("ZOOM")) vellum_set_zoom((float)atof(getenv("ZOOM")));
     cssref_start(&g_doc, g_doc_base);
     {
-        static char allcss[1024 * 1024];
+        /* Sized like cssref's on the metal (3 MB). At 1 MB the harness
+         * silently dropped a 297 KB sheet on github.com and then rendered a
+         * page the metal would not have -- a fast loop that disagrees with the
+         * real thing is worse than no fast loop. */
+        static char allcss[3 * 1024 * 1024];
         size_t n = 0, extn = 0;
         const char *ext = cssref_text(&extn);
         if (ext && extn) { memcpy(allcss, ext, extn); n = extn; allcss[n++] = '\n'; }
@@ -452,11 +561,18 @@ int main(int argc, char **argv) {
      * a DIFFERENT document than the browser renders -- any page that builds
      * its own DOM would look empty here and correct on the metal, which is the
      * exact divergence a fast loop exists to prevent. */
+    /* ...and SAY WHAT THEY SAID. Without a console hook the harness reported
+     * only that a script threw, never what it threw -- so the one loop fast
+     * enough to debug JavaScript in was the one place the error was invisible,
+     * and the message had to be read off a screenshot of the metal. */
+    jsdom_set_console(host_console);
     if (jsdom_open(&g_doc, &g_sheet) == 0 && g_doc.n_js > 0) {
         int failed = jsdom_run_scripts();
         jsdom_take_dirty();
         vstyle_cache_invalidate();     /* the scripts may have restyled it */
         if (failed) printf("*** %d script(s) threw ***\n", failed);
+        int dec = jsdom_declined_listeners();
+        if (dec) printf("--- %d listener(s) declined (event types not delivered) ---\n", dec);
     }
     if (getenv("DOM")) dump_dom(&g_doc, g_root, 0);
     /* HIDDEN=1 -- which elements the cascade turned off, and how much of the
@@ -488,7 +604,7 @@ int main(int argc, char **argv) {
             const struct css_sel_part *j =
                 &g_sheet.rules[i].sel.part[g_sheet.rules[i].sel.n - 1];
             if (j->id[0]) byid++;
-            else if (j->klass[0]) bycls++;
+            else if (j->nklass) bycls++;
             else if (j->tag[0]) bytag++;
             else {
                 if (keyless < 6 && g_sheet.rules[i].decls) {
@@ -518,7 +634,7 @@ int main(int argc, char **argv) {
     ui_init(&sa, &la);
 
     em_set_viewport((float)W, (float)H);
-    if (getenv("TALL")) vellum_set_box_hook(box_hook);
+    if (getenv("TALL") || getenv("WHATIS") || getenv("WIDE")) vellum_set_box_hook(box_hook);
     ui_frame_begin(); em_new_frame(); app(); em_flush(); ui_frame_end();
     ui_run_layout((float)W, (float)H);
 
@@ -526,6 +642,8 @@ int main(int argc, char **argv) {
      * running before the frame was even built, which is a diagnostic that can
      * only ever report nothing. */
     if (getenv("TALL")) { g_tall_min = (float)atof(getenv("TALL")); dump_tall(&g_doc, &sa); }
+    if (getenv("WHATIS")) dump_whatis(&g_doc, getenv("WHATIS"));
+    if (getenv("WIDE")) dump_wide(&g_doc, &sa, (float)W);
 
     printf("\n--- resolved tree (depth <= %d) ---\n", maxdepth);
     dump(ui_scene_of(ui_root()), 0, 0, 0, maxdepth);
@@ -639,7 +757,10 @@ int main(int argc, char **argv) {
         int changed = vsel_all();
         static char buf[65536];
         size_t n = vsel_copy_text(buf, sizeof buf);
-        int truncated = (n >= sizeof buf - 2);
+        /* A copy is short for two reasons, and only one of them is the
+         * buffer: the selection INDEX is bounded too, and a document that
+         * overflowed it has a tail that was never selectable. */
+        int truncated = (n >= sizeof buf - 2) || vsel_overflowed();
         printf("\n--- selection: select-all changed=%d, %zu bytes copied ---\n", changed, n);
         if (!changed || n == 0) { printf("*** selection FAILED: select-all produced nothing ***\n"); g_fail++; }
 
@@ -662,12 +783,26 @@ int main(int argc, char **argv) {
             struct scene_node *ln = scene_resolve(&sa, last);
             const char *fw = fn ? fn->data.text.utf8 : 0;
             const char *lw = ln ? ln->data.text.utf8 : 0;
+            /* ...from a CHARACTER boundary. A fixed byte offset into UTF-8
+             * lands mid-sequence and puts a lone continuation byte on stdout,
+             * which the test harness reads as text and dies decoding. */
+            const char *tail = n > 120 ? buf + n - 120 : buf;
+            while (tail > buf && ((unsigned char)*tail & 0xC0) == 0x80) tail++;
+            printf("    last 120:  [%.120s]\n", tail);
             size_t flen = fw ? strlen(fw) : 0;
             while (flen && fw[flen-1] == ' ') flen--;
             int head_ok = fw && flen && !strncmp(buf, fw, flen);
+            /* TRIMMED at BOTH ends. The head was already compared without its
+             * trailing space; the tail was not, so a document whose last text
+             * node happens to end in one ("Search: ", before an input) failed a
+             * check about ORDER over a space the copier does not emit. */
+            char lt[64]; size_t llen = lw ? strlen(lw) : 0;
+            if (llen >= sizeof lt) llen = sizeof lt - 1;
+            while (llen && lw[llen-1] == ' ') llen--;
+            if (llen) { memcpy(lt, lw, llen); lt[llen] = 0; }
             /* only when the copy FIT: a truncated copy is legitimately
              * missing its tail, and asserting otherwise tests the buffer */
-            int tail_ok = truncated || (lw && lw[0] && strstr(buf, lw));
+            int tail_ok = truncated || (llen && strstr(buf, lt));
             if (!head_ok || !tail_ok) {
                 printf("*** selection FAILED: copy is not the document in order"
                        " (head=%d tail=%d first=[%.30s] last=[%.30s]) ***\n",
@@ -848,7 +983,10 @@ static uint8_t  HSCR[IMG_MAX_PX * 4 + IMG_MAX_DIM + 64];
  * harness cannot do. Loading the sheets from beside the document instead keeps
  * everything ABOVE the fetch -- resolution, concatenation, cascade order --
  * under test, which is where the interesting behaviour is. */
-static char   HCSS[1024 * 1024];
+/* Sized like cssref's on the metal. github.com alone serves 900 KB of CSS
+ * across seven sheets, and a harness that silently drops one renders a page
+ * the metal would not. */
+static char HCSS[3 * 1024 * 1024];
 static size_t HCSSN;
 
 void cssref_reset(void) { HCSSN = 0; HCSS[0] = 0; }
@@ -863,6 +1001,12 @@ int cssref_start(struct html_doc *doc, const char *base) {
     int got = 0;
     for (int i = 0; i < doc->n_cssref; i++) {
         char path[1024];
+        /* Same rule as the metal: a print sheet is not for a screen. */
+        const char *m = doc->cssmedia[i];
+        if (m && m[0] && !css_media_matches(m, strlen(m))) {
+            fprintf(stderr, "  (skipped %s: media=%s)\n", doc->cssref[i], m);
+            continue;
+        }
         if (url_resolve(base, doc->cssref[i], path, sizeof path) != 0) continue;
         /* a network href has no file behind it here; skip rather than invent */
         size_t n = 0;
@@ -938,6 +1082,17 @@ struct img_slot *imgcache_want(const char *url) {
         int probed = is_jpeg ? jpeg_probe(bytes, n, &w, &h) : png_probe(bytes, n, &w, &h);
         if (probed != 0 ||
             w > IMG_MAX_DIM || h > IMG_MAX_DIM || (size_t)w * h > IMG_MAX_PX) {
+            H[i].state = IMG_FAILED; free(bytes); return &H[i];
+        }
+        /* ROOM IN THE ARENA, checked before a decoder is handed a pointer.
+         * The metal's imgcache has always checked this; the harness did not,
+         * so a page with enough pictures ran the decoder past the end of
+         * HARENA and it wrote over whatever global came next -- which on
+         * github.com was the DOCUMENT, wiped mid-render, and the crash landed
+         * three frames away in code that was doing nothing wrong. A tool that
+         * segfaults on the biggest real page is a tool you stop trusting
+         * exactly when you need it. */
+        if ((size_t)w * h > IMG_MAX_PX - HUSED) {
             H[i].state = IMG_FAILED; free(bytes); return &H[i];
         }
         uint32_t *dst = HARENA + HUSED;

@@ -25,6 +25,28 @@ static int               g_tid = -1;
 static uint64_t          g_started_ms;
 static int               g_tag;
 static char              g_body[2048];
+
+/* WHERE THE SECONDS GO, per tag. A page that takes two and a half minutes is
+ * the loudest complaint the browser has, and "Loading... 146s" says only that
+ * it was slow -- not whether that is one big transfer, a hundred small ones,
+ * or the parser. Totals are cheap to keep and turn the next perf question from
+ * an argument into a reading. */
+#define FJ_TAGS 8
+static unsigned long g_stat_bytes[FJ_TAGS];
+static unsigned long g_stat_ms[FJ_TAGS];
+static unsigned      g_stat_n[FJ_TAGS];
+
+void fetchjob_stats(int tag, unsigned long *bytes, unsigned long *ms, unsigned *n) {
+    if (tag < 0 || tag >= FJ_TAGS) { if (bytes) *bytes = 0; if (ms) *ms = 0; if (n) *n = 0; return; }
+    if (bytes) *bytes = g_stat_bytes[tag];
+    if (ms)    *ms    = g_stat_ms[tag];
+    if (n)     *n     = g_stat_n[tag];
+}
+void fetchjob_stats_reset(void) {
+    memset(g_stat_bytes, 0, sizeof g_stat_bytes);
+    memset(g_stat_ms, 0, sizeof g_stat_ms);
+    memset(g_stat_n, 0, sizeof g_stat_n);
+}
 static int               g_have_body;
 
 static void worker(long arg) {
@@ -84,6 +106,13 @@ int fetchjob_poll(int tag, struct vnet_result *out) {
     if (g_state != JOB_DONE)    return -1;
     if (g_tag != tag) return 0;          /* someone else's -- leave it for them */
     if (g_tid >= 0) { embk_thread_join(g_tid); g_tid = -1; }
+    /* Charged to the tag that asked for it, at the moment it is handed over. */
+    if (tag >= 0 && tag < FJ_TAGS) {
+        uint64_t now = embk_uptime_ms();
+        g_stat_bytes[tag] += g_res.len;
+        g_stat_ms[tag]    += (unsigned long)(now > g_started_ms ? now - g_started_ms : 0);
+        g_stat_n[tag]++;
+    }
     if (out) *out = g_res;
     g_state = JOB_IDLE;
     g_buf = 0; g_cap = 0;

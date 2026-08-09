@@ -482,7 +482,19 @@ void ui_set_size(struct layout_size w, struct layout_size h) {
     if (b->shadow.has_size && memcmp(&b->shadow.sw,&w,sizeof w)==0 && memcmp(&b->shadow.shh,&h,sizeof h)==0) return;
     b->shadow.sw = w; b->shadow.shh = h; b->shadow.has_size = true;
     struct layout_node *ln = layout_resolve(g_la, b->layout_node);
-    if (ln) { ln->width = w; ln->height = h; ln->dirty = true; }
+    if (ln) {
+        /* KEEP THE BOUNDS. A size and its limits are set by two different
+         * calls, and this one assigns the whole struct -- so whichever ran
+         * second silently erased the other. The browser sets `max-width` when
+         * it opens a box and the SIZE when it closes it, so every cap on the
+         * web was being dropped between the two: `width: 100%; max-width:
+         * 300px` came out 896px wide. Bounds passed in explicitly still win. */
+        if (w.min_size == 0) w.min_size = ln->width.min_size;
+        if (w.max_size == 0) w.max_size = ln->width.max_size;
+        if (h.min_size == 0) h.min_size = ln->height.min_size;
+        if (h.max_size == 0) h.max_size = ln->height.max_size;
+        ln->width = w; ln->height = h; ln->dirty = true;
+    }
     g_mutation_count++;
 }
 void ui_set_size_bounds(float min_w, float max_w, float min_h, float max_h) {

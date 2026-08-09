@@ -25,6 +25,23 @@
 /* the desktop is dark, so this one DOES apply */
 .scheme { color: #ff0000 }
 @media (prefers-color-scheme: dark) { .scheme { color: #e0e060 } }
+
+/* RANGE SYNTAX, which is what every modern build tool emits now -- 224 of the
+   media queries in Brave's stylesheet are written this way. An unrecognised
+   feature reports NOT MATCHING, so a whole responsive layer evaluated to
+   false; at a wide viewport that is accidentally right for the max-width
+   cases and wrong for every min-width one. */
+@media (width >= 700px) { .rng  { color: #22aa55 } }
+@media (width <= 500px) { .rng2 { color: #cc2233 } }
+@media (600px <= width <= 1200px) { .rng3 { color: #3355dd } }
+@media (hover: hover)   { .hov  { color: #aa22aa } }
+
+/* NO SPACE AFTER THE KEYWORD. Every minifier writes it this way, and reading
+   the at-rule keyword up to whitespace made it "media(min-width:45em)" --
+   not "media", so the whole block was skipped and gnu.org lost a paragraph.
+   The two cases differ: the first block must apply, the second must not. */
+@media(min-width:600px){.tight{color:#dd8811}}
+@media(max-width:400px){.tight2{color:#ff0000}}
 </style></head><body>
 <p class="resp">RESPONSIVE is green: 940px is past the 700px breakpoint but not the 5000px one.</p>
 <p class="narrow">NARROWTEST stays blue: a max-width of 400px does not match 940px.</p>
@@ -39,4 +56,20 @@
 <!-- EXPECT-COLOR: ANYOF #a070ff -->
 <!-- EXPECT-COLOR: UNKNOWNFEAT #70c0a0 -->
 <!-- EXPECT-COLOR: SCHEME #e0e060 -->
+
+<p class="rng">RANGEWIDE is coloured above 700px</p>
+<p class="rng2">RANGENARROW must NOT be coloured at 940px</p>
+<p class="rng3">RANGEBOTH is inside a two-sided range</p>
+<p class="hov">HOVERABLE -- a desktop has a pointer</p>
+<!-- EXPECT-COLOR: RANGEWIDE #22aa55 -->
+<!-- EXPECT-COLOR: RANGEBOTH #3355dd -->
+<!-- EXPECT-COLOR: HOVERABLE #aa22aa -->
+<!-- The narrow-only rule must not apply at 940px: a range that matches
+     everything is as wrong as one that matches nothing. -->
+<!-- EXPECT-COLOR: RANGENARROW #1b1b1b -->
+
+<p class="tight">MINIFIED is coloured: @media( with no space is still @media</p>
+<p class="tight2">MINIFIEDNARROW must stay default at 940px</p>
+<!-- EXPECT-COLOR: MINIFIED #dd8811 -->
+<!-- EXPECT-COLOR: MINIFIEDNARROW #1b1b1b -->
 </body></html>

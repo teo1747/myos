@@ -17,6 +17,12 @@ a:hover { color: #58a6ff }
 /* ...and display:table on something that is not a table still shows what is
    inside it. */
 .tbox { display: table }
+
+/* :hover is IGNORED on purpose (see above) -- but a reveal that has not
+   happened is different: ignoring it shows content the reader never asked for.
+   Nothing is focused in a render, and no fragment is targeted. */
+.rev:focus-within { color: #ff3366 }
+.rev2:target      { color: #ff3366 }
 </style></head><body>
 <div class="container"><p>CLEARFIXED text is still visible</p></div>
 <div class="legacy"><p>LEGACYPSEUDO text is still visible</p></div>
@@ -36,4 +42,9 @@ a:hover { color: #58a6ff }
 <!-- A pseudo-CLASS still applies to the element, which is the deliberate
      difference: a:hover paints the link. -->
 <!-- EXPECT-COLOR: HOVERLINK #58a6ff -->
+
+<p class="rev">REVEALWITHIN must keep its ordinary colour</p>
+<p class="rev2" id="sec">REVEALTARGET must too</p>
+<!-- EXPECT-COLOR: REVEALWITHIN #1b1b1b -->
+<!-- EXPECT-COLOR: REVEALTARGET #1b1b1b -->
 </body></html>

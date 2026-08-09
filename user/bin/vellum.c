@@ -36,6 +36,7 @@
 #define DOC_TAG 1
 #include "url.h"
 #include "net.h"
+#include "charset.h"
 #include "fetchjob.h"
 #include "select.h"
 #include "cssref.h"
@@ -148,8 +149,28 @@ static void update_status(void) {
         snprintf(css + k, sizeof css - k, "  %d script%s",
                  g_doc.n_js, g_doc.n_js == 1 ? "" : "s");
     }
-    snprintf(g_status, sizeof g_status, "%d  %s  %zu bytes  %d nodes%s%s%s%s",
-             g_st.status, g_st.via, g_st.bytes, g_doc.n, css,
+    /* WHERE THE TIME WENT. "Loading... 146s" says a page was slow; it cannot
+     * say whether that was one big transfer or a hundred small ones, and the
+     * two have opposite fixes. Reported per kind, in the same line that already
+     * reports what arrived. */
+    char timing[96] = "";
+    {
+        unsigned long db = 0, dm = 0, cb = 0, cm = 0, ib = 0, im = 0;
+        unsigned dn = 0, cn = 0, in_ = 0;
+        fetchjob_stats(DOC_TAG, &db, &dm, &dn);    /* the document */
+        fetchjob_stats(4, &cb, &cm, &cn);          /* CSS_TAG: stylesheets */
+        fetchjob_stats(2, &ib, &im, &in_);         /* IMG_TAG: pictures    */
+        if (dm + cm + im > 0)
+            snprintf(timing, sizeof timing,
+                     "  [doc %luK/%lus  css %luK/%lus  fetched %ux %luK/%lus]",
+                     db / 1024, dm / 1000, cb / 1024, cm / 1000,
+                     in_, ib / 1024, im / 1000);
+    }
+    /* The counts come BEFORE the prose. The line is truncated from the right
+     * when a script has also complained, and what gets cut should be the part
+     * that is nice to have rather than the part being read. */
+    snprintf(g_status, sizeof g_status, "%d  %s  %zu bytes  %d nodes%s%s%s%s%s%s",
+             g_st.status, g_st.via, g_st.bytes, g_doc.n, "", css, timing,
              g_st.res_trunc  ? "  (response truncated)" : "",
              g_st.res_partial ? "  (INCOMPLETE -- the connection ended early)" : "",
              g_doc.truncated ? "  (document truncated)" : "");
@@ -237,6 +258,7 @@ static void load_error(const char *url, const char *why) {
     g_root = html_parse(&g_doc, g_src, strlen(g_src), g_nodes, NODE_MAX, g_strs, STR_MAX);
     cssref_reset(); rebuild_sheet();
     imgcache_reset();
+    render_svg_cache_reset();
     vsel_reset();
     snprintf(g_status, sizeof g_status, "%s", why);
 }
@@ -260,6 +282,7 @@ static int install_document(size_t n) {
     rebuild_sheet();
     vstyle_cache_invalidate();     /* a different document entirely */
     imgcache_reset();          /* one page's pictures never leak into the next */
+    render_svg_cache_reset();  /* ...nor do its drawings, which are keyed by node */
     vsel_reset();              /* ...nor does a selection: it indexed the OLD words */
     form_reset();              /* ...nor one page's typing into the next */
     vellum_reset_details();    /* ...nor which disclosures it had open */
@@ -290,6 +313,9 @@ static int install_document(size_t n) {
 static int about_page(const char *url);
 
 static void load(const char *url) {
+    /* A new page is a new set of numbers: the timings belong to the navigation
+     * that is starting, not to the one before it. */
+    fetchjob_stats_reset();
     snprintf(g_url, sizeof g_url, "%s", url);
     snprintf(g_bar, sizeof g_bar, "%s", url);
     g_scroll = 0;
@@ -342,6 +368,27 @@ static void finish_load(const struct vnet_result *res) {
     size_t n = res->len < G_SRC_MAX - 1 ? res->len : G_SRC_MAX - 1;
     memcpy(g_src, g_incoming, n);
     g_src[n] = 0;
+
+    /* INTO UTF-8, ONCE, HERE. Everything downstream -- parser, shaper, font --
+     * assumes UTF-8, and google.com serves this browser ISO-8859-1, in which an
+     * e-acute is one byte that UTF-8 reads as a broken sequence. Every accent
+     * came out as a replacement character, which looks like a missing glyph and
+     * is nothing of the kind.
+     *
+     * At the FETCH, not in install_document: a tab keeps its source and is
+     * re-parsed on every switch, so converting there would decode
+     * already-converted text a second time and mangle exactly the characters
+     * this fixes. The server's declaration wins over the document's, which is
+     * the order HTTP and HTML both give. */
+    {
+        char cs[32] = "";
+        if (res->charset[0]) snprintf(cs, sizeof cs, "%s", res->charset);
+        else                 charset_from_meta(g_src, n, cs, sizeof cs);
+        if (charset_should_transcode(cs, g_src, n)) {
+            size_t m = charset_1252_to_utf8(g_src, n, G_SRC_MAX - 1);
+            if (m) { n = m; g_src[n] = 0; }
+        }
+    }
     tab_set_src_len(tab_current(), n);
     if (install_document(n) != 0) return;
 
@@ -924,6 +971,22 @@ static void app(void) {
         g_status_busy = 0;
         snprintf(g_status, sizeof g_status, "%s", g_status_done);
     }
+    if (!g_status_busy) {
+        /* HOW THE PICTURES WENT, recomputed here rather than at load: an image
+         * is requested while the page DRAWS, so a summary composed when the
+         * document was installed always read zero -- which looked like a page
+         * with no images at all and sent the diagnosis off in the wrong
+         * direction. A failed image, one still coming, and one the cache had no
+         * room for all draw the same grey box. */
+        int ir = 0, ifl = 0, ip = 0, iref = 0;
+        imgcache_stats(&ir, &ifl, &ip, &iref);
+        if (ir || ifl || ip || iref) {
+            snprintf(g_status, sizeof g_status, "%s  img %dok", g_status_done, ir);
+            if (ifl)  snprintf(g_status + strlen(g_status), sizeof g_status - strlen(g_status), " %dfail", ifl);
+            if (ip)   snprintf(g_status + strlen(g_status), sizeof g_status - strlen(g_status), " %dwait", ip);
+            if (iref) snprintf(g_status + strlen(g_status), sizeof g_status - strlen(g_status), " %dnoslot", iref);
+        }
+    }
 
     selection_tick();
 
@@ -1162,17 +1225,29 @@ static void app(void) {
              * reading: a blank page with "ReferenceError" under it tells you a
              * script failed and nothing about whether the document did. */
             const char *h = vellum_hovered_link();
-            Text(h ? h : g_status).caption().tertiary();
+            /* THEY MUST NOT OVERLAP. A row that overflows does not shrink its
+             * text -- it draws both strings on top of each other, and the
+             * status line became unreadable exactly when it carried the most
+             * (timings, image counts) and a script had also complained. The
+             * left string yields: it is the one that can afford to lose its
+             * tail, and a truncated reading beats two superimposed ones. */
+            char left[256];
+            snprintf(left, sizeof left, "%s", h ? h : g_status);
+            char right[72]; right[0] = 0;
+            if (!h && g_console[0]) snprintf(right, sizeof right, "%.68s", g_console);
+            if (right[0]) {
+                float avail = em_viewport_width() - 32.0f
+                            - em_text_width(right, 12.5f);
+                size_t n = strlen(left);
+                while (n > 8 && em_text_width(left, 12.5f) > avail) left[--n] = 0;
+            }
+            Text(left).caption().tertiary();
             /* The URL used to be echoed on the right, which put the address on
              * screen twice -- and the copy down here was the one nobody could
              * edit. The row keeps its height so that hovering a link does not
              * reflow the page underneath it. */
             Spacer();
-            if (!h && g_console[0]) {
-                char c[72];
-                snprintf(c, sizeof c, "%.68s", g_console);
-                Text(c).caption().tertiary();
-            }
+            if (right[0]) Text(right).caption().tertiary();
         }
     }
 }

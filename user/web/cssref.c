@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "cssref.h"
+#include "css.h"
 #include "html.h"
 #include "fetchjob.h"
 #include "net.h"
@@ -22,8 +23,14 @@
  *
  * github ships 6.9MB and will not fit. That is a bound being hit, and hitting
  * one is now reported (cssref_dropped) rather than silent. */
-#define CSS_TEXT_MAX (1024 * 1024)    /* the whole page's author CSS */
-#define CSS_ONE_MAX  (512 * 1024)     /* one sheet's download buffer  */
+/* SIZED FROM WHAT THE WEB ACTUALLY SERVES, not from what seems reasonable.
+ * Brave's single stylesheet is 1.02 MB; at the old 512 KB it arrived cut in
+ * half, which is worse than not arriving at all -- a sheet severed mid-rule
+ * leaves a dangling brace, and the half we kept was missing exactly the layout
+ * rules the page needed. It rendered as an unstyled column of form controls
+ * while the host, which had the whole file, rendered the search results. */
+#define CSS_TEXT_MAX (3 * 1024 * 1024)   /* the whole page's author CSS */
+#define CSS_ONE_MAX  (2 * 1024 * 1024)   /* one sheet's download buffer  */
 
 static char   g_url[CSSREF_MAX][512];
 static int    g_n;                    /* how many sheets this page names */
@@ -52,6 +59,14 @@ int cssref_start(struct html_doc *doc, const char *base) {
          * sheet at /css/site.css on a page fetched over https means that host,
          * and the same href in a local file means the file beside it. Same one
          * rule the link handler uses. */
+        /* THE MEDIA IT WAS LINKED WITH. `<link media="print">` is a sheet for
+         * a printer: applying it on screen hides everything the page marked
+         * unprintable, which on gnu.org is its navigation, header and
+         * breadcrumbs -- they vanished, and it read as a layout bug. An
+         * absent media attribute means all media, which is nearly every link
+         * on the web and costs nothing to check. */
+        const char *m = doc->cssmedia[i];
+        if (m && m[0] && !css_media_matches(m, strlen(m))) continue;
         if (url_resolve(base, doc->cssref[i], g_url[g_n], sizeof g_url[0]) != 0)
             continue;
         g_n++;
@@ -76,7 +91,11 @@ int cssref_pump(void) {
              * is missing is worse than one that shows it plain. */
             if (res.len > 0 && res.status >= 200 && res.status < 300) {
                 size_t n = res.len;
-                if (n > sizeof g_one - 1) { n = sizeof g_one - 1; g_dropped++; }
+                /* A sheet too big for the buffer is dropped WHOLE, not cut:
+                 * severing CSS mid-rule leaves an unbalanced brace that eats
+                 * every rule after it, so half a sheet can style less than none
+                 * of it. */
+                if (n > sizeof g_one - 1) { n = 0; g_dropped++; }
                 if (g_len + n + 2 < sizeof g_text) {
                     /* a newline between sheets: a file that ends mid-comment or
                      * without its final newline must not weld onto the next */

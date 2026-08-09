@@ -31,4 +31,13 @@ literal &mdash; which is how most real stylesheets write a colour.</p></div>
 <!-- EXPECT-COLOR: centred #a0a0b0 -->
 <!-- EXPECT-COLOR: warning #f0c080 -->
 <!-- EXPECT-TEXT: rounded -->
+
+<!-- A <pre> is not only its direct text. Highlighted code IS spans, so reading
+     only text children rendered every syntax-highlighted block on the web as
+     nothing -- MDN's formal-syntax section was blank on every reference page.
+     <br> inside one is a line break, not a box. -->
+<pre><span>PREFIRST</span><br>  <span class="tok">PRESECOND</span></pre>
+<!-- EXPECT-TEXT: PREFIRST -->
+<!-- EXPECT-TEXT: PRESECOND -->
+<!-- EXPECT-BELOW: PRESECOND PREFIRST -->
 </body></html>

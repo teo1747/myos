@@ -18,4 +18,18 @@ has no rules on the web, which is why the old web can use tables for layout.</p>
 <p>This one asked for rules with border="1", so it gets them.</p>
 <!-- EXPECT-LEFT-OF: 1. headline -->
 <!-- EXPECT-TEXT: win_create -->
+
+<!-- A TABLE INSIDE A TABLE'S CELL re-enters the renderer, and the row list it
+     works from used to be static -- so the inner table overwrote the outer's
+     and, on return, the outer read the INNER table's rows. Hacker News lost its
+     entire footer this way and showed a repeated item row in its place. The
+     inner table must not disturb what follows it. -->
+<table><tr><td>TBLFIRST</td></tr>
+<tr><td><table><tr><td>NEST0</td></tr><tr><td>NEST1</td></tr><tr><td>NEST2</td></tr><tr><td>NEST3</td></tr><tr><td>NEST4</td></tr><tr><td>NEST5</td></tr></table></td></tr>
+<tr><td>TBLAFTERNEST</td></tr></table>
+<!-- EXPECT-TEXT: TBLFIRST -->
+<!-- EXPECT-TEXT: NEST0 -->
+<!-- EXPECT-TEXT: NEST5 -->
+<!-- EXPECT-TEXT: TBLAFTERNEST -->
+<!-- EXPECT-ORDER: NEST5 TBLAFTERNEST -->
 </body></html>

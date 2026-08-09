@@ -113,7 +113,12 @@ static int parse_fn_args(const char *s, size_t len, unsigned short *first,
                 while (j < end && !is_ws(s[j]) && s[j] != '.' && s[j] != '#' &&
                        s[j] != ':' && s[j] != '[') j++;
                 if (j > vs) {
-                    if (kind == '.') { cpy_lower(a.klass, sizeof a.klass, s + vs, j - vs); spec += 10; }
+                    if (kind == '.') {
+                        if (a.nklass < CSS_SEL_CLASSES)
+                            cpy_lower(a.klass[a.nklass++], sizeof a.klass[0], s + vs, j - vs);
+                        else a.overflow = 1;
+                        spec += 10;
+                    }
                     else             { cpy_lower(a.id, sizeof a.id, s + vs, j - vs);       spec += 100; }
                     got = 1;
                 }
@@ -179,13 +184,54 @@ int css_sel_parse(const char *s, size_t len, struct css_sel *out) {
                 while (i < len && !is_ws(s[i]) && s[i]!='.' && s[i]!='#' &&
                        s[i]!='>' && s[i]!='+' && s[i]!='~' && s[i]!=':' && s[i]!='[') i++;
                 if (i > vs) {
-                    if (kind == '.') { cpy_lower(pt->klass, sizeof pt->klass, s + vs, i - vs);
-                                       out->spec += 10; }
+                    if (kind == '.') {
+                        if (pt->nklass < CSS_SEL_CLASSES)
+                            cpy_lower(pt->klass[pt->nklass++], sizeof pt->klass[0], s + vs, i - vs);
+                        else pt->overflow = 1;   /* see the match side */
+                        out->spec += 10;
+                    }
                     else             { cpy_lower(pt->id, sizeof pt->id, s + vs, i - vs);
                                        out->spec += 100; }
                     got = 1;
                 }
-            } else if (s[i] == ':' || s[i] == '[') {
+            } else if (s[i] == '[') {
+                /* AN ATTRIBUTE TEST, evaluated rather than skipped. Skipping it
+                 * removes a constraint, and a selector missing a constraint
+                 * matches more than the author wrote -- which is how MDN's
+                 * `[class*=interactive-example]:is(.code-example pre)` became
+                 * "any pre" and hid the formal-syntax block on every reference
+                 * page. */
+                size_t as2 = ++i;
+                while (i < len && s[i] != ']') i++;
+                size_t an2 = i - as2;
+                if (i < len) i++;
+                if (pt->attr_op) { pt->overflow = 1; }   /* a second test: refuse */
+                else {
+                    const char *a = s + as2;
+                    size_t k = 0;
+                    while (k < an2 && a[k] != '=' && a[k] != '~' && a[k] != '^' &&
+                           a[k] != '$' && a[k] != '*' && a[k] != '|' && !is_ws(a[k])) k++;
+                    cpy_lower(pt->attr_name, sizeof pt->attr_name, a, k);
+                    int op = CSS_ATTR_HAS;
+                    if (k < an2) {
+                        char c2 = a[k];
+                        if      (c2 == '=') { op = CSS_ATTR_EQ;     k += 1; }
+                        else if (c2 == '~') { op = CSS_ATTR_WORD;   k += 2; }
+                        else if (c2 == '^') { op = CSS_ATTR_PREFIX; k += 2; }
+                        else if (c2 == '$') { op = CSS_ATTR_SUFFIX; k += 2; }
+                        else if (c2 == '*') { op = CSS_ATTR_SUBSTR; k += 2; }
+                        else                { op = CSS_ATTR_HAS;    k = an2; }
+                        while (k < an2 && (is_ws(a[k]) || a[k] == '"' || a[k] == '\'')) k++;
+                        size_t ve = an2;
+                        while (ve > k && (is_ws(a[ve-1]) || a[ve-1] == '"' ||
+                                          a[ve-1] == '\'' || a[ve-1] == 'i')) ve--;
+                        cpy_lower(pt->attr_val, sizeof pt->attr_val, a + k, ve > k ? ve - k : 0);
+                    }
+                    pt->attr_op = (unsigned char)op;
+                    out->spec += 10;
+                    got = 1;
+                }
+            } else if (s[i] == ':') {
                 char lead = s[i];
                 i++;
                 int dbl = 0;
@@ -259,8 +305,36 @@ int css_sel_parse(const char *s, size_t len, struct css_sel *out) {
                              !strcmp(name, "first-line") || !strcmp(name, "first-letter")) {
                         out->pseudo_elem = 1; got = 1;
                     }
-                    /* anything else: skip the token and keep the compound --
-                     * `a:hover` still styling `a` beats dropping the rule */
+                    /* A REVEAL that has not happened. These three differ from
+                     * `:hover` and `:focus`, which this file deliberately
+                     * ignores so that `a:hover` still styles `a` (tests/web/
+                     * pseudo.html holds that decision): those are COSMETIC, and
+                     * a link painted in its hover colour is merely the wrong
+                     * blue. `:focus-within`, `:focus-visible` and `:target` are
+                     * how a page REVEALS things -- a dropdown, a panel, a
+                     * skipped-to section -- and ignoring them shows content the
+                     * reader never asked for, laid over content they did.
+                     * Nothing is focused in a render and no fragment is
+                     * targeted, so these are simply false. */
+                    else if (!strcmp(name, "focus-within") ||
+                             !strcmp(name, "focus-visible") ||
+                             !strcmp(name, "target")) {
+                        pt->never = 1; got = 1;
+                    }
+                    /* An unknown FUNCTIONAL pseudo -- one that took an
+                     * argument -- cannot be evaluated, and skipping it drops a
+                     * constraint the author wrote. MDN hides its interactive
+                     * examples with `.code-example:has(.hidden, ...)`; ignoring
+                     * the `:has()` turns that into `.code-example{display:none}`
+                     * and takes every code block on the site off the page.
+                     * A test we cannot answer must not be answered YES. */
+                    else if (argn > 0 || (i < len && s[i] == '(')) {
+                        pt->never = 1; got = 1;
+                    }
+                    /* A bare unknown pseudo keeps the compound: it may well be
+                     * structural, and losing a page's base styling to caution
+                     * is the worse trade. That is the decision tests/web/
+                     * pseudo.html holds for `:hover`. */
                 }
             } else if (s[i] == '*') {
                 i++; got = 1;                       /* any element, spec 0 */
@@ -290,6 +364,66 @@ int css_sel_parse(const char *s, size_t len, struct css_sel *out) {
 }
 
 /* class="a b c" -- match one name against the whitespace-separated list */
+static int strncasecmp_(const char *a, const char *b, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+        if (x != y) return 1;
+        if (!x) return 0;
+    }
+    return 0;
+}
+static int ieq_str(const char *a, const char *b) {
+    size_t la = strlen(a), lb = strlen(b);
+    return la == lb && !strncasecmp_(a, b, la);
+}
+
+
+/* THE ATTRIBUTES THIS PARSER KEEPS. A test against one of them is answered; a
+ * test against anything else (data-*, aria-*, role, slot) cannot be, and the
+ * caller must then match NOTHING rather than pretend the test passed. */
+static const char *node_attr(struct html_doc *d, int n, const char *name) {
+    const struct html_node *e = &d->nodes[n];
+    if (!strcmp(name, "class"))  return e->klass;
+    if (!strcmp(name, "id"))     return e->id;
+    if (!strcmp(name, "href") || !strcmp(name, "src")) return e->href;
+    if (!strcmp(name, "alt"))    return e->alt;
+    if (!strcmp(name, "style"))  return e->style;
+    if (!strcmp(name, "name"))   return e->name;
+    if (!strcmp(name, "value"))  return e->value;
+    if (!strcmp(name, "type"))   return e->type;
+    return (const char *)-1;                    /* not stored: unanswerable */
+}
+
+/* Does `v` satisfy the test? Case-insensitive on the value, which is what an
+ * unquoted CSS attribute value means in HTML for the attributes here. */
+static int attr_test(const char *v, unsigned op, const char *want) {
+    if (!v) return 0;
+    size_t vl = strlen(v), wl = strlen(want);
+    switch (op) {
+    case CSS_ATTR_HAS:    return 1;
+    case CSS_ATTR_EQ:     return ieq_str(v, want);
+    case CSS_ATTR_PREFIX: return wl && vl >= wl && !strncasecmp_(v, want, wl);
+    case CSS_ATTR_SUFFIX: return wl && vl >= wl && !strncasecmp_(v + vl - wl, want, wl);
+    case CSS_ATTR_SUBSTR: {
+        if (!wl) return 0;
+        for (size_t i = 0; i + wl <= vl; i++)
+            if (!strncasecmp_(v + i, want, wl)) return 1;
+        return 0; }
+    case CSS_ATTR_WORD: {
+        if (!wl) return 0;
+        for (size_t i = 0; i < vl; ) {
+            while (i < vl && (v[i]==' '||v[i]=='\t'||v[i]=='\n')) i++;
+            size_t st = i;
+            while (i < vl && !(v[i]==' '||v[i]=='\t'||v[i]=='\n')) i++;
+            if (i - st == wl && !strncasecmp_(v + st, want, wl)) return 1;
+        }
+        return 0; }
+    }
+    return 0;
+}
+
 static int has_class(const char *list, const char *want) {
     if (!list || !want || !*want) return 0;
     size_t wl = strlen(want);
@@ -339,7 +473,9 @@ static int arg_matches(const struct css_fn_arg *a, const struct html_node *e) {
         while (a->tag[i] && e->tag[i] && ci(e->tag[i]) == a->tag[i]) i++;
         if (a->tag[i] || e->tag[i]) return 0;
     }
-    if (a->klass[0] && !has_class(e->klass, a->klass)) return 0;
+    if (a->overflow) return 0;
+    for (int ki = 0; ki < a->nklass; ki++)
+        if (a->klass[ki][0] && !has_class(e->klass, a->klass[ki])) return 0;
     if (a->id[0]) {
         if (!e->id) return 0;
         size_t i = 0;
@@ -360,7 +496,17 @@ static int part_matches(const struct css_sel_part *pt, struct html_doc *d, int n
         while (pt->tag[i] && e->tag[i] && ci(e->tag[i]) == pt->tag[i]) i++;
         if (pt->tag[i] || e->tag[i]) return 0;
     }
-    if (pt->klass[0] && !has_class(e->klass, pt->klass)) return 0;
+    /* A compound we could not store IN FULL must match NOTHING. Matching on
+     * the part we did keep is how a narrow rule becomes a broad one, and a
+     * broad `display:none` empties the page. */
+    if (pt->overflow || pt->never) return 0;
+    if (pt->attr_op) {
+        const char *v = node_attr(d, n, pt->attr_name);
+        if (v == (const char *)-1) return 0;    /* not stored: cannot say yes */
+        if (!attr_test(v, pt->attr_op, pt->attr_val)) return 0;
+    }
+    for (int ki = 0; ki < pt->nklass; ki++)
+        if (pt->klass[ki][0] && !has_class(e->klass, pt->klass[ki])) return 0;
     if (pt->id[0]) {
         if (!e->id) return 0;
         size_t i = 0;

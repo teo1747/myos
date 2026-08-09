@@ -69,4 +69,9 @@ void  vellum_set_box_hook(void (*fn)(int node, unsigned idx, unsigned gen));
 void  vellum_set_zoom(float z);
 float vellum_zoom(void);
 
+/* Forget every rasterised inline <svg>. Called when a document is replaced:
+ * the cache is keyed by NODE INDEX, and the next page reuses those indices for
+ * entirely different drawings. */
+void render_svg_cache_reset(void);
+
 #endif

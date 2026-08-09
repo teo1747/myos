@@ -18,7 +18,11 @@
 #include "process/process.h"   /* schedule */
 
 #define TCP_CONNS   4
-#define TCP_RXBUF   16384
+/* 64 KB, not 16. This is the flow-control window the peer sees, and with four
+ * connections it is 256 KB of kernel memory -- cheap next to what it buys: a
+ * sender may keep four times as much in flight before it has to stop and wait
+ * for us. */
+#define TCP_RXBUF   65536
 #define TCP_MSS     1400       /* conservative; avoids IP fragmentation */
 #define SPIN_MAX    600000     /* poll iterations before a retransmit/timeout */
 #define RETRIES     6
@@ -40,6 +44,7 @@ struct tcb {
     uint32_t snd_nxt;      /* next seq to send */
     uint32_t rcv_nxt;      /* next seq we expect */
     uint32_t snd_wnd;      /* peer's advertised receive window (bytes we may keep in flight) */
+    uint32_t adv_wnd;      /* what WE last advertised -- see the window update below */
     uint32_t cwnd;         /* congestion window (Tahoe slow-start / congestion avoidance) */
     uint32_t ssthresh;     /* slow-start threshold */
     bool     peer_fin;     /* saw the peer's FIN */
@@ -119,7 +124,9 @@ static int tcp_seg(struct tcb *t, uint8_t flags, uint32_t seq,
     th->data_off = (sizeof(struct tcp_hdr) / 4) << 4;
     th->flags    = flags;
     uint32_t room = TCP_RXBUF - t->rx_len;
-    th->window   = htons(room > 65535 ? 65535 : (uint16_t)room);
+    if (room > 65535) room = 65535;
+    th->window   = htons((uint16_t)room);
+    t->adv_wnd   = room;              /* what the peer now believes it may send */
     if (len) memcpy(seg + sizeof(*th), data, len);
     th->checksum = net_l4_checksum(t->local_ip, t->remote_ip, IP_PROTO_TCP, seg, sizeof(*th) + len);
     return ip_output(t->local_ip, t->remote_ip, IP_PROTO_TCP, seg, sizeof(*th) + len);
@@ -307,6 +314,33 @@ int net_tcp_connect(uint32_t dst_ip, uint16_t dst_port) {
  *    0  EOF (peer FIN / reset, no data left)
  *   -2  would block (connection live but no data buffered yet)
  *   -1  bad conn */
+
+/* THE WINDOW UPDATE, and the reason a 1 MB page took two minutes.
+ *
+ * The window we advertise is `TCP_RXBUF - rx_len`, and it is only ever put on
+ * the wire by tcp_seg -- which runs when a SEGMENT ARRIVES. So once the buffer
+ * filled and we advertised zero, the sender stopped; because it stopped,
+ * nothing arrived; because nothing arrived, we never sent the ACK that would
+ * have told it the application had drained the buffer. The transfer then moved
+ * only when the peer's persist timer fired, roughly twice a second, which is
+ * precisely the ~8 KB/s this stack was getting on any transfer big enough to
+ * fill the window -- over plain HTTP as well as TLS, which is what proved it
+ * was not the crypto.
+ *
+ * So: after the application takes bytes out, if the room we now have is
+ * meaningfully larger than what the peer last heard, send a pure ACK carrying
+ * the new window. Gated on a MSS-sized improvement so a reader draining a few
+ * bytes at a time cannot turn every read into a packet. */
+static void tcp_window_update(struct tcb *t, uint32_t freed) {
+    if (!freed || t->state != TCP_ESTABLISHED) return;
+    uint32_t room = TCP_RXBUF - t->rx_len;
+    if (room > 65535) room = 65535;
+    /* Worth an announcement when the peer thinks it has less than a segment's
+     * worth of room and we now have at least two. */
+    if (t->adv_wnd < TCP_MSS && room >= 2 * TCP_MSS)
+        tcp_seg(t, TCP_ACK, t->snd_nxt, 0, 0);
+}
+
 int net_tcp_recv_nb(int conn, void *buf, uint32_t cap) {
     if (conn < 0 || conn >= TCP_CONNS) return -1;
     net_lock();
@@ -322,6 +356,7 @@ int net_tcp_recv_nb(int conn, void *buf, uint32_t cap) {
     memcpy(buf, t->rxbuf, k);
     if (k < t->rx_len) memmove(t->rxbuf, t->rxbuf + k, t->rx_len - k);
     t->rx_len -= k;
+    tcp_window_update(t, k);
     net_unlock();
     return (int)k;
 }
@@ -478,6 +513,7 @@ int net_tcp_recv(int conn, void *buf, uint32_t cap) {
         memcpy(buf, t->rxbuf, k);
         if (k < t->rx_len) memmove(t->rxbuf, t->rxbuf + k, t->rx_len - k);
         t->rx_len -= k;
+        tcp_window_update(t, k);
     }
     net_unlock();
     /* A TIMEOUT IS NOT AN END OF STREAM, and saying 0 for both was the bug that

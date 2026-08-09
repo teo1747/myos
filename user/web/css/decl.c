@@ -354,7 +354,7 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
             else if (tok_eq(v, vn, "block"))  { out->display = VD_BLOCK;     ok = 1; }
             else if (tok_eq(v, vn, "inline")) { out->display = VD_INLINE;    ok = 1; }
             else if (tok_eq(v, vn, "list-item")) { out->display = VD_LIST_ITEM; ok = 1; }
-            else if (tok_eq(v, vn, "inline-block")) { out->display = VD_INLINE; ok = 1; }
+            else if (tok_eq(v, vn, "inline-block")) { out->display = VD_INLINE_BLOCK; ok = 1; }
             else if (tok_eq(v, vn, "flex") || tok_eq(v, vn, "inline-flex"))
                                              { out->display = VD_FLEX;  ok = 1; }
             else if (tok_eq(v, vn, "grid") || tok_eq(v, vn, "inline-grid"))
@@ -380,11 +380,8 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
             else if (tok_eq(v, vn, "space-between")) { out->justify = VJ_BETWEEN; ok = 1; }
             else if (tok_eq(v, vn, "flex-start") || tok_eq(v, vn, "start") ||
                      tok_eq(v, vn, "left"))          { out->justify = VJ_START;   ok = 1; }
-            /* space-around / space-evenly fall back to space-between: the gap
-             * is in the wrong place but the items are still spread, which is
-             * nearer the author's intent than piling them at the start. */
-            else if (tok_eq(v, vn, "space-around") || tok_eq(v, vn, "space-evenly"))
-                                                     { out->justify = VJ_BETWEEN; ok = 1; }
+            else if (tok_eq(v, vn, "space-around")) { out->justify = VJ_AROUND; ok = 1; }
+            else if (tok_eq(v, vn, "space-evenly"))  { out->justify = VJ_EVENLY; ok = 1; }
         } else if (tok_eq(p, pn, "align-items")) {
             if      (tok_eq(v, vn, "center"))     { out->align_items = VJ_CENTER;  ok = 1; }
             else if (tok_eq(v, vn, "flex-end") || tok_eq(v, vn, "end"))
@@ -392,23 +389,108 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
             else if (tok_eq(v, vn, "stretch"))    { out->align_items = VJ_STRETCH; ok = 1; }
             else if (tok_eq(v, vn, "flex-start") || tok_eq(v, vn, "start") ||
                      tok_eq(v, vn, "baseline"))   { out->align_items = VJ_START;   ok = 1; }
+        } else if (tok_eq(p, pn, "align-self")) {
+            /* The same keywords as align-items, plus `auto` -- which is the
+             * initial value and means "whatever the container says". */
+            if      (tok_eq(v, vn, "auto"))       { out->align_self = VJ_AUTO;    ok = 1; }
+            else if (tok_eq(v, vn, "center"))     { out->align_self = VJ_CENTER;  ok = 1; }
+            else if (tok_eq(v, vn, "flex-end") || tok_eq(v, vn, "end"))
+                                                  { out->align_self = VJ_END;     ok = 1; }
+            else if (tok_eq(v, vn, "stretch"))    { out->align_self = VJ_STRETCH; ok = 1; }
+            else if (tok_eq(v, vn, "flex-start") || tok_eq(v, vn, "start") ||
+                     tok_eq(v, vn, "baseline"))   { out->align_self = VJ_START;   ok = 1; }
+        } else if (tok_eq(p, pn, "order")) {
+            int lok = 0; short o = len_px(v, vn, &lok);   /* a bare integer */
+            if (lok) { out->order = o; ok = 1; }
+        } else if (tok_eq(p, pn, "flex-basis")) {
+            int lok = 0; short px = len_px(v, vn, &lok);
+            /* `auto` and `content` leave the basis unstated, which is what -1
+             * means -- the item is sized by its content, as it was before. */
+            if (tok_eq(v, vn, "auto") || tok_eq(v, vn, "content")) { out->basis = -1; ok = 1; }
+            else if (lok && px >= 0) { out->basis = px; ok = 1; }
+        } else if (tok_eq(p, pn, "flex-shrink")) {
+            int lok = 0; short n2 = len_px(v, vn, &lok);
+            if (lok && n2 >= 0) { out->shrink = (unsigned char)(n2 > 255 ? 255 : n2); ok = 1; }
         } else if (tok_eq(p, pn, "gap") || tok_eq(p, pn, "row-gap") ||
                    tok_eq(p, pn, "column-gap") || tok_eq(p, pn, "grid-gap")) {
-            /* `gap: 12px 20px` states row then column; this layout has one
-             * spacing, so the first (row) wins -- the axis a stacked list
-             * actually notices. */
-            int lok = 0; short px = len_px(v, vn, &lok);
-            if (lok && px >= 0) { out->gap = px; ok = 1; }
-        } else if (tok_eq(p, pn, "flex") || tok_eq(p, pn, "flex-grow")) {
-            /* `flex: 1`, `flex: 1 1 auto`, `flex-grow: 2` -- what matters here
-             * is whether this child takes the leftover space at all. */
-            int nonzero = 0;
-            for (size_t k = 0; k < vn; k++) {
-                if (v[k] >= '1' && v[k] <= '9') { nonzero = 1; break; }
-                if (v[k] == ' ') break;
+            /* `gap: 12px 20px` is ROW gap then COLUMN gap, and on a wrapping
+             * row they land on different axes: the row gap separates the lines
+             * of cards, the column gap separates the cards. Keeping only the
+             * first put the line spacing between the cards as well. */
+            size_t sp = 0;
+            while (sp < vn && v[sp] != ' ' && v[sp] != '\t') sp++;
+            int lok = 0; short px = len_px(v, sp, &lok);
+            if (lok && px >= 0) {
+                if      (tok_eq(p, pn, "row-gap"))    { out->gap = px; ok = 1; }
+                else if (tok_eq(p, pn, "column-gap")) { out->col_gap = px; ok = 1; }
+                else {
+                    out->gap = px; out->col_gap = px; ok = 1;   /* one value: both */
+                    size_t q = sp; while (q < vn && (v[q]==' '||v[q]=='\t')) q++;
+                    if (q < vn) {
+                        int lok2 = 0; short px2 = len_px(v + q, vn - q, &lok2);
+                        if (lok2 && px2 >= 0) out->col_gap = px2;
+                    }
+                }
             }
-            if (tok_eq(v, vn, "none")) { out->grow = 0; ok = 1; }
-            else { out->grow = nonzero ? 1 : 0; ok = 1; }
+        } else if (tok_eq(p, pn, "flex") || tok_eq(p, pn, "flex-grow")) {
+            /* THE WHOLE SHORTHAND, not just "does it grow".
+             *
+             * `flex: <grow> <shrink> <basis>`, with one and two-value forms.
+             * The old code answered one question -- is there a nonzero digit --
+             * so `flex: 2` and `flex: 1` were the same box and every 2:1 split
+             * on the web came out even, and `flex: 0 0 240px` lost its 240px
+             * and became a sidebar sized by its longest word.
+             *
+             * A unitless value is grow then shrink; a value with a unit (or
+             * `auto`) is the basis, wherever it appears. That is CSS's own
+             * disambiguation rule and it makes `flex: 1 1 0%`, `flex: 0 0 auto`
+             * and `flex: 200px` all fall out without a special case each. */
+            if (tok_eq(p, pn, "flex-grow")) {
+                int lok = 0; short g = len_px(v, vn, &lok);
+                if (lok && g >= 0) { out->grow = (unsigned char)(g > 255 ? 255 : g); ok = 1; }
+            } else if (tok_eq(v, vn, "none")) {
+                out->grow = 0; out->shrink = 0; ok = 1;
+            } else if (tok_eq(v, vn, "auto")) {
+                out->grow = 1; out->shrink = 1; out->basis = -1; ok = 1;
+            } else if (tok_eq(v, vn, "initial")) {
+                out->grow = 0; out->shrink = 1; out->basis = -1; ok = 1;
+            } else {
+                int nnum = 0;
+                size_t i2 = 0;
+                /* One value: `flex: 1` also resets the basis to zero, which is
+                 * why `flex: 1` on three items gives three EQUAL columns
+                 * regardless of their content. Two: grow and shrink. */
+                out->grow = 0; out->shrink = 1; out->basis = 0;
+                while (i2 < vn) {
+                    while (i2 < vn && (v[i2]==' '||v[i2]=='\t')) i2++;
+                    size_t st = i2;
+                    while (i2 < vn && v[i2] != ' ' && v[i2] != '\t') i2++;
+                    if (i2 == st) break;
+                    size_t tn = i2 - st;
+                    const char *t = v + st;
+                    int unitless = 1;
+                    for (size_t k = 0; k < tn; k++)
+                        if (!((t[k] >= '0' && t[k] <= '9') || t[k] == '.')) { unitless = 0; break; }
+                    int lok = 0; short num = len_px(t, tn, &lok);
+                    if (!lok) continue;
+                    if (unitless) {
+                        /* len_px returns whole pixels, so a fractional weight
+                         * truncates -- and `flex: 0.5` truncating to 0 does not
+                         * mean "does not grow", it means "grows half as fast".
+                         * Round a written-nonzero value up to 1 rather than
+                         * letting it vanish. */
+                        if (num == 0 && tn && !(tn == 1 && t[0] == '0')) num = 1;
+                        if (nnum == 0)      out->grow   = (unsigned char)(num > 255 ? 255 : num);
+                        else if (nnum == 1) out->shrink = (unsigned char)(num > 255 ? 255 : num);
+                        nnum++;
+                    } else if (tok_eq(t, tn, "auto")) {
+                        out->basis = -1;
+                    } else if (num >= 0) {
+                        out->basis = num;
+                    }
+                }
+                ok = 1;
+            }
         } else if (tok_eq(p, pn, "grid-template-areas")) {
             /* `'siteNotice siteNotice' 'columnStart pageContent' 'footer footer'`
              * -- one quoted string per row, names separated by spaces, `.` for
@@ -540,6 +622,16 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
             if      (tok_eq(v, vn, "left"))  { out->floatp = VF_LEFT;  ok = 1; }
             else if (tok_eq(v, vn, "right")) { out->floatp = VF_RIGHT; ok = 1; }
             else if (tok_eq(v, vn, "none"))  { out->floatp = VF_NONE;  ok = 1; }
+        } else if (tok_eq(p, pn, "list-style-type") || tok_eq(p, pn, "list-style")) {
+            /* The shorthand also carries position and image; the TYPE is the
+             * only part that decides what gets drawn, and it is the only part
+             * anyone writes -- `list-style: none` is the whole property as it
+             * appears on the web. A word we do not know keeps the bullet
+             * rather than losing the marker to a spelling. */
+            if      (tok_has(v, vn, "none"))    { out->marker = VM_NONE;    ok = 1; }
+            else if (tok_has(v, vn, "decimal")) { out->marker = VM_DECIMAL; ok = 1; }
+            else if (tok_has(v, vn, "disc") || tok_has(v, vn, "circle") ||
+                     tok_has(v, vn, "square"))  { out->marker = VM_BULLET;  ok = 1; }
         } else if (tok_eq(p, pn, "clear")) {
             if      (tok_eq(v, vn, "left"))  { out->clearp = 1; ok = 1; }
             else if (tok_eq(v, vn, "right")) { out->clearp = 2; ok = 1; }
@@ -576,10 +668,16 @@ int css_apply_decls(const char *text, size_t len, struct vstyle *out) {
             if (tok_eq(v, vn, "border-box"))      { out->border_box = 1; ok = 1; }
             else if (tok_eq(v, vn, "content-box")) { out->border_box = 0; ok = 1; }
         } else if (tok_eq(p, pn, "max-width")) {
-            /* the one percentage worth honouring, because it means "do not
-             * overflow me" and that is exactly what an oversized picture does */
+            /* A CAP, not a size. `max-width: 1200px; margin: 0 auto` is how
+             * every centered content column on the web is written, and it must
+             * not be confused with `width` -- the two coexist on the same
+             * element constantly (`width: 100%; max-width: 64rem`) and the one
+             * that lost that argument produced a box the sum of both.
+             * Percentages are still not honoured: the engine's bound is a
+             * pixel floor/ceiling, so `max-width: 100%` reaches nothing here
+             * and is logged rather than half-applied. */
             int lok = 0; short px = len_px(v, vn, &lok);
-            if (lok && px > 0 && (!out->width || px < out->width)) { out->width = px; ok = 1; }
+            if (lok && px > 0) { out->max_width = px; ok = 1; }
         } else if (tok_eq(p, pn, "margin-top")) {
             int lok = 0; short px = len_px(v, vn, &lok);
             if (lok) { out->margin_top = px; ok = 1; }

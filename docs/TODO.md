@@ -60,19 +60,34 @@ missing, roughly in the order a user meets it:
       whole, editable and saved).
 - [ ] Still no horizontal SCROLLBAR, and no way to scroll sideways with the
       wheel or a gesture -- only the caret moves the window.
-- [~] WORD WRAP -- the arithmetic is done and tested (ed_wrap_line, 7 cases:
-      breaks at the last space that fits, cuts a word longer than the view
-      rather than pushing text off the edge, rows reassemble into the line
-      exactly). The VIEW half is not wired, and it is not small: five things
-      assume `row == line` and all five have to change together --
-        * draw_line and the row loop in document_view,
-        * offset_at_point (a click maps to a VISUAL row, then to a column
-          within its slice),
-        * ed_move_line_v (up/down should walk visual rows, not logical ones),
-        * scroll_to_caret and g_rows (counting visual rows, not lines),
-        * the scrollbar's total.
-      Do them as one change. Wiring two of the five is worse than none: the
-      caret and the pixels disagree and every symptom afterwards is a lie.
+- [x] ~~WORD WRAP~~ -- DONE, and done as the one change it had to be. The
+      arithmetic was already tested (`ed_wrap_line`, 7 cases: breaks at the
+      last space that fits, cuts a word longer than the view rather than
+      pushing text off the edge, rows reassemble into the line exactly); the
+      view half is now wired through a VISUAL-ROW model in notepp.c
+      (`line_rows`/`vis_total`/`vis_row_at`/`vis_row_of`), and all five places
+      that assumed `row == line` moved together: the row loop in
+      document_view, `offset_at_point`, up/down (`move_visual`),
+      `scroll_to_caret` + `g_rows`, and the scrollbar's total. Off is a status
+      bar toggle away ("Wrap" / "No wrap"), which re-anchors the view on the
+      caret because the toggle changes what a row IS.
+      Two details worth keeping:
+        * only a line's FIRST visual row carries its gutter number -- a number
+          repeated down a wrapped paragraph says the line is four lines;
+        * the highlighter's state is threaded row by row, not line by line, so
+          a block comment opened on a wrapped line's first row is still open
+          on its second. The single top-down walk carries it; the old
+          "re-scan the lines above the viewport" pass was deleted because it
+          advanced the same state a second time.
+      Verified on the metal: typed long lines wrap and re-flow, a click lands
+      on the right visual row, up/down walk rows and keep the goal column
+      across a clamp, and a 60-line file scrolls to a last line that stops at
+      the bottom of the viewport.
+- [x] ~~The wheel could scroll a file until one row was left on screen~~ --
+      `first` was clamped to `total - 1`; it is now `total - g_rows`, so
+      scrolling ends when the end of the file is on screen rather than when
+      the file has been pushed off the top. (Pre-existing; it only became
+      obvious once wrapped rows made `total` bigger than the line count.)
 - [x] ~~Find shows no match count~~ -- it says "3 of 12", or "none".
 - [x] ~~Find does not highlight the other matches~~ -- every hit on every
       visible line is tinted, with the current one still the brighter
@@ -2543,6 +2558,531 @@ Encrypt/RSA), `test wget https`, `test pypi`.
       every card one column late).
       space-around / space-evenly fall back to space-between: the gap is in the
       wrong place but the items are still spread.
+- [x] ~~FLEX WAS BOOLEAN~~ SHIPPED 2026-08-09. Everything above was accepted
+      by the parser and then flattened by the mapping: an item either grew or
+      it did not. `flex: 2` and `flex: 1` produced identical boxes, so every
+      two-to-one split on the web came out even, and `flex: 0 0 240px` lost its
+      240px and became a sidebar as wide as its longest word. Now shipped, each
+      with a NUMBER in tests/web/flex2.html rather than a screenshot to squint
+      at (15 expectations):
+        * flex-grow WEIGHTS -- 2:1:1 across 900px is 450/225/225;
+        * flex-basis, from the shorthand and the longhand. `flex: 1` is
+          `1 1 0%`, which is what makes three of them equal columns whatever
+          they contain;
+        * flex-shrink, but only a weight ABOVE the default: CSS's initial 1 is
+          what the engine's implicit default already does, and better -- it
+          gives up flexible boxes' space before intrinsic ones, so a toolbar
+          squashes its content pane rather than its buttons. Stating the
+          default on every item flattened that priority;
+        * align-self, per item, overriding the container;
+        * justify-content space-around and space-evenly, which differ only at
+          the two ends -- the entire reason an author picks one of them;
+        * `gap: 40px 10px`, both values: on a wrapping row the first separates
+          the LINES and the second separates the items;
+        * `order`, stable within equal values, taken only when someone stated
+          one and every item is an element (a bare text node is an anonymous
+          item this cannot name, and reordering around it would drop it).
+      Two ENGINE bugs fell out of it, both of them one loop disagreeing with
+      another:
+        * measure_subtree_height counted a child as flexible on flex_grow but
+          then sized it by its basis, so a `flex: 1` item (basis 0) was
+          measured at width 0, wrapped to five lines there and one on screen,
+          and its row was drawn five lines tall with four of them empty;
+        * measure_wrap_height stepped between lines by the MAIN gap while
+          arrange stepped by the cross one, so a wrapping container was the
+          wrong height and its second line was painted below its own box, on
+          top of whatever came next.
+      Verified: 25 corpus pages green, 17 real sites re-rendered and diffed
+      against the pre-change tree (14 byte-identical, rust-lang structurally
+      correct, bbc -- already broken -- marginally less overlapped).
+
+- [x] ~~EVERY `/>` PUT A STRAY `>` ON SCREEN~~ FIXED 2026-08-09, and it was
+      disfiguring every real page. The attribute scan BREAKS on the slash of a
+      self-closing tag, leaving the cursor ON it -- so the self-closing test
+      read the space before the slash (and said no), and the single step past
+      "the bracket" stepped past the SLASH instead, leaving the `>` in the
+      stream as a TEXT NODE. `<input />`, `<img />`, `<br/>` and every `<path/>`
+      in an inline SVG drew a bracket beside themselves; Brave's search page was
+      more angle brackets than text. Wikipedia shed 130 junk text nodes, bbc 86.
+      The corpus had the bug BAKED INTO A REFERENCE IMAGE (details.html's
+      `<path/>`), which is worth remembering: a golden image only pins what the
+      renderer did, not what it should have done.
+- [x] ~~WE RAN EVERY `<script>`, WHATEVER ITS TYPE~~ FIXED 2026-08-09.
+      `<script type="application/ld+json">` is data a page STORES in a script
+      tag precisely so the browser will not run it -- and bbc, Wikipedia and
+      craigslist all carry one. We handed it to the interpreter, which threw a
+      SyntaxError on its first colon. HTML5's rule now applies: absent, empty,
+      "module" or a JavaScript MIME runs, anything else is data.
+- [x] ~~THE DOM USED NAMES NO PAGE ON THE WEB USES~~ FIXED 2026-08-09.
+      `setText()`, `setValue()` and `setStyle()` are this DOM's own spellings;
+      a real script writes `el.textContent = ...`, `el.value = ...` and
+      `el.style.display = 'none'`. The methods stay (our own pages call them)
+      but the PROPERTIES exist now, along with the globals every page assumes:
+        * `textContent` / `innerText` and `value` as settable properties;
+        * `document.getElementById`, `getElementsByTagName`,
+          `getElementsByClassName` -- getElementById is the most-used call on
+          the web and this DOM did not have it;
+        * `document.documentElement` / `body` / `head` / `title`;
+        * `el.style` as a real object (a Proxy over the existing setStyle, JS
+          spelling folded to CSS, declarations accumulating);
+        * `window` (=== globalThis), `URL` and `URLSearchParams` -- URL over
+          url.c's own resolver rather than a second, differently-wrong parser
+          in script.
+      Script failures across the 17 real sites: 23 -> 5. bbc 8 -> 0,
+      Wikipedia 4 -> 0 (and its reflow check, long red, went green), lobsters,
+      rust-lang and sqlite to 0. Remaining: pythonorg 2, mdn 1, craigslist 2.
+- [x] ~~A COMPOUND KEPT ONLY ITS LAST CLASS~~ FIXED 2026-08-09, and this was
+      the one that emptied whole pages. `struct css_sel_part` had ONE `klass`,
+      so `.logo-small.svelte-1i43yzn` was parsed as `.svelte-1i43yzn` -- and a
+      rule meant for one logo applied to every element the component had
+      scoped. On Brave's search page that rule carries `display:none`, and the
+      page rendered as a BLANK WHITE BOX with its stylesheet applied and
+      rendered fine without it. Multi-class compounds are not exotic: Tailwind,
+      CSS modules and Svelte scoped styles all emit them by the thousand.
+      A part now holds CSS_SEL_CLASSES (4) of them and needs ALL of them, and
+      a compound with more classes than fit sets `overflow` and matches
+      NOTHING -- because a selector we cannot represent in full must not be
+      applied at all. Too narrow shows too little; too WIDE hands somebody
+      else's declarations to the whole document. Covered by four new
+      expectations in tests/web/selectors.html.
+- [x] ~~A 1 MB STYLESHEET ARRIVED CUT IN HALF~~ FIXED 2026-08-09. CSS_ONE_MAX
+      was 512 KB; Brave's single sheet is 1.02 MB. The metal saw 3192 rules
+      where the host saw 7257 -- and the half that was missing held the layout,
+      so the same build rendered a search results page on one and a column of
+      form controls on the other. Sized from what the web serves now (2 MB per
+      sheet, 3 MB total), and an oversized sheet is dropped WHOLE rather than
+      severed: CSS cut mid-rule leaves a dangling brace that eats every rule
+      after it, so half a sheet can style less than none of it.
+- [x] ~~SVG~~ SHIPPED 2026-08-09 (`user/web/svg.{c,h}`), and it is a RENDERER,
+      not a decoder: an SVG arrives as instructions, so something has to follow
+      them. Covers what icons are actually made of -- the M/L/H/V/C/S/Q/T/A/Z
+      path grammar in both cases, rect/circle/ellipse/line/polygon/polyline,
+      <g> nesting with translate/scale/rotate/matrix, fill (hex, names, none,
+      currentColor), fill-rule, opacity, and stroke as a width along the path.
+      Scanline fill with 4x vertical subsampling and fractional horizontal
+      coverage, so a 24px icon has edges rather than stairs. No gradients,
+      filters, clip paths, masks or text: an icon uses none of them and a
+      renderer that half-did them would draw a WRONG picture instead of a plain
+      one.
+      Two entry points, because an SVG arrives two ways:
+        * `<img src="*.svg">` -- imgcache dispatches on the bytes (SVG is text,
+          so it is what is neither PNG nor JPEG and contains an `<svg`);
+        * inline `<svg>` -- html.c now keeps its SOURCE whole, the way <style>
+          already does, because SVG is not HTML and parsing it as HTML made a
+          subtree of unknown inline boxes that drew as nothing. Rasterised once
+          per (node, size) and cached: following a path grammar on every frame
+          would turn a scroll into a slideshow.
+      Three things it turned up on the way:
+        * an icon-only `<button>` never drew its icon, because a button builds
+          a text LABEL and never renders children. It builds its box from the
+          same primitives Button does now, with the drawing inside;
+        * a button written across lines has a text child of " ", and treating
+          whitespace as a label skipped the icon path entirely;
+        * `moveto` never recorded its own point, so a two-point line had ONE
+          point in it and stroked to nothing. Subpath breaks are marked now, or
+          a two-subpath icon grows a line joining them.
+      Verified: 16 checks in html_test that SAMPLE THE RENDERED ALPHA (a
+      renderer can parse a document perfectly and paint nothing), and on the
+      metal Brave's wordmark draws where a grey placeholder used to be.
+- [x] ~~@media RANGE SYNTAX~~ SHIPPED 2026-08-09, and it was the cascade answer
+      to "why is Brave's header wrong". `(width <= 885px)` is what every modern
+      build tool emits: 224 of the media queries in that stylesheet are written
+      that way and a handful use min-width. An unrecognised feature is reported
+      as NOT MATCHING, so the ENTIRE responsive layer of such a sheet evaluated
+      to false -- and at a wide viewport that is accidentally right for the
+      max-width cases and wrong for every min-width one, which is the worst way
+      to be wrong: correct on whatever you check first.
+      Both operand orders (`width <= 885px` and `885px < width`), strict and
+      inclusive, and the two-sided `(600px <= width <= 1200px)`. Plus
+      `(hover: hover)` and `(pointer: fine)`, which is how a page asks whether
+      it is on a desktop -- 42 more queries that were all being answered "no",
+      handing every one of them the touch layout.
+      The visible consequence: at the browser's real window width (~790px)
+      Brave's NARROW header is now the one that applies, which is what its own
+      CSS asks for. The doubled logo was the same bug -- the page ships two and
+      hides one by width -- and there is one of them now.
+- [x] ~~WHAT THE EMPTY BOXES ACTUALLY ARE~~ ANSWERED 2026-08-09, by measuring
+      instead of guessing a fourth time. The status line now reports how the
+      pictures went -- `img 3ok 1fail 2wait 1noslot` -- because a failed image,
+      one still arriving, and one the cache had no slot for all draw the SAME
+      grey box, and telling them apart from a screenshot is guesswork.
+      The reading: `img 0x` on Brave's narrow header. It requests NO images at
+      all, so the boxes were never pictures. They are Brave's own bordered
+      buttons whose icons live in subtrees its CSS hides at that width -- only
+      two of the page's 34 inline <svg> elements are reachable there, and both
+      draw. Whether every one of those hidings is RIGHT needs an element-by-
+      element comparison against a real browser, which is a different exercise
+      from this one.
+      Two bugs fell out of building the instrument, and both had been quietly
+      wasting readings all session:
+        * the status line and a script's message were drawn ON TOP OF EACH
+          OTHER whenever the row overflowed -- which is exactly when the status
+          carries the most. The left string is truncated now; a shortened
+          reading beats two superimposed ones.
+        * the image summary was composed in install_document, BEFORE any frame
+          had asked for a picture, so it always read zero. It is recomputed per
+          frame now. A statistic gathered before the thing it measures happens
+          is not a small error -- it sent this diagnosis off in the wrong
+          direction entirely.
+- [x] ~~A DECLINED LISTENER SHOUTED AT THE READER~~ FIXED 2026-08-09. Every
+      page that registers a DOMContentLoaded handler -- which is most of them --
+      put "listener for 'x' declined" on the status line and pushed everything
+      else off the end. It is a note for whoever is building the browser, not
+      for the person reading the page, who cannot act on it. Counted now
+      (`jsdom_declined_listeners()`) and printed by the host harness.
+- [ ] The next missing DOM pieces, named by the errors that are left:
+      `parentElement`/`parentNode` (what Brave's page reaches for now),
+      `classList`, `children`, `insertBefore`, `dataset`. Each one is the same
+      shape as the batch above.
+- [ ] `make browser-render` could not show a script error -- the harness never
+      installed a console hook, so the one loop fast enough to debug JavaScript
+      in was the one place the message was invisible and it had to be read off
+      a screenshot of the metal. It prints `JS| ...` now. FIXED 2026-08-09.
+
+- [x] ~~A 1 MB PAGE TOOK TWO MINUTES~~ FIXED 2026-08-09, in the KERNEL, and
+      it was never the crypto. Measured first, because "the browser is slow"
+      has too many suspects: `fetchjob` now charges every transfer to the
+      caller that asked for it, and the status line reports
+      `[doc 277K/26s  css 1020K/85s  img ...]` -- 111 of the 146 seconds in two
+      transfers, about 8 KB/s. The decisive experiment was serving a 1 MB file
+      over PLAIN HTTP from the host: 119.8 s, the same rate, with no TLS
+      anywhere near it. That moved the search from the cipher to TCP.
+      The bug: the receive window we advertise is `TCP_RXBUF - rx_len`, and it
+      only reached the wire from `tcp_seg`, which runs WHEN A SEGMENT ARRIVES.
+      So once the buffer filled we advertised zero, the sender stopped;
+      because it stopped nothing arrived; because nothing arrived we never
+      sent the ACK that would have said the application had drained the
+      buffer. The transfer then advanced only when the peer's persist timer
+      fired, roughly twice a second -- which is exactly the ~470 ms per read
+      the arithmetic pointed at. `tcp_window_update` now sends a pure ACK when
+      the application frees space and the peer thinks it has less than a
+      segment's worth, and TCP_RXBUF went 16 KB -> 64 KB so a sender can keep
+      four times as much in flight before it has to ask.
+      Measured after: the 1 MB plain-HTTP document went **119.8 s -> under a
+      second**; Brave's 277 KB document **26 s -> 3 s**; the whole page,
+      including a 1 MB stylesheet and its images over TLS, **146 s -> under
+      70 s**. Verified functionally by the same page loading end to end over
+      HTTPS -- handshake, 284 KB document, 1 MB sheet, images, 7257 rules,
+      byte-identical to the host render.
+- [ ] What is LEFT of that 70 s is the 1 MB stylesheet and the images, each of
+      which pays its own TCP+TLS handshake: net.c opens a new connection per
+      resource ("no keep-alive state machine to write"). Connection reuse is
+      the next big lever, and it is a real feature rather than a bug fix.
+- [ ] 96 of the 100 images on Brave's page are `loading="lazy"` and we ignore
+      the attribute -- we would eagerly fetch every one if there were slots for
+      them. There are only 8 slots, so today the page gets the first eight and
+      alt text for the rest, which accidentally limits the damage. Honouring
+      `lazy` (fetch when the box is near the viewport, the way select.c already
+      reads laid-out geometry) is the correct fix and would also make the
+      8-slot cap stop mattering.
+- [ ] The shell cannot take a URL or a short flag. `wget https://x/y` fails at
+      the `:` ("unexpected character" -- the lexer has no case for it) and
+      `wget -O file` parses as unary minus applied to `O`. Both need quoting
+      today, which is a papercut on the two tools most likely to want them.
+
+- [x] ~~EVERY ACCENT WAS A REPLACEMENT CHARACTER~~ FIXED 2026-08-09. The whole
+      pipeline assumed UTF-8, and google.com serves THIS browser
+      `Content-Type: charset=ISO-8859-1`, in which an e-acute is the single
+      byte 0xE9 -- an invalid sequence to a UTF-8 reader. "Confidentialité"
+      came out "Confidentialit<?>", which looks like a missing glyph and is
+      nothing of the kind: nobody had asked what encoding the bytes were in.
+      `user/web/charset.{c,h}` now answers that one question and performs one
+      conversion (windows-1252 -> UTF-8), reading the declaration from the HTTP
+      header first and the document's <meta> second, as HTTP and HTML specify.
+      Two decisions worth keeping:
+        * ISO-8859-1 is decoded as WINDOWS-1252, because every browser does and
+          because the C1 range is where real pages keep their smart quotes,
+          dashes and ellipses -- decoding those as control codes deletes the
+          punctuation out of the text;
+        * a page that declares UTF-8 and then contains bytes that CANNOT be
+          UTF-8 is converted anyway. google.com does exactly this (an
+          ISO-8859-1 header, a `<meta charset=utf-8>`, and Latin-1 bytes). The
+          spec's answer is one replacement character per accent; a document
+          already self-contradictory has no third reading worth protecting.
+      A sequence cut off by the END of the buffer is inconclusive rather than
+      invalid -- our own fetch truncates large documents, and judging a good
+      UTF-8 page "not UTF-8" would transcode it and mangle every accent in it.
+      Covered by 16 unit checks in html_test and a Latin-1 corpus page.
+- [x] ~~`display: inline-block` WAS FOLDED INTO `inline`~~ FIXED 2026-08-09,
+      and it threw the box away with it: padding, width, height, border and
+      background all stopped existing. It is neither of the two it was being
+      made into -- a block takes the whole line, an inline has no box at all --
+      so a row of nav links written as inline-blocks welded into one word.
+      google.com's header read "GmailImages" and its footer
+      "PublicitéSolutions d'entrepriseÀ propos de GoogleGoogle.fr".
+      VD_INLINE_BLOCK now goes through the ordinary block emitter, so it keeps
+      everything a box has, but INSIDE the inline run's Flow and sized to its
+      content -- the same shrink-to-fit a float already used. Its "Connexion"
+      button is a blue pill again, because there is finally a box to paint the
+      background on.
+
+- [x] ~~`document.currentScript` DID NOT EXIST~~ FIXED 2026-08-09. The parser
+      captured a script's TEXT and never made a node for the element, so there
+      was nothing for `currentScript` to be -- and a modern page uses it to
+      find where it was written. SvelteKit's whole bootstrap is
+      `document.currentScript.parentElement`, which is the line Brave's search
+      page died on. Each script now gets a node (`js_node[]`), display:none
+      like every other <script>, and jsdom sets `document.currentScript` around
+      each evaluation and clears it after, as the DOM specifies.
+      Two things fell out of giving <script> a node, both worth remembering:
+        * FLUSHING the accumulated text at the script boundary split one text
+          node into two, and two whitespace runs where there was one opened an
+          extra line box -- three corpus pages grew 3px. The element is
+          display:none, so whether it sorts before or after the text around it
+          changes nothing visible; the flush was dropped.
+        * a display:none element must be skipped BEFORE anything decides
+          whether an inline run starts or ends. Left in, it counted as a block
+          and split the run around it. Skipping it inside `is_inline` instead
+          was WORSE -- it welded runs across hidden blocks and moved four
+          pages -- so the skip lives in render_range, which is where "removed
+          from the box tree" actually means something.
+- [x] ~~`addEventListener` THREW on an event we do not deliver~~ FIXED
+      2026-08-09. Refusing loudly was right when the scripts were ours; on a
+      real page it is fatal. `addEventListener('DOMContentLoaded', ...)` is the
+      first line of a great many scripts, and throwing there destroyed
+      everything the script went on to do. The listener is now DECLINED -- it
+      will never fire -- and the console says which type was dropped, so it is
+      not silent either. A listener that never runs is a hard bug to see; a
+      page that stops executing is a harder one. Brave went from 2 script
+      errors to 0 (two informational notices remain, for `error` and
+      `unhandledrejection`). A bare top-level `addEventListener` also exists
+      now, forwarding to the document element.
+- [x] ~~AN INLINE-BLOCK PAINTED ITS OWN MARGIN~~ FIXED 2026-08-09. The block
+      emitter folds margin into padding -- invisible on a full-width block,
+      unmissable on a box with a background and a rounded corner: google.com's
+      "Connexion" pill came out half again too tall and too wide, painting its
+      12px margin blue. An inline-block is now wrapped in a transparent box
+      that carries the margin, putting the paint back on the border box where
+      CSS says it lives.
+- [ ] The BLOCK path still folds margin into padding, so any block with a
+      background paints over its own margin. Same bug, wider blast radius, and
+      the corpus references encode the current behaviour -- worth doing as its
+      own change with its own before/after rather than as a rider on this one.
+
+- [x] ~~A TRAILING SPACE INSIDE AN INLINE ELEMENT WAS TRIMMED~~ FIXED
+      2026-08-09. `trim_tail` stripped the last text child's trailing spaces
+      whenever ANY element closed. That is right for a block -- CSS drops
+      whitespace at the end of a line -- and wrong for an inline element in the
+      middle of one, where the space is what separates it from the next thing.
+      Brave writes `<span>Data from </span><a>Wikipedia</a>` and it read "Data
+      fromWikipedia"; the shape is on every page that puts a label before a
+      link. Trimming is now scoped to block-level tags, with everything not
+      named (span, a, b, i, and every custom element a framework invents)
+      treated as inline, which is CSS's own default.
+- [x] ~~A BUTTON WITH NO TEXT SAID "Submit"~~ FIXED 2026-08-09. A button with
+      neither a value nor text is an ICON button -- the icon being an inline
+      <svg> we cannot draw -- and writing "Submit" on it states something the
+      page never said. Brave's header read as six Submit buttons. It also gave
+      every one of them `.id("Submit")`: identical keys in a retained,
+      reconciled tree, so six distinct buttons claimed to be one instance. Both
+      fixed; the key is the node index now.
+
+- [x] ~~A BUTTON RENDERED ITS CAPTION AND NOTHING ELSE~~ FIXED 2026-08-09.
+      `Button()` takes a string, so a <button> was drawn as one: its label, or
+      (once icons could be drawn) its first icon. A real page's button is a BOX
+      WITH CHILDREN -- an icon and a word, two icons, a wrapper around either --
+      and everything past the first was never walked. A button with an icon and
+      text lost the icon; one with two icons showed one.
+      A button with element children is now built from the primitives Button is
+      itself built from -- a styled box that reports its own clicks -- with its
+      children rendered inside. Text-only buttons keep the toolkit's Button,
+      which knows how a caption should look.
+- [x] ~~WHAT THE 38x38 BOXES ARE~~ ANSWERED 2026-08-09 by `WHATIS=x,y`, a
+      render_host mode that NAMES the element covering a point (tag, id, class,
+      whether it carries SVG) instead of leaving it to be inferred. Written
+      because three separate explanations for that one box -- "an image", "a
+      button", "the svg inside it" -- were each disproved only after being
+      acted on. The renderer already knew which element made which box; nothing
+      could ask it.
+      The answer, in one command: `<button id=clear-query-button>` with a
+      `<div class=noscript-hide>` inside it. Which turned up two real bugs:
+        * `<noscript>` WAS PARSED AS ORDINARY MARKUP. Its contents are for a
+          browser with scripting off -- and we run scripts. Brave ships
+          `<noscript><style>.noscript-hide{display:none!important}...</style>`,
+          so a stylesheet written for a scriptless browser was going into our
+          cascade, and the fallback markup was being rendered on top of the
+          real page. Skipped whole now, the way a comment is. bbc went from
+          1837 nodes to 1530, and craigslist's scroll-blit check -- red for as
+          long as it has been measured -- went green.
+        * `:focus-within`, `:focus-visible` and `:target` were IGNORED, which
+          makes a selector broader, and those three are how a page reveals
+          things: a dropdown, a panel, a skipped-to section. Ignoring them
+          showed content the reader never asked for. They are false in a render
+          and match nothing now. `:hover` and `:focus` deliberately stay
+          lenient -- that is a decision this project already made and holds a
+          test for (tests/web/pseudo.html); those are cosmetic, and a link in
+          the wrong blue is not content appearing out of nowhere.
+      The clear-query button itself is CORRECT to be visible: the search box
+      holds a query, so `:not(:placeholder-shown)` is true. Its ✕ is an inline
+      <svg> the walk still does not reach, which is the one thread left.
+
+- [x] ~~A PAGE VERIFIER~~ BUILT 2026-08-09: `make web-verify` (tools/
+      web_verify.py). The corpus checks what somebody thought to assert, which
+      cannot find a gap nobody has noticed. This asks the other question and
+      needs no expectation written first: FIREFOX renders the same local page
+      under WebDriver and is asked for `document.body.innerText` -- the visible
+      text and only the visible text -- and the two are compared BOTH ways.
+        MISSING = visible to a reader, absent from ours: content lost.
+        EXTRA   = in ours, invisible to a reader: content we revealed that the
+                  page hid, which is what a mishandled <noscript>, an ignored
+                  :focus-within or an unparsed media query looks like from
+                  outside.
+      Two lessons are baked into it. Comparing against the DOCUMENT instead of
+      the visible text scores MDN's reference pages at 32% for rendering
+      perfectly -- every hidden mega-menu counts as loss. And word BOUNDARIES
+      differ legitimately (innerText welds adjacent inline runs: Google's header
+      comes back as one word "GmailImages"), so a word absent from the other's
+      set is checked against its letters before being called missing.
+      Firefox is never consulted about STYLE -- only about what a page amounts
+      to. geckodriver is spoken to over plain HTTP; selenium is not installed
+      here, and a tool that needs installing first is a tool nobody runs.
+- [x] ~~github.com SEGFAULTED THE RENDERER~~ FIXED 2026-08-09. `imgcache_want`
+      in the HOST harness handed a decoder `HARENA + HUSED` without ever
+      checking that the image fitted -- the metal's imgcache has always checked
+      -- so a page with enough pictures ran png_decode past the end of the
+      arena and over whatever global came next. On github that was the DOCUMENT,
+      wiped mid-render, and the crash landed three frames away in code doing
+      nothing wrong. Found with AddressSanitizer in one run after an hour of
+      reading stack traces that all pointed at innocent code.
+      github went from 0% (nothing rendered at all) to 99.5% of its visible
+      words. Also raised the harness's CSS buffers from 1 MB to 3 MB to match
+      cssref on the metal -- it was silently dropping a 297 KB sheet, so the
+      fast loop was rendering a page the metal would not -- and CSS_MAX_RULES
+      from 8192 to 16384, which github alone exceeds.
+- [x] ~~A `<link media="print">` STYLESHEET WAS APPLIED ON SCREEN~~ FIXED
+      2026-08-09, and it is the best single find the verifier has made. gnu.org
+      links two sheets, `media="screen"` and `media="print"`, and nothing
+      looked at the attribute -- so the print sheet applied, and its
+      `#header,#navigation,#links,...{display:none}` took the whole navigation,
+      header and breadcrumbs off the page. It read as a layout bug for as long
+      as anyone had looked at it. The parser keeps the `media` each sheet was
+      linked with; cssref and the host loader both skip a sheet whose media
+      does not match, using the media-query matcher that already exists.
+      gnu.org: 84.7% -> 99.7% of its visible words.
+- [x] ~~A NESTED TABLE ATE EVERYTHING AFTER IT~~ FIXED 2026-08-09.
+      `render_table` kept its row list in a `static` array and RECURSES: a table
+      inside a cell overwrote the outer table's rows, so on return the outer
+      carried on reading the INNER table's. Hacker News (whose third row holds a
+      92-row table and whose fourth is the footer) rendered a repeated item row
+      where its footer should be, and guidelines/FAQ/lists/API/security/legal
+      were never drawn. On the stack now; the nesting is shallow and 128 ints is
+      half a kilobyte. hackernews 94.5% -> 100%.
+- [x] ~~THREE WAYS TO MATCH TOO MUCH~~ FIXED 2026-08-09, all the same mistake:
+      dropping a constraint makes a selector BROADER, and a broad `display:none`
+      empties a page.
+        * ATTRIBUTE SELECTORS were skipped entirely. They are parsed and
+          evaluated now against the attributes the parser keeps (class, id,
+          href/src, alt, style, name, value, type) with =, ~=, ^=, $=, *= and
+          bare presence; a test against an attribute we do not store (data-*,
+          aria-*, role) matches NOTHING, because a question we cannot answer
+          must not be answered yes.
+        * An unknown FUNCTIONAL pseudo was skipped, which turned MDN's
+          `.code-example:has(.hidden, ...)` into `.code-example{display:none}`
+          and took every code block on the site off the page. One that took an
+          argument now matches nothing; a bare unknown pseudo stays lenient,
+          which is the decision tests/web/pseudo.html already holds for :hover.
+      Wikipedia 91.6% -> 99.5%, and the fix is why.
+- [x] ~~A <pre> WAS ONLY ITS DIRECT TEXT~~ FIXED 2026-08-09. Element children
+      were skipped, so a <pre> whose lines are wrapped in <span>s rendered as
+      NOTHING -- and highlighting IS spans, so that is every syntax-highlighted
+      code block on the web. MDN's formal-syntax section was blank on every
+      reference page. The text is gathered from the whole subtree now, with
+      <br> as a line break. mdn 93.7% -> 100%, pythonorg 97.9% -> 100%.
+- [x] ~~THE HIDDEN REPORT COULD NOT NAME A SELECTOR~~ FIXED 2026-08-09: it
+      printed a bare "." for every rule, because `klass` became an array and
+      `klass[0]` is a pointer that is never null. It prints every class by name
+      now, plus `*` for a universal compound and a marker for one that matches
+      nothing. A diagnostic that cannot name what it found sends you to grep the
+      stylesheet -- which is the search it exists to end, and it cost an hour
+      before it was noticed.
+- [x] ~~A LONG WORD WAS TRUNCATED~~ FIXED 2026-08-09: the per-word pool held
+      strings of a fixed length, and suckless.org's forty-character git URLs
+      ran past it. Widened; suckless 99.6% -> 100%.
+- [x] ~~`@media(` WITH NO SPACE WAS A DIFFERENT AT-RULE~~ FIXED 2026-08-09.
+      The at-rule keyword was read up to whitespace, so a MINIFIED sheet --
+      which is every sheet a build tool emits -- gave the keyword as
+      "media(min-width:45em)", which is not "media", and the whole block was
+      skipped. gnu.org lost a paragraph to it. gnu 99.7% -> 100%; the case is
+      pinned by two rules in `tests/web/media.html`, one that must apply and
+      one that must not.
+- [ ] What the verifier says is left, 2026-08-10. SIXTEEN of nineteen sites
+      now render 100% of their visible text (craigslist, danluu, example, gnu,
+      google, hackernews, kernelorg, lobsters, mdn, nginx, pythonorg,
+      rust-lang, sqlite, suckless, xkcd). The rest:
+        wikipedia 99.6% -- 8 words
+        github    99.5% -- 2, and both are word-boundary artifacts
+        brave     98.4% -- 8 words, the infobox's Factsheet rows. NOT A BUG so
+                  far as HTML goes: they are inside a <details> that is closed
+                  by default, and Brave opens it with a control of its own.
+                  Our closed-by-default behaviour is what the markup says.
+      The EXTRA column is still dominated by one cause: menus a page collapses
+      with an external `<script src>` we do not fetch.
+      bbc cannot be scored -- Firefox itself throws on the saved copy.
+
+Still open in flex:
+- [x] ~~align-items' CSS INITIAL VALUE IS STRETCH~~ SHIPPED 2026-08-10, once
+      the thing it "broke" was diagnosed. It was withheld for two milestones
+      because it collapsed rust-lang.org's <main> to nothing -- and <main> was
+      already a box ZERO PIXELS WIDE for an unrelated reason (`flex: 1` on a
+      child of an auto-height column was being read as a width; see below).
+      Stretch was only making an existing zero visible. With that fixed the
+      default is CSS's, tests/web/flex2.html keeps its stated align-items as
+      the explicit case, and `WIDE=1` reports nothing overflowing its parent
+      on every real site but one.
+- [x] ~~A PERCENTAGE-SIZED FLEX ITEM NEVER SHRANK~~ FIXED 2026-08-10. The two
+      shrink passes were eligible on SIZE_FLEX and SIZE_INTRINSIC; `width:100%`
+      is neither, so three children each asking for the full width took 300% of
+      the row and CSS's default flex-shrink of 1 never ran. SIZE_FIXED stays
+      out deliberately (a 24px traffic light is a decision); a percentage is a
+      proportion OF THE CONTAINER, which is the thing that divides.
+- [x] ~~ONE FLAG ANSWERED TWO QUESTIONS ABOUT A COLUMN~~ FIXED 2026-08-10.
+      Which axis flex-basis/flex-grow land on is the container's DIRECTION
+      alone; whether it can hand out space needs a DEFINITE size. They were the
+      same flag, so `body { display:flex; flex-direction:column;
+      min-height:100vh }` (no stated height) made `body > main { flex: 1 }` a
+      WIDTH -- and `flex: 1` means basis 0, so <main> was zero pixels wide and
+      its whole subtree fell back to intrinsic width. rust-lang.org laid out
+      15000px across an 1100px page.
+- [x] ~~`max-width` WAS WRITTEN INTO `width`~~ FIXED 2026-08-10, plus the
+      second half of the same bug: `ui_set_size` assigns the whole
+      `layout_size`, so it ERASED the min/max that `ui_set_size_bounds` had set
+      moments earlier -- the browser sets a cap when it opens a box and the
+      size when it closes it, so every max-width on the web was dropped between
+      the two calls. `vstyle.max_width` is its own field now and the engine's
+      bound is honoured on both axes.
+- [x] ~~A ROW'S HEIGHT WAS MEASURED AT WIDTHS NOBODY GETS~~ FIXED 2026-08-10,
+      the same disagreement in a third place. `measure_subtree_height`'s row
+      arm sized a percentage child by its INTRINSIC width and ignored the
+      shrink that arrange applies -- so three `width: 100%` sections measured
+      one line of text each, were arranged at a third of the width, wrapped to
+      four lines, and the row (already sized for one) had its children's
+      HEIGHTS squeezed to fit: every heading came out 10px tall with its own
+      paragraph drawn on top of it. The measurement resolves percentages and
+      applies the same scale the arranger does.
+- [ ] `max-width`/`min-width` as a PERCENTAGE are still ignored: the engine's
+      bound is a pixel floor/ceiling with nothing to resolve a percentage
+      against. `max-width: 100%` on an image is the responsive-image idiom and
+      reaches nothing. `min-width` has no vstyle field at all.
+- [ ] MDN's three-column app shell still renders as one column. Nothing
+      overflows any more -- the shell is built from CUSTOM ELEMENTS with
+      `<template shadowroot="open">`, so its layout CSS lives in a declarative
+      shadow root we neither scope nor apply. Its breadcrumb <ol> is numbered
+      by us and unnumbered by Firefox for the same reason.
+- [ ] flex-grow down a column only grows the height when the column has a
+      STATED height. Free space needs an axis with a size to be free of, and on
+      an auto-height column there is none -- the height comes from the children.
+      Worse, the weight then makes the child the FIRST thing squashed when the
+      column overflows (layout.c spends flexible boxes' space before intrinsic
+      ones), which is the other half of what collapsed rust-lang's <main>. An
+      auto-height column keeps the width behaviour it always had. Same
+      diagnosis unblocks both.
+- [ ] Still no `flex-basis` as a PERCENTAGE (`flex: 1 1 50%` reads as a zero
+      basis), no `row-reverse`/`column-reverse`/`wrap-reverse` (all treated as
+      forward), no `align-content` for a multi-line container, and
+      `align-items: baseline` is start.
+- [ ] `flex: none` on an item with no basis can still be shrunk: the engine
+      expresses never-shrink through SIZE_FIXED, which needs a basis. With one
+      (`flex: 0 0 240px`) it is exact.
 - [x] ~~A widget kept the SIZE it was given on a previous frame~~ FIXED, and
       this is a TOOLKIT bug that reached every EmUI app. em_apply_box calls
       ui_set_size only when a prop asks for one, so a reused instance keeps
@@ -2638,6 +3178,36 @@ Encrypt/RSA), `test wget https`, `test pypi`.
       it already walks lines with a y cursor, so it is reachable; the hard part
       is that the floats live in an ancestor block and the text is in a nested
       Flow, i.e. a coordinate-space problem rather than an algorithm one.
+      2026-08-10, three things the float ROW got wrong, all found by
+      `make web-verify` on kernel.org and all fixed: the group collected at
+      most EIGHT floats and SKIPPED the rest (kernel.org floats nine footer
+      links; the ninth did not exist -- a full group now stops collecting and
+      the overflow opens the next group); a floats-only group is a float GRID
+      and must WRAP, where a non-wrapping row silently clipped whatever ran
+      past the edge (it is a Flow now; with in-flow content beside them the
+      non-wrapping row is still right, that being the image-with-text shape);
+      and `measure_wrap_height` sized a PERCENTAGE-width child by its
+      intrinsic width, so nine 30%-wide boxes measured one line and arranged
+      three, leaving the container two lines short and the next block painted
+      over the overflow.
+- [x] ~~`list-style`, `<ol>` numbering, and the list item's own box~~ SHIPPED
+      2026-08-10. Every list item drew one hardcoded bullet, which was three
+      wrongs at once: `list-style: none` (on essentially every navigation menu
+      on the web) was neither parsed nor honoured, an `<ol>` was bulleted
+      instead of numbered, and the item was drawn through a PRIVATE path that
+      returned before the ordinary box code -- so its width, background,
+      padding, border and float were all ignored and `.blogroll li { float:
+      left; width: 33% }` sized to its text. Now: `list-style` /
+      `list-style-type` parse to VM_*, the type INHERITS (the list states it,
+      the item reads it -- which is the only way `ul { list-style: none }`
+      reaches the <li> that draws the marker), and the item runs the same box
+      path as any block with the marker emitted inside it.
+      VM_NONE had to stop being 0: `none` and "nobody said" were the same
+      value, so the item's own default put the bullet straight back.
+- [ ] `list-style-position: inside`, `list-style-image`, and the alphabetic /
+      roman counters are not honoured -- an unrecognised type keeps the bullet
+      rather than losing the marker to a spelling. `<ol start=N>` and `reversed`
+      are ignored too: numbering counts items from one.
 - [ ] `position: fixed` is treated as ABSOLUTE against the nearest positioned
       ancestor, not the viewport. The difference only shows when the page
       scrolls under a fixed header. `sticky` is treated as relative.

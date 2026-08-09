@@ -32,6 +32,13 @@
  * HTML parser. Returns 0, or -1 if a fetch is already in flight. */
 int fetchjob_start(const char *url, char *buf, size_t cap, int tag);
 
+/* WHERE THE SECONDS WENT, per tag: total bytes, total milliseconds, and how
+ * many fetches. A slow page is the loudest complaint a browser has, and a
+ * single "Loading... 146s" cannot say whether that is one big transfer or a
+ * hundred small ones. Reset when a navigation starts. */
+void fetchjob_stats(int tag, unsigned long *bytes, unsigned long *ms, unsigned *n);
+void fetchjob_stats_reset(void);
+
 /* ...with a POST body. `body` is COPIED, because the caller's buffer (a form's
  * encoded fields) is not guaranteed to outlive the worker. */
 int fetchjob_start_post(const char *url, const char *body,
