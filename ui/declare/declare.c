@@ -841,6 +841,10 @@ static bool is_ancestor_or_self(struct instance_handle anc, struct instance_hand
 }
 
 int ui_take_press_edges(void) { int n = g_press_edges; g_press_edges = 0; return n; }
+/* Non-consuming, so a second reader can notice an edge without stealing it
+ * from the first. The DSL uses it purely to timestamp the press. */
+static int g_press_total;
+int ui_press_edge_total(void) { return g_press_total; }
 
 bool ui_consume_click(struct instance_handle h) {
     if (is_ancestor_or_self(h, g_clicked)) { g_clicked = INSTANCE_HANDLE_NULL; return true; }
@@ -996,6 +1000,7 @@ void ui_pointer(float x, float y, bool down) {
     g_hovered = instance_at(x, y);
     if (down && !g_ptr_down) {           /* press edge */
         g_press_edges++;
+        g_press_total++;
         g_clicked = g_hovered;
         g_active  = g_hovered;           /* capture: this widget owns the drag until release */
         g_press_edge = true;             /* for defocus when the press misses every field */

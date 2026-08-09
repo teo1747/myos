@@ -2561,30 +2561,32 @@ void  em_set_viewport(float w, float h) { g_vp_w = w; g_vp_h = h; }
  * down -- and an app comparing FRAME times was measuring the wrong interval
  * entirely: a frame can take longer than the whole double-click window, so
  * two clicks 200ms apart looked half a second apart and never paired. */
-static int      g_press_count;
 static uint64_t g_press_at_ms;
-static int      g_prev_left_down;
+static int      g_prev_left_down;   /* last seen ui_press_edge_total */
 
+/* The COUNT comes from ui_pointer, which is the one that actually sees the
+ * edge -- a duplicate detector here counted zero for presses the toolkit
+ * plainly registered (ui_is_active saw them), because two detectors
+ * tracking the same button from different call sites disagree about what
+ * the previous state was. One detector, one truth; this only adds the
+ * timestamp, which declare has no clock to take. */
 int em_take_clicks(uint64_t *when_ms) {
-    int n = g_press_count;
-    g_press_count = 0;
     if (when_ms) *when_ms = g_press_at_ms;
-    return n;
+    return ui_take_press_edges();
 }
 
 void em_feed_pointer(float x, float y, int left_down, int right_down,
                      int wheel, int focused) {
     if (focused) {
-        if (left_down && !g_prev_left_down) {
-            g_press_count++;
-            g_press_at_ms = em_now_ms();
-        }
-        g_prev_left_down = (left_down != 0);
         ui_pointer(x, y, left_down != 0);
         em_feed_right_button(x, y, right_down != 0);
+        /* Timestamp the press AT THE PRESS. ui_pointer has just run, so if the
+         * total moved, the edge happened in this sample -- microseconds ago,
+         * not whenever the next frame gets around to noticing. */
+        { int t = ui_press_edge_total();
+          if (t != g_prev_left_down) { g_prev_left_down = t; g_press_at_ms = em_now_ms(); } }
         if (wheel) ui_wheel((float)wheel);
     } else {
-        g_prev_left_down = 0;
         ui_pointer(-100.0f, -100.0f, false);
         em_feed_right_button(0, 0, false);
     }

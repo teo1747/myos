@@ -102,6 +102,9 @@ void ui_pointer_pos(float *x, float *y);   /* live pointer position (surface-loc
  * count). For a caller that needs to tell one click from three -- g_clicked
  * remembers only the last, and three presses can all land between two frames. */
 int  ui_take_press_edges(void);
+/* Total press edges ever, never cleared -- for a second reader that only
+ * wants to know THAT one happened (to timestamp it) without consuming it. */
+int  ui_press_edge_total(void);
 bool ui_is_hovered(void);   /* is the pointer over the currently open box? */
 bool ui_is_pressed(void);   /* ...and is the button held down? */
 bool ui_pointer_down(void); /* the raw button state, not scoped to a widget */
