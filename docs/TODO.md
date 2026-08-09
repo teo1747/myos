@@ -72,24 +72,31 @@ missing, roughly in the order a user meets it:
 - [ ] 🐛 That confirm sheet draws in the TOP-LEFT instead of centred, over the
       tab bar. Dialog inside Window() is not being centred by its overlay; it
       works and it looks broken.
-- [ ] 🐛 DOUBLE AND TRIPLE CLICK STILL DO NOT FIRE, and the search has narrowed
-      to one place. Fixed on the way, and both were real:
-        * ui_pointer() compares against LAST FRAME's button state and runs once
-          a frame, so a press and release between two frames was never an edge
-          at all. The loop samples in 5ms slices through both sleeps now --
-          every app in the OS was losing fast clicks.
-        * the streak added ONE PER FRAME while the edges arrive BATCHED (two or
-          three in a single frame under an emulator), so three rapid clicks
-          incremented it once. It adds however many arrived.
-      MEASURED with the counters on the status bar: `e=5 s=1 at=62 last=44
-      dt=4114`. All five taps are counted -- the edges are arriving. But only
-      TWO sightings happened for five taps, and the streak still read 1, so the
-      per-sighting count is reaching the streak and not surviving to the next
-      frame. Something between the two resets g_click_streak.
-      START HERE: print g_click_streak at the TOP of the frame as well as after
-      the update. If it is 1 at the top having been 3 at the bottom, find the
-      writer; the drag branch immediately above it assigns anchor and cursor on
-      a fresh press and is the first suspect.
+- [ ] 🐛 DOUBLE AND TRIPLE CLICK STILL DO NOT FIRE. Four causes found and
+      fixed underneath it, all real and all shipped -- and the symptom remains,
+      so something is still wrong that none of them was:
+        1. ui_pointer() compared against LAST FRAME's button state and ran once
+           a frame, so a press+release between frames was never an edge.
+           The loop samples in 5ms slices through both sleeps now. OS-WIDE fix.
+        2. g_clicked keeps only the most recent press, so it could not tell one
+           click from three. Edges are counted.
+        3. The streak added one PER FRAME while edges can arrive batched. It
+           adds however many arrived.
+        4. The window was measured between the FRAMES that noticed the clicks
+           rather than the clicks themselves -- and a frame here can be longer
+           than the whole 500ms window. em_take_clicks() timestamps the press.
+      MEASURED, with the caveat that one probe was itself wrong (it printed
+      g_last_click_off AFTER assigning it, so `at == last` was guaranteed by
+      the probe and proves nothing -- do not repeat that): presses arrive one
+      per frame, and g_click_streak reads 1 after the update, meaning it was 0
+      on entry. It has exactly two writers (notepp.c:535-536) and neither
+      writes 0, so either the block runs once per burst and the other presses
+      never arrive, or the streak is being reset by something not named
+      g_click_streak.
+      NEXT: print the streak at the TOP of document_view, before any of this
+      runs, alongside a per-burst counter. That distinguishes "reset between
+      frames" from "only one press ever delivered" in a single run, which is
+      the question every attempt so far has failed to separate.
 - [ ] Still no shift-click to extend a selection.
 - [ ] No scrollbar; the only indication of position is the line number.
 - [ ] Undo cannot redo an insert (the pool stores removed text only), and undo

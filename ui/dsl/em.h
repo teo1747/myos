@@ -647,6 +647,13 @@ typedef struct {
 void  em_set_viewport(float w, float h);   /* the app runtime feeds this */
 /* Feed one frame of pointer state to the toolkit (pointer + right button +
  * wheel). Any loop that is not em_app_run MUST call this -- see em.c. */
+/* Press edges since this was last asked, and WHEN the most recent one
+ * happened -- measured at the press, not at the frame that noticed it. An
+ * app deciding whether two clicks are a double click must compare the
+ * CLICKS; comparing frames measures how slow the machine is, which on an
+ * emulator is longer than the whole double-click window. */
+int   em_take_clicks(uint64_t *when_ms);
+
 void  em_feed_pointer(float x, float y, int left_down, int right_down,
                       int wheel, int focused);
 void  em_window_blur_rect(int x, int y, int w, int h);  /* frost behind a sub-rect */

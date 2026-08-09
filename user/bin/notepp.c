@@ -516,7 +516,8 @@ static void document_view(float height) {
            * could tell one click from three: three presses fit easily between
            * two frames under an emulator, and the earlier ones were simply
            * never seen. */
-          int presses = ui_take_press_edges();
+          uint64_t press_ms = 0;
+          int presses = em_take_clicks(&press_ms);
           if (presses) {
               /* THE PRESSES ARRIVE IN BATCHES, and that is the whole bug. The
                * loop hands over however many edges happened since it last
@@ -527,7 +528,7 @@ static void document_view(float height) {
                * Count what arrived, not how many times we looked. Two edges in
                * one frame IS a double click: they cannot have been further
                * apart than a frame. */
-              uint64_t now = embk_uptime_ms();
+              uint64_t now = press_ms;   /* the PRESS's time, not this frame's */
               int near = (g_last_click_off >= 0 && at >= g_last_click_off - 1
                                                 && at <= g_last_click_off + 1);
               if (near && now - g_last_click_ms < 500) g_click_streak += presses;

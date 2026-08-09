@@ -2556,13 +2556,35 @@ void  em_set_viewport(float w, float h) { g_vp_w = w; g_vp_h = h; }
  * Two hand-written copies drifted twice: the desktop silently lacked
  * right-button delivery (context menus dead) and, before that, viewport
  * mirroring. One function, one truth. */
+/* Press edges, TIMESTAMPED WHEN THEY HAPPEN. The runtime samples the pointer
+ * in fine slices between frames, so it knows when a button actually went
+ * down -- and an app comparing FRAME times was measuring the wrong interval
+ * entirely: a frame can take longer than the whole double-click window, so
+ * two clicks 200ms apart looked half a second apart and never paired. */
+static int      g_press_count;
+static uint64_t g_press_at_ms;
+static int      g_prev_left_down;
+
+int em_take_clicks(uint64_t *when_ms) {
+    int n = g_press_count;
+    g_press_count = 0;
+    if (when_ms) *when_ms = g_press_at_ms;
+    return n;
+}
+
 void em_feed_pointer(float x, float y, int left_down, int right_down,
                      int wheel, int focused) {
     if (focused) {
+        if (left_down && !g_prev_left_down) {
+            g_press_count++;
+            g_press_at_ms = em_now_ms();
+        }
+        g_prev_left_down = (left_down != 0);
         ui_pointer(x, y, left_down != 0);
         em_feed_right_button(x, y, right_down != 0);
         if (wheel) ui_wheel((float)wheel);
     } else {
+        g_prev_left_down = 0;
         ui_pointer(-100.0f, -100.0f, false);
         em_feed_right_button(0, 0, false);
     }
