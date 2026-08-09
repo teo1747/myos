@@ -540,3 +540,122 @@ int ed_match_bracket(const struct editor *e, int off) {
     }
     return -1;
 }
+
+/* ---- counting, words, comments, auto-close ------------------------------- */
+
+int ed_count(const struct editor *e, const char *needle, int icase) {
+    if (!needle || !needle[0]) return 0;
+    int nlen = (int)strlen(needle), n = 0;
+    for (int i = 0; i + nlen <= e->len; ) {
+        if (match_at(e->buf, e->len, i, needle, nlen, icase)) { n++; i += nlen; }
+        else i++;
+    }
+    return n;
+}
+
+int ed_match_index(const struct editor *e, const char *needle, int icase) {
+    if (!needle || !needle[0]) return 0;
+    int nlen = (int)strlen(needle), n = 0;
+    int lo, hi; ed_sel_range(e, &lo, &hi);
+    for (int i = 0; i + nlen <= e->len; ) {
+        if (match_at(e->buf, e->len, i, needle, nlen, icase)) {
+            n++;
+            if (i == lo) return n;
+            i += nlen;
+        } else i++;
+    }
+    return 0;
+}
+
+int ed_word_at(const struct editor *e, int off, int *lo, int *hi) {
+    off = clampi(off, 0, e->len);
+    /* A click just past a word still means that word -- otherwise
+     * double-clicking at the end of one selects nothing. */
+    if (off > 0 && (off >= e->len || !is_word(e->buf[off])) && is_word(e->buf[off - 1])) off--;
+    if (off >= e->len || !is_word(e->buf[off])) return 0;
+    int a = off, b = off;
+    while (a > 0 && is_word(e->buf[a - 1])) a--;
+    while (b < e->len && is_word(e->buf[b])) b++;
+    if (lo) *lo = a;
+    if (hi) *hi = b;
+    return 1;
+}
+
+void ed_select_word(struct editor *e, int off) {
+    int a, b;
+    if (!ed_word_at(e, off, &a, &b)) return;
+    e->anchor = a; e->cursor = b;
+}
+
+void ed_select_line(struct editor *e, int off) {
+    int ls = ed_line_start(e, off), le = ed_line_end(e, off);
+    if (le < e->len) le++;                 /* include the newline, as editors do */
+    e->anchor = ls; e->cursor = le;
+}
+
+int ed_toggle_comment(struct editor *e, const char *tok) {
+    if (!tok || !tok[0]) return 0;
+    int tlen = (int)strlen(tok);
+    int lo, hi;
+    if (ed_has_sel(e)) ed_sel_range(e, &lo, &hi);
+    else lo = hi = e->cursor;
+    int first = ed_line_start(e, lo), last = ed_line_start(e, hi);
+
+    /* UNCOMMENT ONLY IF EVERY LINE IS COMMENTED. One shortcut doing both
+     * directions needs a rule, and "all of them or none" is the one that
+     * matches what a person means by toggling a block. */
+    int all = 1;
+    for (int line = first; ; ) {
+        int fw = line;
+        while (fw < e->len && (e->buf[fw] == ' ' || e->buf[fw] == '\t')) fw++;
+        if (!match_at(e->buf, e->len, fw, tok, tlen, 0)) { all = 0; break; }
+        if (line >= last) break;
+        int le = ed_line_end(e, line);
+        if (le >= e->len) break;
+        line = le + 1;
+    }
+
+    /* Bottom-up, so the offsets above stay valid as the text changes. */
+    int line = last, n = 0, delta = 0;
+    for (;;) {
+        int fw = line;
+        while (fw < e->len && (e->buf[fw] == ' ' || e->buf[fw] == '\t')) fw++;
+        if (all) {
+            if (match_at(e->buf, e->len, fw, tok, tlen, 0)) {
+                int extra = (fw + tlen < e->len && e->buf[fw + tlen] == ' ') ? 1 : 0;
+                splice(e, fw, tlen + extra, 0, 0, 0);
+                delta -= tlen + extra;
+                n++;
+            }
+        } else {
+            char ins[16];
+            int k = 0;
+            for (; k < tlen && k < (int)sizeof ins - 2; k++) ins[k] = tok[k];
+            ins[k++] = ' ';
+            splice(e, fw, 0, ins, k, 0);
+            delta += k;
+            n++;
+        }
+        if (line <= first) break;
+        line = ed_line_start(e, line - 1);
+    }
+    /* PUT THE SELECTION BACK over the lines that were touched. splice collapses
+     * it to the caret, so without this a second press sees one line instead of
+     * the block and toggling a selection twice does not return it to where it
+     * started -- which is the whole contract of a toggle. */
+    e->anchor = first;
+    e->cursor = clampi(hi + delta, first, e->len);
+    e->cursor = ed_line_end(e, e->cursor);
+    return n;
+}
+
+char ed_auto_close(char open) {
+    switch (open) {
+        case '(': return ')';
+        case '[': return ']';
+        case '{': return '}';
+        case '"': return '"';
+        case '\'': return '\'';
+        default:  return 0;
+    }
+}

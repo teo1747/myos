@@ -99,6 +99,10 @@ static float g_doc_top;           /* screen y of the first drawn line          *
 static float g_char_w;            /* one monospace advance, measured once      */
 static float g_gutter_w;          /* the number column, in pixels              */
 static int   g_dragging;          /* a selection drag is in progress           */
+static int   g_confirm_close = -1;/* a modified document asking before it goes */
+static uint64_t g_last_click_ms;  /* for double / triple click                 */
+static int   g_click_streak;
+static int   g_last_click_off = -1;
 
 /* ---- files --------------------------------------------------------------- */
 
@@ -149,6 +153,21 @@ static void save_current(void) {
                     snprintf(g_msg, sizeof g_msg, "Saved %lu bytes", (unsigned long)w); }
     else snprintf(g_msg, sizeof g_msg, "PARTIAL WRITE %lu of %lu",
                   (unsigned long)w, (unsigned long)len);
+}
+
+/* The token that starts a line comment, per language. Markdown and plain text
+ * have none, and a comment toggle that invents one would corrupt the file. */
+static const char *comment_tok(enum syn_lang l) {
+    switch (l) {
+        case SYN_C: case SYN_JS: return "//";
+        case SYN_PY: case SYN_SH: return "#";
+        default: return 0;
+    }
+}
+
+static enum syn_lang d_lang(void) {
+    struct doc *d = doc_cur();
+    return d ? d->lang : SYN_PLAIN;
 }
 
 /* ---- scrolling ----------------------------------------------------------- */
@@ -213,6 +232,9 @@ static int on_key(int ch) {
             case 'h': g_find_open = g_replace_open = 1; return 1;
             case 'd': ed_duplicate_line(&ED); scroll_to_caret(); return 1;
             case 'l': ed_delete_line(&ED); scroll_to_caret(); return 1;
+            case '/': { const char *tk = comment_tok(d_lang());
+                        if (tk) ed_toggle_comment(&ED, tk);
+                        scroll_to_caret(); return 1; }
             case 'g': { /* go to line: the number is typed into the find field */
                         g_find_open = 1;
                         snprintf(g_msg, sizeof g_msg, "Type a line number, then Enter");
@@ -256,7 +278,22 @@ static int on_key(int ch) {
         case 27:   if (g_find_open) { g_find_open = g_replace_open = 0; break; }
                    return 0;           /* Esc with no find bar quits the app */
         default:
-            if (ch >= 32 && ch < 127) ed_insert_char(&ED, (char)ch);
+            if (ch >= 32 && ch < 127) {
+                /* AUTO-CLOSE. An opener brings its partner and leaves the caret
+                 * between them. Typing the CLOSER when it is already the next
+                 * character just steps over it, so the ordinary case of typing
+                 * a whole call never leaves a stray one behind. */
+                char close = ed_auto_close((char)ch);
+                int over = (ED.cursor < ED.len && ED.buf[ED.cursor] == (char)ch &&
+                            (ch == ')' || ch == ']' || ch == '}' ||
+                             ch == '"' || ch == '\''));
+                if (over)                      ed_move(&ED, +1, 0);
+                else if (close && !ed_has_sel(&ED)) {
+                    char pair[2] = { (char)ch, close };
+                    ed_insert_text(&ED, pair, 2);
+                    ED.cursor = ED.anchor = ED.cursor - 1;
+                } else                          ed_insert_char(&ED, (char)ch);
+            }
             else return 0;
             break;
     }
@@ -442,8 +479,23 @@ static void document_view(float height) {
         if (ui_is_active()) {
             float px, py; ui_pointer_pos(&px, &py);
             int at = offset_at_point(px, py);
-            if (!g_dragging) { g_dragging = 1; ED.anchor = ED.cursor = at; }
-            else             { ED.cursor = at; }
+            if (!g_dragging) {
+                g_dragging = 1;
+                /* One press places the caret, two select the word, three the
+                 * line -- counted by TIME AND PLACE together, so a slow second
+                 * click elsewhere is a new selection rather than a word. */
+                uint64_t now = embk_uptime_ms();
+                int near = (g_last_click_off >= 0 && at >= g_last_click_off - 1
+                                                  && at <= g_last_click_off + 1);
+                g_click_streak = (near && now - g_last_click_ms < 500) ? g_click_streak + 1 : 1;
+                g_last_click_ms = now;
+                g_last_click_off = at;
+                if (g_click_streak >= 3)      ed_select_line(&ED, at);
+                else if (g_click_streak == 2) ed_select_word(&ED, at);
+                else                          ED.anchor = ED.cursor = at;
+            } else if (g_click_streak == 1) {
+                ED.cursor = at;                 /* a drag only extends a plain click */
+            }
             em_request_frame();
         } else if (g_dragging) {
             g_dragging = 0;
@@ -487,7 +539,13 @@ static void app(void) {
                g_bound = -1; }
     }
     if (g_switch_to >= 0) { sync_out(); doc_select(g_switch_to); g_switch_to = -1; g_bound = -1; }
-    if (g_close >= 0)     { doc_close(g_close); g_close = -1; g_bound = -1; }
+    if (g_close >= 0) {
+        /* ASK BEFORE LOSING EDITS. Closing a modified document used to just
+         * take it, and that is the only item on this app's list that costs
+         * something you cannot get back. */
+        if (doc_dirty(g_close)) { g_confirm_close = g_close; g_close = -1; }
+        else { doc_close(g_close); g_close = -1; g_bound = -1; }
+    }
     bind_current();
 
     struct doc *d = doc_cur();
@@ -564,6 +622,13 @@ static void app(void) {
                     int at = ed_find(&ED, g_find_buf, ED.cursor + 1, g_find_icase, 1);
                     if (at >= 0) { ED.anchor = at; ED.cursor = at + (int)strlen(g_find_buf); scroll_to_caret(); }
                 }
+                { char cnt[32];
+                  int nm = ed_count(&ED, g_find_buf, g_find_icase);
+                  int ix = ed_match_index(&ED, g_find_buf, g_find_icase);
+                  if (!g_find_buf[0]) cnt[0] = 0;
+                  else if (!nm)       snprintf(cnt, sizeof cnt, "none");
+                  else                snprintf(cnt, sizeof cnt, "%d of %d", ix, nm);
+                  if (cnt[0]) { Text(cnt).caption().tertiary(); em_flush(); } }
                 if (Button(g_find_icase ? "Aa off" : "Aa on").ghost().font(Caption).py(2).clicked())
                     g_find_icase = !g_find_icase;
                 if (Button("Done").ghost().font(Caption).py(2).clicked())
@@ -585,6 +650,33 @@ static void app(void) {
         Divider("editsep");
 
         document_view(em_viewport_height() - chrome);
+
+        /* The one question this app asks: a modified document is not closed out
+         * from under the person who modified it. */
+        if (g_confirm_close >= 0) {
+            Overlay() {
+                Dialog(.width = 380, .spacing = 14, .padding = 20) {
+                    char q[96];
+                    snprintf(q, sizeof q, "Close %.32s?", doc_label(g_confirm_close));
+                    Text(q).heading(); em_flush();
+                    Text("It has unsaved changes.").caption().secondary();
+                    HStack(.spacing = 8, .align = Center) {
+                        Spacer();
+                        if (Button("Cancel").ghost().clicked()) g_confirm_close = -1;
+                        if (Button("Save").clicked()) {
+                            doc_select(g_confirm_close); g_bound = -1; bind_current();
+                            save_current();
+                            if (!doc_dirty(g_confirm_close)) doc_close(g_confirm_close);
+                            g_confirm_close = -1; g_bound = -1;
+                        }
+                        if (Button("Discard").destructive().clicked()) {
+                            doc_close(g_confirm_close);
+                            g_confirm_close = -1; g_bound = -1;
+                        }
+                    }
+                }
+            }
+        }
 
         Divider("statussep");
         HStack(.spacing = 14, .align = Center, .px = 12, .py = 4, .key = "status") {

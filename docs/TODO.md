@@ -46,13 +46,22 @@ missing, roughly in the order a user meets it:
 - [ ] Still no horizontal SCROLLBAR, and no way to scroll sideways with the
       wheel or a gesture -- only the caret moves the window.
 - [ ] No word wrap.
-- [ ] Find shows no match count and does not highlight the other matches.
+- [x] ~~Find shows no match count~~ -- it says "3 of 12", or "none".
+- [ ] Find still does not HIGHLIGHT the other matches, only the current one.
 - [ ] Ctrl+G (go to line) opens the find box and asks for a number instead of
       being its own thing.
-- [ ] No auto-close for brackets and quotes; no comment toggle (Ctrl+/).
-- [ ] No prompt when closing a modified file -- it just goes.
-- [ ] No shift-click to extend, no double-click for a word, no triple-click for
-      a line.
+- [x] ~~No auto-close, no comment toggle~~ -- an opener brings its partner and
+      typing the closer steps over it; Ctrl+/ comments a block and uncomments
+      it only when every line already is.
+- [x] ~~No prompt when closing a modified file~~ -- Cancel / Save / Discard.
+- [ ] 🐛 That confirm sheet draws in the TOP-LEFT instead of centred, over the
+      tab bar. Dialog inside Window() is not being centred by its overlay; it
+      works and it looks broken.
+- [x] ~~No double-click for a word, no triple-click for a line~~ -- both in,
+      counted by time AND place so a slow second click elsewhere is a new
+      selection. (Not confirmed on hardware: QMP cannot click fast enough to
+      make a double-click; the engine's half is covered by tests.)
+- [ ] Still no shift-click to extend a selection.
 - [ ] No scrollbar; the only indication of position is the line number.
 - [ ] Undo cannot redo an insert (the pool stores removed text only), and undo
       is per-document only while that document is bound.

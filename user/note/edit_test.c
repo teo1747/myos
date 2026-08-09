@@ -138,6 +138,52 @@ int main(void) {
       ed_insert_text(&s, "abcdefghij", 10);
       ok(strlen(s.buf) == 10, "an insert that would not fit is REFUSED, not truncated"); }
 
+    /* --- counting matches, for a find bar that can say "3 of 12" --- */
+    start("foo bar foo baz foo");
+    ok(ed_count(&E, "foo", 0) == 3, "counts every occurrence");
+    ok(ed_count(&E, "FOO", 1) == 3, "...case-insensitively when asked");
+    ok(ed_count(&E, "zzz", 0) == 0, "counts zero honestly");
+    start("aaaa");
+    ok(ed_count(&E, "aa", 0) == 2, "overlapping matches count once each, not thrice");
+    start("foo bar foo"); E.anchor = 8; E.cursor = 11;
+    ok(ed_match_index(&E, "foo", 0) == 2, "the caret is on the SECOND match");
+
+    /* --- words, for a double-click --- */
+    start("alpha beta gamma");
+    { int a, b;
+      ok(ed_word_at(&E, 7, &a, &b) && a == 6 && b == 10, "the word under the point");
+      ok(ed_word_at(&E, 10, &a, &b) && a == 6 && b == 10,
+         "a click just PAST a word still means that word");
+      /* Offset 5 is the space right after "alpha", and snapping back to it is
+       * the SAME rule as the line above -- a click at a word's edge means that
+       * word. Whitespace with no word before it is where there is nothing. */
+      ok(ed_word_at(&E, 5, &a, &b) && a == 0 && b == 5,
+         "a click on the space after a word still means that word"); }
+    start("a  b");
+    { int a, b; ok(!ed_word_at(&E, 2, &a, &b), "whitespace with no word before it is nothing"); }
+    start("alpha beta gamma");
+    ed_select_word(&E, 0);
+    { int lo, hi; ed_sel_range(&E, &lo, &hi); ok(lo == 0 && hi == 5, "double-click selects it"); }
+    ed_select_line(&E, 3);
+    { int lo, hi; ed_sel_range(&E, &lo, &hi); ok(lo == 0 && hi == 16, "triple-click takes the line"); }
+
+    /* --- comment toggle: one shortcut, both directions --- */
+    start("a\nb"); E.anchor = 0; E.cursor = 3;
+    ed_toggle_comment(&E, "//");
+    ok(textis("// a\n// b"), "comments every line the selection touches");
+    ed_toggle_comment(&E, "//");
+    ok(textis("a\nb"), "...and uncomments when they ALL are");
+    start("// a\nb"); E.anchor = 0; E.cursor = 6;
+    ed_toggle_comment(&E, "//");
+    ok(textis("// // a\n// b"), "a PARTLY commented block comments rather than toggling");
+    start("    x"); E.cursor = E.anchor = 0;
+    ed_toggle_comment(&E, "//");
+    ok(textis("    // x"), "the token goes after the indentation, not before it");
+
+    /* --- auto-close --- */
+    ok(ed_auto_close('(') == ')' && ed_auto_close('"') == '"', "closers for openers");
+    ok(ed_auto_close('x') == 0, "...and nothing for a letter");
+
     printf("=== edit_test: %s (%d failure%s) ===\n",
            g_fail ? "FAILED" : "OK", g_fail, g_fail == 1 ? "" : "s");
     return g_fail != 0;

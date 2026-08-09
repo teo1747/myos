@@ -123,4 +123,24 @@ int  ed_replace_all(struct editor *e, const char *needle, const char *with, int 
  * does not skip them at all, which is honest and occasionally wrong. */
 int  ed_match_bracket(const struct editor *e, int off);
 
+/* How many times `needle` occurs. For a find bar that says "3 of 12" -- a
+ * search that cannot count is one you have to drive blind. */
+int  ed_count(const struct editor *e, const char *needle, int icase);
+/* Which occurrence the caret is sitting on, 1-based, or 0 if none. */
+int  ed_match_index(const struct editor *e, const char *needle, int icase);
+
+/* The word around `off`, for a double-click. Returns 0 when there is no word
+ * there, in which case lo/hi are untouched. */
+int  ed_word_at(const struct editor *e, int off, int *lo, int *hi);
+void ed_select_word(struct editor *e, int off);
+void ed_select_line(struct editor *e, int off);
+
+/* Comment or uncomment every line the selection touches, with `tok` (e.g. "//"
+ * or "#"). Uncomments when EVERY touched line already starts with the token --
+ * the rule that makes one shortcut do both without a mode. */
+int  ed_toggle_comment(struct editor *e, const char *tok);
+
+/* Auto-close: the closing partner for an opening bracket or quote, or 0. */
+char ed_auto_close(char open);
+
 #endif /* _EMBLINK_NOTE_EDIT_H_ */
