@@ -512,8 +512,20 @@ static void document_view(float height) {
         g_gutter_w = em_text_width("    0 ", 15.0f);
     }
 
-    VStack(.spacing = EmZero, .align = Fill, .padding = EmZero,
-           .background = C_EDITOR_BG, .corner = 8, .clip = 1,
+    /* THE TRACK, sized from what is on screen. Without it the only clue to
+     * where you are in a file is the line number, which tells you the position
+     * and not the PROPORTION -- line 400 means nothing until you know whether
+     * the file has 420 lines or 40000. */
+    float thumb = height * (float)g_rows / (float)(total > 0 ? total : 1);
+    if (thumb < 24.0f) thumb = 24.0f;
+    if (thumb > height) thumb = height;
+    float above = (total > g_rows)
+                ? (height - thumb) * (float)first / (float)(total - g_rows) : 0.0f;
+
+    HStack(.spacing = EmZero, .align = Fill, .padding = EmZero,
+           .height = height, .key = "docrow") {
+    VStack(.spacing = EmZero, .align = Fill, .padding = EmZero, .grow = 1,
+           .background = C_EDITOR_BG, .clip = 1,
            .height = height, .key = "doc") {
         /* THE WHEEL scrolls the view; the box only takes it while the pointer
          * is over it, so a wheel meant for something else is left alone. */
@@ -533,8 +545,16 @@ static void document_view(float height) {
 
           /* DRAGGING is sampled -- it is a state, true for as long as the
            * button is down on this box. */
+          int shift_held = (embk_key_mods() & 0x01) != 0;
           if (ui_is_active()) {
-              if (!g_dragging) { g_dragging = 1; ED.anchor = ED.cursor = at; }
+              /* SHIFT-CLICK EXTENDS from where the selection already starts,
+               * rather than beginning a new one -- the standard way to grow a
+               * selection past the edge of the window without dragging. */
+              if (!g_dragging) {
+                  g_dragging = 1;
+                  if (shift_held) ED.cursor = at;
+                  else            ED.anchor = ED.cursor = at;
+              }
               else if (g_click_streak <= 1) ED.cursor = at;
               em_request_frame();
           } else if (g_dragging) {
@@ -566,7 +586,10 @@ static void document_view(float height) {
               else                                     g_click_streak  = presses;
               g_last_click_ms = now;
               g_last_click_off = at;
-              if (g_click_streak >= 3)      ed_select_line(&ED, at);
+              /* A shifted click is an extension, never a double click: two of
+               * them in a row mean two extensions, not a word. */
+              if (shift_held)               g_click_streak = 1;
+              else if (g_click_streak >= 3) ed_select_line(&ED, at);
               else if (g_click_streak == 2) ed_select_word(&ED, at);
               em_request_frame();
           }
@@ -585,6 +608,19 @@ static void document_view(float height) {
             if (le >= ED.len) break;
         }
         Spacer();
+    }
+    /* Only when there is something to scroll. A full-height thumb on a short
+     * file is a control that says nothing and takes width to say it. */
+    if (total > g_rows) {
+        VStack(.spacing = EmZero, .align = Fill, .padding = EmZero,
+               .width = 8, .height = height, .background = C_EDITOR_BG,
+               .key = "track") {
+            if (above > 0) { VStack(.height = above, .key = "above") { } }
+            VStack(.height = thumb, .corner = 3, .background = C_GUTTER,
+                   .key = "thumb") { }
+            Spacer();
+        }
+    }
     }
 }
 

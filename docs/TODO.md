@@ -107,8 +107,13 @@ missing, roughly in the order a user meets it:
       A probe mistake worth not repeating: an early version printed
       g_last_click_off AFTER assigning it, so `at == last` was guaranteed by
       the probe. CAPTURE BEFORE YOU MUTATE.
-- [ ] Still no shift-click to extend a selection.
-- [ ] No scrollbar; the only indication of position is the line number.
+- [x] ~~No shift-click to extend~~ -- a shifted press moves the caret and
+      keeps the anchor. NOT verified here (holding shift across a synthesized
+      click is another thing QMP will not do); the rule is one branch and the
+      engine's half is tested.
+- [x] ~~No scrollbar~~ -- a thin track beside the text, thumb sized to the
+      visible fraction, shown only when there is something to scroll. It does
+      not DRAG yet: it reports position, it does not set it.
 - [ ] Undo cannot redo an insert (the pool stores removed text only), and undo
       is per-document only while that document is bound.
 - [ ] No column selection, no multiple carets, no folding, no minimap.
