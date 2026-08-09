@@ -274,6 +274,13 @@ int em_app_run(const EmApp *app) {
         }
         int had_key = 0;
         for (int c; (c = embk_key_poll()) != 0; ) {
+            /* THE HOOK GETS FIRST REFUSAL ON PASTE TOO. The replay below turns
+             * newlines and tabs into spaces, which is right for a terminal --
+             * a paste must never execute anything -- and wrong for an editor,
+             * where it silently flattens a pasted block onto one line. An app
+             * that wants the raw clipboard handles 0x16 itself; every app that
+             * does not still gets the safe replay. */
+            if (c == 0x16 && g_em_key_hook && g_em_key_hook(c)) { had_key = 1; continue; }
             if (c == 0x16) {                       /* Ctrl+V: paste, app-wide */
                 /* The runtime replays the clipboard through the SAME delivery
                  * path as typing -- key hook first, else the focused field --

@@ -214,6 +214,30 @@ static int on_key(int ch) {
         return 0;
     }
 
+    /* PASTE, taken raw. The runtime would otherwise replay the clipboard
+     * through this hook with newlines flattened to spaces, which is the right
+     * rule for a terminal and turns a pasted function into one long line here.
+     * Taking 0x16 ourselves keeps the line breaks. */
+    if (ch == 0x16) {
+        static char clip[8192];
+        int64_t n = embk_clip_get(clip, sizeof clip - 1);
+        if (n > 0) {
+            clip[n] = 0;
+            ed_insert_text(&ED, clip, (int)n);
+            scroll_to_caret();
+            snprintf(g_msg, sizeof g_msg, "%d bytes pasted", (int)n);
+        }
+        return 1;
+    }
+
+    /* A PRINTABLE CHARACTER IS NEVER A SHORTCUT, whatever the modifier keys say.
+     * Ctrl+letter arrives as a control code 1..26; a plain byte with Ctrl still
+     * physically held is the RUNTIME REPLAYING A PASTE through this hook. Those
+     * were being read as shortcuts, so pasting any text containing an 'l' ran
+     * delete-line and pasting a 'd' duplicated one -- the paste vanished and
+     * the file lost a line instead. */
+    if (ctrl && ch >= 32 && ch < 127) ctrl = 0;
+
     if (ctrl) {
         /* Ctrl+letter arrives as a CONTROL CODE, 1..26 -- which is why the
          * runtime tests for 0x16 to catch Ctrl+V. Masking with |32 turns
@@ -247,11 +271,8 @@ static int on_key(int ch) {
                          snprintf(g_msg, sizeof g_msg, "%d bytes %s", n,
                                   key == 'x' ? "cut" : "copied"); }
                 return 1; }
-            case 'v': {
-                char tmp[4096];
-                int64_t n = embk_clip_get(tmp, sizeof tmp - 1);
-                if (n > 0) { tmp[n] = 0; ed_insert_text(&ED, tmp, (int)n); scroll_to_caret(); }
-                return 1; }
+            /* 'v' never reaches here: Ctrl+V arrives as 0x16 and is taken
+             * above, raw, so the line breaks survive. */
             default: break;
         }
         /* Ctrl + arrows: by word, and by line for up/down. */

@@ -27,6 +27,19 @@ left to do.
 
 ## Note++ -- the OS's own editor
 
+- [x] ~~Ctrl+V deleted a line instead of pasting~~ -- the runtime replays a
+      paste through the key hook while Ctrl is still physically held, so every
+      pasted character was read as a shortcut and a clipboard containing an 'l'
+      ran delete-line. A printable byte is never a shortcut now; Ctrl+letter
+      arrives as a control code.
+- [x] ~~Pasting flattened newlines to spaces~~ -- correct for a terminal, wrong
+      here. The key hook gets first refusal on 0x16 so an editor can take the
+      clipboard raw.
+- [x] ~~Uneven line spacing over the first few lines~~ -- EmProps' EmZero
+      ("explicitly zero") was tested with `> 0` everywhere in em_apply_box and
+      thrown away with the unset values, so asking for no padding got the
+      default padding. It is honoured now, which fixes it for every app.
+
 Working and verified on the metal: multi-file tabs, line numbers, syntax
 colouring for C/Python/JS/shell/Markdown, auto-indent, current-line highlight,
 undo, select-all, CLICK TO PLACE THE CARET and DRAG TO SELECT, wheel scrolling,

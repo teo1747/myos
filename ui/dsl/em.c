@@ -130,17 +130,27 @@ static void em_glass_apply(float blur) {
     ui_set_border(1.0f, edge);
 }
 
+/* EmZero (-1) means "explicitly zero", and every test below used to be `> 0`,
+ * which threw it away with the unset values -- so a caller asking for no
+ * padding got the default padding, which is the opposite of what it asked for.
+ * That is the entire reason EmZero exists (see em.h) and it was honoured
+ * nowhere. */
+static float em_z(float v) { return v == EmZero ? 0.0f : v; }
+static int   em_set(float v) { return v > 0 || v == EmZero; }
+
 static void em_apply_box(EmProps p) {
-    if (p.spacing > 0) ui_set_spacing(p.spacing);
-    int any_pad = (p.padding > 0 || p.px > 0 || p.py > 0 || p.pt > 0 || p.pr > 0 || p.pb > 0 || p.pl > 0);
+    if (em_set(p.spacing)) ui_set_spacing(em_z(p.spacing));
+    int any_pad = (em_set(p.padding) || em_set(p.px) || em_set(p.py) ||
+                   em_set(p.pt) || em_set(p.pr) || em_set(p.pb) || em_set(p.pl));
     if (any_pad) {
-        float t = p.padding, r = p.padding, b = p.padding, l = p.padding;
-        if (p.px > 0) l = r = p.px;
-        if (p.py > 0) t = b = p.py;
-        if (p.pt > 0) t = p.pt;
-        if (p.pr > 0) r = p.pr;
-        if (p.pb > 0) b = p.pb;
-        if (p.pl > 0) l = p.pl;
+        float base = em_z(p.padding);
+        float t = base, r = base, b = base, l = base;
+        if (em_set(p.px)) l = r = em_z(p.px);
+        if (em_set(p.py)) t = b = em_z(p.py);
+        if (em_set(p.pt)) t = em_z(p.pt);
+        if (em_set(p.pr)) r = em_z(p.pr);
+        if (em_set(p.pb)) b = em_z(p.pb);
+        if (em_set(p.pl)) l = em_z(p.pl);
         ui_set_padding(t, r, b, l);
     }
     if (p.width > 0 || p.height > 0 || p.grow) {
