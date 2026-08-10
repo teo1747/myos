@@ -55,7 +55,11 @@ ifeq ($(EMBLINK_HOSTBUILD),)
 # with 0xAA bytes, so if the faulting address turns into that pattern the read
 # is uninitialised and the question is answered in one boot.
 EMBLINK_AUTOINIT ?= -ftrivial-auto-var-init=pattern
-CFLAGS  += $(EMBLINK_AUTOINIT) -mno-red-zone -fno-stack-protector -I$(EMBLINK_ROOT)/user/lib \
+# -g on the OS build too. It costs nothing at run time (the kernel loads only
+# the PT_LOAD segments) and it is the difference between a backtrace that
+# names a function and one that names a LINE -- which is the whole value of
+# the kernel's ring-3 backtrace.
+CFLAGS  += -g $(EMBLINK_AUTOINIT) -mno-red-zone -fno-stack-protector -I$(EMBLINK_ROOT)/user/lib \
            -isystem $(EMBLINK_NEWLIB)/x86_64-elf/include \
            -I$(EMBLINK_ZLIB)/include
 # The OS's startup and syscall layer, exactly as the root Makefile links every

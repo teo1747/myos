@@ -209,6 +209,32 @@ build_iconv() {
 }
 build_iconv
 
+# THE STALENESS TRAP, which cost this port two sessions.
+#
+# patches/0002 edits utils/config.h -- the header that decides which POSIX
+# functions NetSurf believes it has. NetSurf's buildsystem does not treat that
+# header as a dependency of every object, so applying or changing the patch
+# leaves already-compiled objects believing the OLD answers. Half the program
+# then thinks the platform has mmap and the other half knows it does not, and
+# they disagree about code paths and struct contents.
+#
+# What that looks like from the outside is not a build error. It is a
+# DETERMINISTIC bad pointer at run time -- the same value every boot, surviving
+# every recompile of the files you happen to touch, in a program that works
+# perfectly when built for the host. It cost a kernel bug hunt, an ASan build,
+# and eleven eliminations before a full rebuild made it vanish.
+#
+# So: stamp what the patches were, and wipe the build directory when they
+# change. docs/PORTS.md has the same lesson under its own heading; this is that
+# lesson with teeth.
+PATCH_STAMP="$NSSRC/.emblink-patch-stamp"
+patch_state() { cat "$HERE"/patches/*.patch 2>/dev/null | cksum; }
+if [ "$(patch_state)" != "$(cat "$PATCH_STAMP" 2>/dev/null)" ]; then
+    echo "=== patches changed -- discarding stale objects"
+    rm -rf "$NSSRC/netsurf/build/$HOST-emblink"
+    patch_state > "$PATCH_STAMP"
+fi
+
 # OUR FRONTEND lives in this repo and is SYMLINKED into NetSurf's tree, not
 # copied into it. Copying would fork the file the moment either side changed;
 # a link keeps one copy, under our history, and leaves NetSurf's tree pristine

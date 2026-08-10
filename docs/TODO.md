@@ -3019,71 +3019,32 @@ Encrypt/RSA), `test wget https`, `test pypi`.
       with an external `<script src>` we do not fetch.
       bbc cannot be scored -- Firefox itself throws on the saved copy.
 
-### NetSurf port: the OS build corrupts a pointer during the first page load
+### NetSurf port ✅ RENDERS ON THE OS -- and the bug was staleness
 
-- [ ] OPEN, and the highest-value thing to fix next -- everything else in the
-      port works. `nsemblink` renders a page correctly on the BUILD MACHINE
-      (three columns, colours byte-exact against the stylesheet) and faults on
-      the OS during the load.
+- [x] ~~The OS build faulted on a deterministic bad pointer (0x1f4cb0)~~ FIXED
+      2026-08-10, by a full rebuild -- and the reason is worth more than the
+      fix. patches/0002 edits utils/config.h, the header that decides which
+      POSIX functions NetSurf believes it has. NetSurf's buildsystem does not
+      treat that header as a dependency of every object, so objects compiled
+      before the patch kept believing the old answers: half the program thought
+      the platform had mmap and the *at family, the other half knew it did not,
+      and they disagreed about code paths and struct contents.
 
-      WHAT IS KNOWN, all of it measured:
-        * The faulting pointer is 0x1f4cb0, and it is the SAME VALUE every
-          run. Our heap starts at 0x600000000000 and the image is
-          0x400000..0x699738, so it is neither -- and being deterministic, it
-          is not random heap garbage either.
-        * It surfaces as a title: content__get_title() returns c->title, or
-          nsurl_access(...) when the document has no <title> yet. But guarding
-          win_set_title against it only moves the fault -- the next one is
-          reached through convert_xml_to_box -> html_box_convert_done ->
-          content_set_ready -> content_broadcast, at the SAME address. So it
-          is not the title; the title is just what read it first.
-        * The nsurl is SOUND when created: 0x600000012f48, len 31,
-          [file:///system/web/columns.html]. Verified on the metal, before the
-          load starts.
+      From the outside that is not a build error. It is a DETERMINISTIC bad
+      pointer at run time -- the same value every boot, unmoved by recompiling
+      whatever file you happen to touch, in a program that works perfectly when
+      built for the host. Every property that made it look like memory
+      corruption was really a property of half a binary.
 
-      RULED OUT, each by measurement rather than argument -- do not re-try:
-        * optimisation level (host at -O2 without ASan renders fine)
-        * a heap error in the portable code (ASan on the host finds nothing)
-        * memory pressure (2GB guest, same fault at the same address)
-        * stack overflow (the stack is at 0x700000000000)
-        * heap exhaustion (the fault address is 2MB, the heap is at 96TB)
-        * newlib calloc not zeroing (MORECORE_CLEARS is 0; calloc always memsets)
-        * struct-layout skew from the POSIX feature macros our frontend adds
-          (sizeof stat/dirent and both offsets identical with and without)
-        * the two newlib include trees (identical but for two printf switches)
-        * orphan sections from our linker script (.text .rodata .data .bss only)
-        * the value being a constant in the binary -- it appears nowhere in
-          .rodata or .data, as 8 bytes or as 4, so it is computed at run time
-        * an uninitialised local ANYWHERE in the port. Rebuilt with
-          -ftrivial-auto-var-init=pattern (0xAA fill) and then with =zero,
-          across the core, the frontend AND all ten libraries -- the flag is
-          injected through CC because setting CFLAGS on the buildsystem's
-          command line discards its own include paths. The faulting address
-          did not move by a byte in any of those builds. in the port script
-        * the kernel handing out unzeroed heap pages -- that WAS real and is
-          fixed, and the fault survives it
+      ports/netsurf/build.sh now stamps the patch set and discards the build
+      directory when it changes, so this cannot recur.
 
-      WHAT THE SURVIVING EVIDENCE MEANS. 0x1f4cb0 is byte-identical across a
-      full rebuild of every object in the program under three different
-      auto-init settings, and it is not in the binary's static data. A value
-      that stable is not inherited from anywhere -- it is COMPUTED, and the
-      code computing it is doing what it was told. So the question is no
-      longer "what corrupted this" but "what is this the correct answer to":
-      an offset used as an address, a length where a pointer belongs, or a
-      field read through the wrong type. Instrumenting the WRITE is now worth
-      more than any further narrowing of the read -- the surviving suspects
-      all have the shape of a type confusion, and the union in
-      content_broadcast's message path is the first place that shape appears.
-
-      THE OTHER LEAD: 0x1f4cb0 is 2,050,224, which is a plausible
-      TIME or COUNTER value rather than an address. A time-like number sitting
-      where a pointer belongs is what a struct field OVERLAP looks like -- two
-      translation units disagreeing about a struct's layout, so a writer stores
-      a timestamp where a reader expects a char *. The ten libraries are built
-      WITHOUT our -I/user/lib override headers and the netsurf core is built
-      WITH them, so any struct shared across that boundary is the place to
-      look. Compare sizeof/offsetof for the types crossing it under both flag
-      sets, the way sizeof(struct stat) was already compared.
+      Kept from the hunt, because each stands on its own:
+        * the kernel was handing out UNZEROED heap pages -- a real leak between
+          processes, fixed
+        * the port now builds with -g and -ftrivial-auto-var-init=zero, the
+          latter matching the rest of this OS's userland
+        * `make` packs the image with no manual flags again
 
 Still open in flex:
 - [x] ~~align-items' CSS INITIAL VALUE IS STRETCH~~ SHIPPED 2026-08-10, once
