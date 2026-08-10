@@ -30,6 +30,7 @@ struct gui_window {
      * of it, but recording it is what makes the windowed version cheap */
     struct rect invalid;
     bool has_invalid;
+    int scroll_x, scroll_y;
     char title[128];
 };
 
@@ -100,6 +101,29 @@ static nserror win_invalidate(struct gui_window *gw, const struct rect *rect)
     return NSERROR_OK;
 }
 
+/* SCROLL POSITION, which is the frontend's to own: the core asks where the
+ * viewport is and tells it where to move to, and both are MANDATORY -- a table
+ * without them is refused outright (netsurf_register returns BadParameter, and
+ * that is the whole error you get). A headless render never scrolls, but the
+ * page still asks: an anchor in the URL, or a script calling scrollTo. */
+static bool win_get_scroll(struct gui_window *gw, int *sx, int *sy)
+{
+    if (gw == NULL) return false;
+    *sx = gw->scroll_x;
+    *sy = gw->scroll_y;
+    return true;
+}
+
+static nserror win_set_scroll(struct gui_window *gw, const struct rect *rect)
+{
+    if (gw == NULL || rect == NULL) return NSERROR_BAD_PARAMETER;
+    /* The core passes the RECTANGLE it wants brought into view, not an
+     * offset. Its top-left is where the viewport should start. */
+    gw->scroll_x = rect->x0;
+    gw->scroll_y = rect->y0;
+    return NSERROR_OK;
+}
+
 static nserror win_get_dimensions(struct gui_window *gw, int *width, int *height)
 {
     if (gw == NULL) return NSERROR_BAD_PARAMETER;
@@ -154,6 +178,8 @@ static struct gui_window_table window_table = {
     .create = win_create,
     .destroy = win_destroy,
     .invalidate = win_invalidate,
+    .get_scroll = win_get_scroll,
+    .set_scroll = win_set_scroll,
     .get_dimensions = win_get_dimensions,
     .event = win_event,
     .set_title = win_set_title,

@@ -99,6 +99,15 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* A BARE PATH IS NOT A URL, and typing one is what people do. Every
+     * browser turns a leading slash into file://, and the alternative here is
+     * an error message that tells a user their own filename is malformed. */
+    char urlbuf[1024];
+    if (target[0] == '/') {
+        snprintf(urlbuf, sizeof urlbuf, "file://%s", target);
+        target = urlbuf;
+    }
+
     struct nsurl *url = NULL;
     err = nsurl_create(target, &url);
     if (err != NSERROR_OK) {
