@@ -3019,30 +3019,18 @@ Encrypt/RSA), `test wget https`, `test pypi`.
       with an external `<script src>` we do not fetch.
       bbc cannot be scored -- Firefox itself throws on the saved copy.
 
-### NetSurf port: text renders; the OS loader now refuses the bigger binary
+- [x] ~~The loader refused the bigger binary with EINVAL~~ NOT A LOADER BUG,
+      2026-08-10. The glyph atlas was innocent: `make embkfs.img` had FAILED
+      (the stripped binary's debug twin was named *.debug.elf, so mkfs packed
+      it and the drift guard stopped the build), and the boot therefore ran a
+      STALE image. The refusal was real -- the kernel really did read something
+      that was not an ET_EXEC -- it just was not the binary being built.
+      The debug copy is named `.debug` now, outside the *.elf glob.
 
-- [ ] OPEN, and NEW with the font work. `nsemblink` renders a page WITH TEXT on
-      the build machine -- heading, three columns, wrapped paragraphs, in the
-      OS's own DejaVu face through the OS's own rasteriser. On the metal the
-      kernel's ELF loader now refuses it: "can't run (err 22)" = EINVAL, before
-      a single line of the program executes.
-
-      What changed is ui/backend/font.c being linked in, which brings a 1 MB
-      static glyph atlas: the RW segment's memsz went from 0x14290 to 0x184978
-      (1.6 MB). NOT the file size -- the stripped binary is 2.4 MB and the
-      5.0 MB one that ran before was bigger.
-
-      Checked and not guilty: load_segments()' three EINVAL paths all pass for
-      this binary (filesz <= memsz, offset+filesz within the image, and
-      vaddr+memsz far below DIRECT_MAP_BASE). Note the OS's OWN apps use the
-      same font.c and the same atlas and run fine -- but they get it from
-      libembk.so, so the big .bss is in the shared object rather than in the
-      executable. That difference is where to look first.
-
-      Cheap next tests, in order: read st.size and the kmalloc in
-      elf_load_file() (a 2.4 MB kmalloc may simply fail, and ENOMEM vs EINVAL
-      would say which); then print WHICH EINVAL the loader returns, because
-      there are eight of them and the error tells you nothing about which.
+      Kept from it: the loader used to refuse a binary EIGHT ways and return
+      the same EINVAL for all of them, so "can't run (err 22)" named nothing.
+      Each refusal now says which check it was, on the serial log -- which is
+      what turned this into a two-minute answer instead of another evening.
 
 ### NetSurf port ✅ RENDERS (host) -- and the earlier bug was staleness
 

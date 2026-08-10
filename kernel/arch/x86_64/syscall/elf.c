@@ -76,13 +76,22 @@ static int load_segments(const uint8_t *image, uint64_t image_len, uint64_t pml4
         const struct elf64_phdr *p = &ph[i];
         if (p->p_type != PT_LOAD)
             continue;
-        if (p->p_filesz > p->p_memsz)
+        if (p->p_filesz > p->p_memsz) {
+            kprintf("elf: segment %u filesz 0x%lx > memsz 0x%lx\n",
+                    (unsigned)i, p->p_filesz, p->p_memsz);
             return -EMBK_EINVAL;
-        if (p->p_offset + p->p_filesz > image_len)
+        }
+        if (p->p_offset + p->p_filesz > image_len) {
+            kprintf("elf: segment %u ends at 0x%lx, image is 0x%lx\n",
+                    (unsigned)i, p->p_offset + p->p_filesz, image_len);
             return -EMBK_EINVAL;
+        }
         uint64_t vstart = bias + p->p_vaddr;
-        if (vstart + p->p_memsz >= DIRECT_MAP_BASE)   /* user (lower half) only */
+        if (vstart + p->p_memsz >= DIRECT_MAP_BASE) { /* user (lower half) only */
+            kprintf("elf: segment %u spans 0x%lx..0x%lx, into kernel space\n",
+                    (unsigned)i, vstart, vstart + p->p_memsz);
             return -EMBK_EINVAL;
+        }
 
         uint64_t seg_start = PAGE_DOWN(vstart);
         uint64_t seg_end   = PAGE_UP(vstart + p->p_memsz);
@@ -369,23 +378,33 @@ static int dynamic_link(const uint8_t *app_image, uint64_t pml4,
 /* Load an ELF64 executable already resident at `image` (image_len bytes) into
  * pml4_phys. Static ET_EXEC works unchanged; a dynamically-linked ET_EXEC (has
  * PT_DYNAMIC) additionally loads + links /libembk.so. Writes entry to *out. */
+/* WHICH refusal. This function and load_segments() below reject a binary in
+ * eight different ways and every one of them returns the same EINVAL, so a
+ * user sees "can't run (err 22)" and learns nothing -- there is no way to tell
+ * a truncated file from a wrong architecture from a segment that would land in
+ * kernel space. One line each, on the serial log, naming the check. */
+#define ELF_REFUSE(why) do { \
+        kprintf("elf: refusing image: %s\n", (why)); \
+        return -EMBK_EINVAL; \
+    } while (0)
+
 int elf_load(const uint8_t *image, uint64_t image_len, uint64_t pml4_phys, uint64_t *entry_out)
 {
     if (!image || !entry_out || !pml4_phys)
-        return -EMBK_EINVAL;
+        ELF_REFUSE("null image/entry/pml4");
     if (image_len < sizeof(struct elf64_ehdr))
-        return -EMBK_EINVAL;
+        ELF_REFUSE("shorter than an ELF header");
 
     const struct elf64_ehdr *eh = (const struct elf64_ehdr *)image;
     if (eh->e_ident[0] != 0x7F || eh->e_ident[1] != 'E' ||
         eh->e_ident[2] != 'L'  || eh->e_ident[3] != 'F')
-        return -EMBK_EINVAL;
+        ELF_REFUSE("not an ELF (bad magic)");
     if (eh->e_ident[4] != 2)                              /* ELFCLASS64 */
-        return -EMBK_EINVAL;
+        ELF_REFUSE("not ELFCLASS64");
     if (eh->e_type != ET_EXEC || eh->e_machine != EM_X86_64)
-        return -EMBK_EINVAL;
+        ELF_REFUSE("not an x86-64 ET_EXEC");
     if (eh->e_phoff + (uint64_t)eh->e_phnum * eh->e_phentsize > image_len)
-        return -EMBK_EINVAL;
+        ELF_REFUSE("program headers past the end of the image");
 
     const struct elf64_phdr *ph = (const struct elf64_phdr *)(image + eh->e_phoff);
 
