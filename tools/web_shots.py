@@ -30,7 +30,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ff_driver import Firefox                                   # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "build", "browser_render")
+# WHICH RENDERER is being graded. Vellum's host harness by default; point it
+# at the NetSurf port with RENDERER=... and the same comparison runs against
+# the other engine. Both emit the same RUN| lines under TEXTDUMP, which is the
+# only reason the two scores mean the same thing.
+BIN = os.environ.get("RENDERER") or os.path.join(ROOT, "build", "browser_render")
 OUT = os.environ.get("OUT", os.path.join(ROOT, "build", "shots"))
 WIDTH, HEIGHT = 1100, 900
 # Our render draws its own chrome above the page; Firefox's viewport starts at
@@ -44,10 +48,20 @@ def key_words(text):
     return [w.lower() for w in WORD.findall(text or "")]
 
 
+def render_argv(path, out=None):
+    """The two renderers take their arguments differently: Vellum's harness is
+    (doc, w, h, depth) and writes a PNG only when asked; nsemblink is
+    (url, w, h, outfile) and always writes one. Kept in one place so the rest
+    of this file does not care which is being graded."""
+    if "nsemblink" in os.path.basename(BIN):
+        return [BIN, path, str(WIDTH), str(HEIGHT), out or "/dev/null"]
+    return [BIN, path, str(WIDTH), str(HEIGHT), "0"]
+
+
 def our_runs(path):
     """(word, x, y) for every word we draw, from the renderer's own dump."""
     env = dict(os.environ, TEXTDUMP="1")
-    r = subprocess.run([BIN, path, str(WIDTH), str(HEIGHT), "0"],
+    r = subprocess.run(render_argv(path),
                        capture_output=True, text=True, errors="replace",
                        env=env, cwd=ROOT, timeout=300)
     runs = []
@@ -67,9 +81,13 @@ def our_runs(path):
 
 
 def our_shot(path, png):
-    subprocess.run(["make", "browser-render", "DOC=" + path, "BW=%d" % WIDTH,
-                    "BH=%d" % HEIGHT, "PNG=" + png],
-                   cwd=ROOT, capture_output=True, timeout=900)
+    if "nsemblink" in os.path.basename(BIN):
+        subprocess.run(render_argv(path, png), cwd=ROOT,
+                       capture_output=True, timeout=900)
+    else:
+        subprocess.run(["make", "browser-render", "DOC=" + path, "BW=%d" % WIDTH,
+                        "BH=%d" % HEIGHT, "PNG=" + png],
+                       cwd=ROOT, capture_output=True, timeout=900)
     # The harness writes a PPM under the .png name; convert if Pillow is here.
     try:
         from PIL import Image

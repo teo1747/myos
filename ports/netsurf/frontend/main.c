@@ -87,6 +87,8 @@ int main(int argc, char **argv)
     const char *out = argc > 4 ? argv[4] : "nsrender.ppm";
     nserror err;
 
+    g_textdump = getenv("TEXTDUMP") != NULL;
+
     emblink_table.misc   = emblink_misc_table;
     emblink_table.window = emblink_window_table;
     emblink_table.fetch  = emblink_fetch_table;

@@ -48,6 +48,7 @@ struct emblink_surface {
  * asked to redraw and never while it is: the plotter table has no context
  * parameter of its own in this version of the API. */
 extern struct emblink_surface *emblink_target;
+extern int g_textdump;   /* TEXTDUMP=1: print every drawn run (see plot.c) */
 
 void emblink_surface_clip(struct emblink_surface *s, int x0, int y0, int x1, int y1);
 void emblink_surface_fill(struct emblink_surface *s, int x0, int y0, int x1, int y1,

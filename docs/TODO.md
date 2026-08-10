@@ -3055,6 +3055,20 @@ Deferred, each named where it bites rather than left to be found:
 - [ ] No JavaScript (NETSURF_USE_DUKTAPE=NO) and no image decoders wired
       (PNG/JPEG/GIF off) -- the OS has its own decoders and NetSurf has its own
       handlers; connecting them is a known, bounded piece of work.
+- [ ] `make web-shots` / `web-verify` can now be pointed at either engine
+      (RENDERER=...), but the two scores are NOT comparable yet: Vellum's
+      harness reports every text node in the document, while NetSurf plots only
+      what is inside the viewport it was given. Wikipedia at 1100x7200 emits
+      1225 runs and is taller still. The fix is in main.c -- ask
+      browser_window_get_extents for the document height and size the surface
+      to it before redrawing -- and until then a NetSurf number means "of the
+      text in the first 7200 pixels".
+- [ ] NetSurf is not an APP on the OS: nsemblink is a headless CLI renderer
+      with no window, no chrome and no input. Vellum remains the only browser
+      with a window. Making it one means a gui_window backed by the compositor
+      (the win syscalls hand back a shared framebuffer, which becomes
+      surf.px -- window.c was written so that is the only change) plus input
+      routed into browser_window_mouse_track / _key_press.
 - [ ] The SHELL cannot pass a bare URL: `nsemblink http://x/` fails in the
       shell's parser at the colon-slash-slash, and the URL has to be quoted.
       That is the shell's gap, already logged, and this is the first thing that

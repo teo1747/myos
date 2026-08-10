@@ -35,7 +35,23 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "build", "browser_render")
+# WHICH RENDERER. Vellum's host harness by default; RENDERER=... points it at
+# the NetSurf port. Both take (doc, w, h, ...) and both emit RUN| under
+# TEXTDUMP, which is what lets one instrument score two engines.
+#
+# THE TWO SCORES ARE NOT COMPARABLE AS THEY STAND, and it is the instrument's
+# fault rather than either engine's. Vellum's harness walks the laid-out SCENE
+# and reports every text node in the document; NetSurf plots only what falls
+# inside the viewport it was given, so anything below the fold is never drawn
+# and therefore never counted. Wikipedia at 1100x7200 emits 1225 runs and is
+# still taller than that -- which is most of the 51.6% it scores here.
+#
+# Fixing it means asking the core for the document height
+# (browser_window_get_extents) and sizing the surface to it before redrawing,
+# in ports/netsurf/frontend/main.c. Until then, read a NetSurf number as
+# "of the text in the first 7200 pixels", and do not put the two engines in
+# the same table.
+BIN = os.environ.get("RENDERER") or os.path.join(ROOT, "build", "browser_render")
 WIDTH, HEIGHT = 1100, 900
 
 # Words our own chrome draws, which are not the page's.
@@ -54,7 +70,8 @@ from ff_driver import Firefox                                   # noqa: E402
 def our_words(path):
     env = dict(os.environ, TEXTDUMP="1")
     try:
-        r = subprocess.run([BIN, path, str(WIDTH), str(HEIGHT * 8), "0"],
+        last = "/dev/null" if "nsemblink" in os.path.basename(BIN) else "0"
+        r = subprocess.run([BIN, path, str(WIDTH), str(HEIGHT * 8), last],
                            capture_output=True, text=True, errors="replace",
                            env=env, cwd=ROOT, timeout=300)
     except subprocess.TimeoutExpired:

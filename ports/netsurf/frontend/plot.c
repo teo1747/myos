@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "utils/errors.h"
@@ -26,6 +27,10 @@
 
 
 struct emblink_surface *emblink_target;
+
+/* Set from the environment once, in main(): a getenv per text run on a page
+ * with two thousand of them is a measurable cost for a diagnostic. */
+int g_textdump;
 
 /* --- the surface ---------------------------------------------------------- */
 
@@ -287,6 +292,21 @@ static nserror p_text(const struct redraw_context *ctx, const plot_font_style_t 
 {
     (void)ctx;
     if (emblink_target == NULL) return NSERROR_OK;
+
+    /* TEXTDUMP: every drawn run, in the format the OS's own browser emits --
+     * `make web-shots` reads exactly this to compare where the words landed
+     * against Firefox. Emitting it here rather than writing a second
+     * instrument means the SAME tool grades both renderers, which is the only
+     * way the two numbers mean the same thing. */
+    if (g_textdump) {
+        uint32_t c = fstyle->foreground;
+        printf("RUN|%d|%d|%d|%d|#%02x%02x%02x|-|%.*s\n",
+               x, y, emblink_text_advance(fstyle, text, length),
+               (int)(fstyle->size / PLOT_STYLE_SCALE),
+               (unsigned)(c & 0xFF), (unsigned)((c >> 8) & 0xFF),
+               (unsigned)((c >> 16) & 0xFF), (int)length, text);
+    }
+
     emblink_text_draw(emblink_target, x, y, fstyle, text, length);
     return NSERROR_OK;
 }
