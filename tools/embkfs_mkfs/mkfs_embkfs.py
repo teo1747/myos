@@ -850,6 +850,11 @@ def discover_userland_objects(build_dir="build"):
     # browser must have something to open before it can reach a network.
     objects.extend(_tree_objects("system/web", b"system/web/", (".html", ".png", ".jpg", ".json", ".css")))
     objects.extend(_tree_objects("system/js", b"system/js/", (".js",)))
+    # NetSurf's own resources: its user-agent stylesheet and the pages it
+    # serves for about:. The core fetches these through resource: URLs at
+    # startup and a page never finishes loading without them -- which looks
+    # exactly like a hung fetch, not a missing file.
+    objects.extend(_tree_objects("system/netsurf", b"system/netsurf/", (".css", ".html")))
     # THE ABI, sealed under /system/abi (docs/USERSPACE.md D2 §3.1): crt0.o
     # (_start), syscalls.o (the newlib retargeting layer) and libc.a ARE the
     # definition of "targeting EmbLinkOS". tcc READS them (read-only reach into
