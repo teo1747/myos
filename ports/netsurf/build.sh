@@ -69,6 +69,18 @@ host_relax() {
     [ "$HOST" = "x86_64-elf" ] || echo 'WARNFLAGS=-Wall -w'
 }
 
+# The libraries are built by their own Makefiles, which means they miss every
+# flag the netsurf build gets from frontend/Makefile.tools -- including the
+# auto-init that the rest of this OS's userland has. An uninitialised local in
+# libdom or libcss would be invisible to a flag applied only to the core.
+# Injected through CC rather than CFLAGS: setting CFLAGS on the command line
+# makes it immutable for the whole build, so every `CFLAGS +=` in NetSurf's
+# own makefiles is discarded -- including the include paths, which fails at
+# the first sibling header.
+lib_cflags() {
+    [ "$HOST" = "x86_64-elf" ] && echo "-ftrivial-auto-var-init=zero"
+}
+
 build_one() {
     local lib="$1"
     echo "=== $lib"
@@ -76,7 +88,8 @@ build_one() {
     make -C "$NSSRC/$lib" install \
         PREFIX="$PREFIX" NSSHARED="$NSSHARED" HOST="$HOST" \
         COMPONENT_TYPE=lib-static \
-        $(component_flags "$lib") $(host_relax)
+        $(component_flags "$lib") $(host_relax) \
+        CC="$HOST-gcc $(lib_cflags)"
 }
 
 # THE BROWSER ITSELF. Everything turned off here is a dependency we do not

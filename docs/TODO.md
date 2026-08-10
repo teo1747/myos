@@ -3054,15 +3054,28 @@ Encrypt/RSA), `test wget https`, `test pypi`.
         * orphan sections from our linker script (.text .rodata .data .bss only)
         * the value being a constant in the binary -- it appears nowhere in
           .rodata or .data, as 8 bytes or as 4, so it is computed at run time
-        * an uninitialised local in the CORE or the frontend -- rebuilt with
-          -ftrivial-auto-var-init=pattern and the faulting address did not
-          change. NOTE the ten libraries are built separately and were not
-          covered by that flag, so they are still a candidate: the cheap next
-          test is to pass the same flag to build_one() in the port script
+        * an uninitialised local ANYWHERE in the port. Rebuilt with
+          -ftrivial-auto-var-init=pattern (0xAA fill) and then with =zero,
+          across the core, the frontend AND all ten libraries -- the flag is
+          injected through CC because setting CFLAGS on the buildsystem's
+          command line discards its own include paths. The faulting address
+          did not move by a byte in any of those builds. in the port script
         * the kernel handing out unzeroed heap pages -- that WAS real and is
           fixed, and the fault survives it
 
-      THE LEAD WORTH TAKING FIRST: 0x1f4cb0 is 2,050,224, which is a plausible
+      WHAT THE SURVIVING EVIDENCE MEANS. 0x1f4cb0 is byte-identical across a
+      full rebuild of every object in the program under three different
+      auto-init settings, and it is not in the binary's static data. A value
+      that stable is not inherited from anywhere -- it is COMPUTED, and the
+      code computing it is doing what it was told. So the question is no
+      longer "what corrupted this" but "what is this the correct answer to":
+      an offset used as an address, a length where a pointer belongs, or a
+      field read through the wrong type. Instrumenting the WRITE is now worth
+      more than any further narrowing of the read -- the surviving suspects
+      all have the shape of a type confusion, and the union in
+      content_broadcast's message path is the first place that shape appears.
+
+      THE OTHER LEAD: 0x1f4cb0 is 2,050,224, which is a plausible
       TIME or COUNTER value rather than an address. A time-like number sitting
       where a pointer belongs is what a struct field OVERLAP looks like -- two
       translation units disagreeing about a struct's layout, so a writer stores
