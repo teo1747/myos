@@ -38,6 +38,7 @@
 
 #ifdef EMBLINK_NET
 nserror emblink_fetch_register(void);
+int     emblink_app_run(struct gui_window *gw, const char *title);
 #endif
 
 
@@ -81,6 +82,19 @@ static bool write_ppm(const struct emblink_surface *s, const char *path)
 
 int main(int argc, char **argv)
 {
+    /* -w: be an APPLICATION rather than a one-shot renderer. Same engine, same
+     * frontend; the only difference is where the pixels go and whether anyone
+     * can click on them. */
+    /* `window` as well as `-w`, because the OS's shell parses a leading dash
+     * as a unary minus and refuses the argument before this program is even
+     * started -- the same gap that makes a bare URL need quoting. Supporting
+     * the dash-free spelling is a workaround for the shell, and it is written
+     * down as one in docs/TODO.md rather than left looking like a preference. */
+    bool windowed = false;
+    if (argc > 1 && (strcmp(argv[1], "-w") == 0 || strcmp(argv[1], "window") == 0)) {
+        windowed = true;
+        argv++; argc--;
+    }
     const char *target = argc > 1 ? argv[1] : "about:blank";
     int width  = argc > 2 ? atoi(argv[2]) : 1100;
     int height = argc > 3 ? atoi(argv[3]) : 900;
@@ -211,6 +225,15 @@ int main(int argc, char **argv)
         fprintf(stderr, "nsemblink: the core never asked for a window\n");
         return 1;
     }
+
+#ifdef EMBLINK_NET
+    if (windowed) {
+        stage("window");
+        return emblink_app_run(gw, emblink_window_title(gw));
+    }
+#else
+    (void)windowed;
+#endif
 
     /* THE WHOLE DOCUMENT, not the first screenful. Now that it has loaded, the
      * core knows how tall it is; without this a headless render stops at the

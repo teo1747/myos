@@ -239,6 +239,7 @@ build_emnet() {
     [ "$HOST" = "x86_64-elf" ] || return 0
     local a="$PREFIX/lib/libemnet.a"
     local srcs=("$HERE/fetch/emblink_fetch.c" "$HERE/fetch/resolve.c" \
+                "$HERE/frontend/app.c" \
                 "$EMBLINK_ROOT/user/web/net.c" "$EMBLINK_ROOT/user/web/url.c" \
                 "$EMBLINK_ROOT/user/web/charset.c")
     local newest=0 o objs=()

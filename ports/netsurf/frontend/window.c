@@ -218,6 +218,33 @@ bool emblink_window_resize(struct gui_window *gw, int w, int h)
     return true;
 }
 
+/* ADOPT the compositor's pixels. The core asked for a viewport and got a
+ * malloc'd buffer; a windowed frontend has a better one -- the window's own
+ * pages, mapped into this process, so a redraw lands in what the screen scans
+ * out. Everything downstream is unchanged, which is what it means for the core
+ * not to know where its pixels live. */
+bool emblink_window_adopt(struct gui_window *gw, uint32_t *px, int w, int h)
+{
+    if (gw == NULL || px == NULL || w <= 0 || h <= 0) return false;
+    free(gw->surf.px);            /* ours; the compositor owns the new one */
+    gw->surf.px = px;
+    gw->surf.width = w;
+    gw->surf.height = h;
+    gw->surf.stride = w;
+    emblink_surface_clip(&gw->surf, 0, 0, w, h);
+    return true;
+}
+
+/* Has anything gone stale since the last ask? Consuming the flag here rather
+ * than exposing the rect: the app repaints the whole window, and a partial
+ * repaint of a scrolled document is a different feature. */
+bool emblink_window_take_invalid(struct gui_window *gw)
+{
+    if (gw == NULL || !gw->has_invalid) return false;
+    gw->has_invalid = false;
+    return true;
+}
+
 /* declared in emblink.h */
 const char *emblink_window_title(struct gui_window *gw)
 {

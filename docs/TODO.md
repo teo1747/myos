@@ -3075,12 +3075,22 @@ Deferred, each named where it bites rather than left to be found:
       browser_window_get_extents for the document height and size the surface
       to it before redrawing -- and until then a NetSurf number means "of the
       text in the first 7200 pixels".
-- [ ] NetSurf is not an APP on the OS: nsemblink is a headless CLI renderer
-      with no window, no chrome and no input. Vellum remains the only browser
-      with a window. Making it one means a gui_window backed by the compositor
-      (the win syscalls hand back a shared framebuffer, which becomes
-      surf.px -- window.c was written so that is the only change) plus input
-      routed into browser_window_mouse_track / _key_press.
+- [x] ~~NetSurf is not an APP~~ IT IS ONE, 2026-08-11.
+      `nsemblink window <url>` opens a titled window on the desktop with the
+      page live inside it: scroll by wheel or PgUp/PgDn/arrows/Home/End,
+      pointer tracking and clicks into browser_window_mouse_click, keys into
+      browser_window_key_press. ZERO-COPY -- embk_win_create_shared maps the
+      compositor's own pages in, so a redraw lands in what the screen scans out
+      and present() is a damage call rather than a 760x500 memcpy per frame.
+      window.c was written so the only change was adopting a different buffer,
+      which is what it means for the core never to learn where its pixels live.
+- [ ] The app has NO CHROME of its own: no address bar, no back button, no
+      tabs. The URL comes from the command line and the only navigation is
+      following a link. Vellum's own chrome is the model.
+- [ ] `nsemblink -w` does not work from the shell, which parses a leading dash
+      as a unary minus; `window` is accepted as a dash-free spelling. That is a
+      workaround for the shell, not a preference -- the same gap that makes a
+      bare URL need quoting.
 - [ ] The SHELL cannot pass a bare URL: `nsemblink http://x/` fails in the
       shell's parser at the colon-slash-slash, and the URL has to be quoted.
       That is the shell's gap, already logged, and this is the first thing that
