@@ -129,6 +129,19 @@ int main(int argc, char **argv)
     }
 
     stage("navigate");
+    /* IS THE nsurl SOUND THE MOMENT IT IS MADE? The OS build hands
+     * win_set_title a pointer that is neither heap nor image, and the string
+     * it should be handing over comes from nsurl_access() when the document
+     * has no <title> yet. So ask before anything else has run: if the pointer
+     * is already wrong here, nothing about the page load is involved. */
+    {
+        const char *acc = nsurl_access(url);
+        fprintf(stderr, "nsemblink: nsurl_access -> %p  len=%zu\n",
+                (const void *)acc, acc ? strlen(acc) : (size_t)0);
+        if (acc != NULL) fprintf(stderr, "nsemblink: url = [%.80s]\n", acc);
+        fflush(stderr);
+    }
+
     struct browser_window *bw = NULL;
     err = browser_window_create(BW_CREATE_HISTORY, url, NULL, NULL, &bw);
     nsurl_unref(url);

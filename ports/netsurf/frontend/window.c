@@ -160,13 +160,30 @@ bool emblink_window_settled(struct gui_window *gw)
 static void win_set_title(struct gui_window *gw, const char *title)
 {
     if (gw == NULL || title == NULL) return;
-    /* THE POINTER, BEFORE IT IS DEREFERENCED. This is where the OS build
-     * faults, and the value is the whole question: the heap starts at
-     * 0x600000000000, so anything smaller than that was never a malloc()
-     * result and the bug is upstream of the string. Cheap enough to keep --
-     * one line per navigation. */
-    fprintf(stderr, "nsemblink: set_title(%p)\n", (const void *)title);
-    fflush(stderr);
+    /* A GUARD, AND IT IS NOT A FIX -- it is a way to keep going past a bug
+     * that is not ours to fix yet, without pretending it is gone.
+     *
+     * On the OS build this is handed a pointer that is neither in the heap
+     * (which starts at 0x600000000000, see USER_HEAP_VA_BASE) nor in the
+     * program image, so dereferencing it kills the process before anything
+     * can be seen. The value is wrong by the first call, while the nsurl the
+     * title falls back to is verifiably sound at creation -- so something
+     * corrupts it in between, and that is still open.
+     *
+     * Refusing the pointer costs a window title and buys every diagnostic
+     * after it. It is LOUD on purpose: a silent guard here would turn an
+     * unexplained crash into an unexplained missing title, which is worse. */
+    /* 0x400000 is where newlib.ld places the image, so nothing valid -- not a
+     * string literal, not a heap pointer -- can be below it. An earlier
+     * version of this guard used 1MB and the bad pointer was at 2MB, which
+     * tested nothing and cost a boot. */
+    if ((uintptr_t)title < 0x400000ULL) {
+        fprintf(stderr, "nsemblink: REFUSED a title pointer at %p "
+                        "(not heap, not image) -- see docs/TODO.md\n",
+                (const void *)title);
+        fflush(stderr);
+        return;
+    }
     snprintf(gw->title, sizeof gw->title, "%s", title);
 }
 
