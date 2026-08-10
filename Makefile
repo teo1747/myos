@@ -689,6 +689,32 @@ TLS_LIB_INC  := -Iuser/lib/tls/kshim -Ikernel -Iuser/lib/tls/crypto -Iuser/lib/t
 
 # wget -- a real HTTP/HTTPS downloader (networking + TLS meets the filesystem).
 # Links libtls so https:// does an authenticated TLS 1.3 fetch. Auto-packed.
+# --- NetSurf port ------------------------------------------------------------
+# The engine (libhubbub/libdom/libcss and their dependencies) is cross-built
+# OUTSIDE this repo by ports/netsurf/build.sh; see docs/PORTS.md. What is built
+# here is the code we write: the compat shims, and -- for now -- the probe that
+# proves the engine parses and cascades on the metal rather than merely linking.
+NS_PREFIX ?= $(HOME)/cross/netsurf/netsurf-all-3.11/inst-emblink
+NS_INC     = -isystem $(NS_PREFIX)/include
+# Link order is dependency order: dom before hubbub before parserutils, and
+# wapcaplet last because everything interns strings through it.
+NS_LIBS    = -L$(NS_PREFIX)/lib -ldom -lhubbub -lcss -lparserutils -lwapcaplet
+
+build/ns_iconv.o: ports/netsurf/compat/iconv.c | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -c $< -o $@
+build/nsprobe.o: ports/netsurf/nsprobe.c | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) $(NS_INC) -c $< -o $@
+build/nsprobe.elf: build/crt0.o build/syscalls.o build/nsprobe.o build/ns_iconv.o user/lib/newlib.ld
+	$(USER_CC) $(NEWLIB_LDFLAGS) build/crt0.o build/syscalls.o build/nsprobe.o \
+	    build/ns_iconv.o $(NS_LIBS) -lc -lgcc -o $@
+
+# The iconv shim on the HOST, in a second -- the conversion a browser does most.
+iconv-test:
+	@gcc -O1 -Wall -o build/iconv_test ports/netsurf/compat/iconv_test.c \
+	    ports/netsurf/compat/iconv.c && ./build/iconv_test
+
+.PHONY: iconv-test
+
 build/wget.o: user/bin/wget.c user/lib/embk.h user/lib/embk_socket.h user/lib/tls/tls.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(TLS_LIB_INC) -c $< -o $@
 build/wget.elf: build/crt0.o build/syscalls.o build/wget.o $(TLS_LIB_OBJS) user/lib/newlib.ld
@@ -1342,7 +1368,8 @@ EMBKFS_APPS := build/init.elf build/primtest.elf build/hello.elf build/posixdemo
                build/pk_v11/pkgprobe.pkg build/pk_wide/pkgprobe.pkg \
                $(CXX_APPS) $(PY_APPS) $(GIT_APPS) $(TCC_APPS) $(EMUI_APPS) \
                $(if $(HAVE_QJS),build/js.elf,) \
-               build/vellum.elf
+               build/vellum.elf \
+               $(if $(wildcard $(NS_PREFIX)/lib/libdom.a),build/nsprobe.elf,)
 
 # STAGED_APPS: binaries built OUTSIDE this tree and dropped into build/ to be
 # judged by the machine rather than by their author's host -- e.g. EmbCC (a

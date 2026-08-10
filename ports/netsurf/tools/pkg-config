@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""pkg-config -- enough of it to build NetSurf's libraries, and no more.
+
+NetSurf's buildsystem asks pkg-config where a sibling library's headers went.
+That is the only question being asked here: the .pc files are ones this very
+build just wrote, into a prefix this very build chose. Installing a package
+manager's pkg-config to answer a question about files we created ourselves is
+a dependency for nothing.
+
+Supported, because it is what the buildsystem uses: --exists, --cflags,
+--libs, --libs-only-L/-l, --cflags-only-I, --modversion, --variable=NAME,
+--atleast-version=V, --print-errors, --static. Requires/Requires.private are
+followed. Anything else exits non-zero rather than pretending -- a build that
+silently gets no flags fails later and further away.
+
+On PATH via ports/netsurf/build.sh; not intended as a general pkg-config.
+"""
+import os
+import re
+import sys
+
+SEARCH = [p for p in os.environ.get("PKG_CONFIG_PATH", "").split(":") if p]
+SEARCH += ["/usr/lib/pkgconfig", "/usr/share/pkgconfig"]
+
+
+def find(name):
+    for d in SEARCH:
+        p = os.path.join(d, name + ".pc")
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def load(name, seen=None):
+    """A .pc file as (variables, fields), with ${...} expanded."""
+    path = find(name)
+    if not path:
+        return None
+    variables, fields = {"pcfiledir": os.path.dirname(path)}, {}
+    for line in open(path, encoding="utf-8", errors="replace"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^([A-Za-z0-9_.]+)\s*=\s*(.*)$", line)
+        if m and ":" not in line.split("=")[0]:
+            variables[m.group(1)] = m.group(2)
+            continue
+        m = re.match(r"^([A-Za-z][A-Za-z.]*)\s*:\s*(.*)$", line)
+        if m:
+            fields[m.group(1).lower()] = m.group(2)
+    def expand(s, depth=0):
+        if depth > 16:
+            return s
+        def sub(m):
+            return expand(variables.get(m.group(1), ""), depth + 1)
+        return re.sub(r"\$\{([A-Za-z0-9_.]+)\}", sub, s)
+    variables = {k: expand(v) for k, v in variables.items()}
+    fields = {k: expand(v) for k, v in fields.items()}
+    return variables, fields
+
+
+def deps(name, want_private, out, seen):
+    """`name` and everything it Requires, in order, without repeats."""
+    if name in seen:
+        return True
+    seen.add(name)
+    got = load(name)
+    if got is None:
+        return False
+    variables, fields = got
+    req = fields.get("requires", "")
+    if want_private:
+        req += " " + fields.get("requires.private", "")
+    # "foo >= 1.2" -- the version constraint is not checked, only the name
+    for tok in re.split(r"[,\s]+", req):
+        if not tok or tok[0] in "<>=!" or re.match(r"^[0-9]", tok):
+            continue
+        if not deps(tok, want_private, out, seen):
+            return False
+    out.append((name, variables, fields))
+    return True
+
+
+def main():
+    args = sys.argv[1:]
+    modes, names, variable = set(), [], None
+    static = False
+    for a in args:
+        if a.startswith("--variable="):
+            variable = a.split("=", 1)[1]
+            modes.add("variable")
+        elif a.startswith("--atleast-version") or a.startswith("--exact-version") \
+                or a.startswith("--max-version"):
+            modes.add("version-check")
+        elif a == "--static":
+            static = True
+        elif a.startswith("--"):
+            modes.add(a[2:])
+        elif re.match(r"^[0-9]", a) and "version-check" in modes:
+            pass                      # the version operand, ignored (see header)
+        elif a in ("<", ">", "<=", ">=", "="):
+            pass
+        else:
+            names.append(a)
+
+    resolved = []
+    seen = set()
+    for n in names:
+        if not deps(n, static or "libs" in modes, resolved, seen):
+            if "print-errors" in modes:
+                sys.stderr.write("pkg-config: no package '%s' in %s\n"
+                                 % (n, ":".join(SEARCH)))
+            return 1
+
+    if modes & {"exists", "version-check"} and not (modes & {"cflags", "libs", "modversion",
+                                                             "variable", "cflags-only-I",
+                                                             "libs-only-L", "libs-only-l"}):
+        return 0                      # they resolved, which is the whole question
+
+    parts = []
+    for name, variables, fields in resolved:
+        if "modversion" in modes:
+            parts.append(fields.get("version", "0"))
+        if "variable" in modes:
+            parts.append(variables.get(variable, ""))
+        if "cflags" in modes or "cflags-only-I" in modes:
+            for t in fields.get("cflags", "").split():
+                if "cflags-only-I" in modes and not t.startswith("-I"):
+                    continue
+                parts.append(t)
+        if "libs" in modes or "libs-only-L" in modes or "libs-only-l" in modes:
+            for t in fields.get("libs", "").split() + \
+                     (fields.get("libs.private", "").split() if static else []):
+                if "libs-only-L" in modes and not t.startswith("-L"):
+                    continue
+                if "libs-only-l" in modes and not t.startswith("-l"):
+                    continue
+                parts.append(t)
+
+    # de-duplicate while keeping order: a linker cares about order, and the
+    # same -I arriving five times is noise in every error message
+    out, done = [], set()
+    for p in parts:
+        if p and (p.startswith("-l") or p not in done):
+            out.append(p)
+            done.add(p)
+    print(" ".join(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

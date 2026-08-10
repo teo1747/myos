@@ -397,6 +397,40 @@ off_t lseek(int fd, off_t offset, int whence) {
     return (off_t)ret;
 }
 
+/* pread/pwrite: read or write AT AN OFFSET, without moving the file position.
+ *
+ * The kernel has no positional read, so this is seek-read-seek-back. That is
+ * the whole difference from the POSIX contract and it is worth stating: POSIX
+ * requires the operation to be ATOMIC with respect to other threads sharing
+ * the descriptor, and a three-step version is not. Two threads preading the
+ * same fd can leave the position somewhere neither expects.
+ *
+ * It is honest here because the callers are single-threaded readers of a file
+ * they opened themselves -- which is what pread is nearly always for, and what
+ * NetSurf's libraries use it for. A real positional syscall is in docs/TODO.md;
+ * when it lands these become one call each and the caveat goes away. */
+ssize_t pread(int fd, void *buf, size_t count, off_t offset) {
+    off_t here = lseek(fd, 0, SEEK_CUR);
+    if (here < 0) return -1;
+    if (lseek(fd, offset, SEEK_SET) < 0) return -1;
+    ssize_t n = read(fd, buf, count);
+    int saved = errno;
+    lseek(fd, here, SEEK_SET);       /* restore even when the read failed */
+    errno = saved;
+    return n;
+}
+
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset) {
+    off_t here = lseek(fd, 0, SEEK_CUR);
+    if (here < 0) return -1;
+    if (lseek(fd, offset, SEEK_SET) < 0) return -1;
+    ssize_t n = write(fd, buf, count);
+    int saved = errno;
+    lseek(fd, here, SEEK_SET);
+    errno = saved;
+    return n;
+}
+
 int isatty(int fd) {
     /* HONEST now: ask the kernel what actually backs the fd. A console slot
      * fstats as a character device -> tty; a PIPE-backed stdio slot (the
