@@ -65,7 +65,17 @@ EMBLINK_AUTOINIT ?= -ftrivial-auto-var-init=pattern
 # the PT_LOAD segments) and it is the difference between a backtrace that
 # names a function and one that names a LINE -- which is the whole value of
 # the kernel's ring-3 backtrace.
-CFLAGS  += -g $(EMBLINK_AUTOINIT) -mno-red-zone -fno-stack-protector -I$(EMBLINK_ROOT)/user/lib \
+# EMBLINK_NET: the OS build has a network fetcher (http/https over the kernel's
+# TCP stack and our own TLS). The host build does not, and main.c is #ifdef'd
+# on this rather than on the triple.
+CFLAGS  += -g -DEMBLINK_NET $(EMBLINK_AUTOINIT) -mno-red-zone -fno-stack-protector
+
+# The TLS implementation the OS already builds -- our own AES-GCM, X25519,
+# ECDSA, RSA and X.509 chain validation (docs/TLS.md). Objects rather than an
+# archive because that is how the root Makefile produces them.
+# tls_*.o ONLY: url.c is compiled into libemnet above, and naming build/web_url.o
+# here as well is a duplicate definition, not a fallback.
+EMBLINK_TLS_OBJS := $(wildcard $(EMBLINK_ROOT)/build/tls_*.o) -I$(EMBLINK_ROOT)/user/lib \
            -isystem $(EMBLINK_NEWLIB)/x86_64-elf/include \
            -I$(EMBLINK_ZLIB)/include
 # The OS's startup and syscall layer, exactly as the root Makefile links every
@@ -75,7 +85,7 @@ CFLAGS  += -g $(EMBLINK_AUTOINIT) -mno-red-zone -fno-stack-protector -I$(EMBLINK
 LDFLAGS += -nostartfiles -static -T $(EMBLINK_ROOT)/user/lib/newlib.ld \
            -L$(EMBLINK_NEWLIB)/x86_64-elf/lib -L$(EMBLINK_ZLIB)/lib \
            $(EMBLINK_ROOT)/build/crt0.o $(EMBLINK_ROOT)/build/syscalls.o \
-           -lz -lm -lemfont
+           -lz -lm -lemfont -lemnet $(EMBLINK_TLS_OBJS)
 else
 # The host build: a real libc, and the sanitizers that are the point of it.
 CFLAGS  += $(EMBLINK_SAN)

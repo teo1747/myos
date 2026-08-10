@@ -28,6 +28,11 @@ MESSAGES_TARGET=$(EMBLINK_RESOURCES_DIR)
 # frontend stays readable: each of these implements exactly one of NetSurf's
 # tables, and the table is the contract.
 S_FRONTEND := main.c misc.c window.c fetch.c layout.c bitmap.c plot.c text.c
+# The network fetcher is OS-only: it sits on the kernel's TCP stack and our
+# own TLS. EMBLINK_NET is defined by Makefile.tools for the cross build only.
+ifneq ($(EMBLINK_NET_SRC),)
+  S_FRONTEND := $(S_FRONTEND) $(EMBLINK_NET_SRC)
+endif
 
 SOURCES = $(S_COMMON) $(S_IMAGE) $(S_BROWSER) $(S_FRONTEND)
 EXETARGET := nsemblink

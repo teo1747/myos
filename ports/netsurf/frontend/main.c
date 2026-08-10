@@ -36,6 +36,10 @@
 #include "desktop/gui_table.h"
 #include "emblink.h"
 
+#ifdef EMBLINK_NET
+nserror emblink_fetch_register(void);
+#endif
+
 
 static struct netsurf_table emblink_table = {
     .misc   = NULL,       /* filled in main: the tables live in their own files */
@@ -127,6 +131,18 @@ int main(int argc, char **argv)
         fprintf(stderr, "nsemblink: bad url [%s]\n", target);
         return 1;
     }
+
+    /* http and https, over the OS's own TCP and TLS. Only on the OS: the
+     * host build has no such stack, and a fetcher that cannot fetch is worse
+     * than an absent one -- the core would stop asking the file: fetcher. */
+#ifdef EMBLINK_NET
+    {
+        nserror ferr = emblink_fetch_register();
+        if (ferr != NSERROR_OK)
+            fprintf(stderr, "nsemblink: no network fetcher: %s\n",
+                    messages_get_errorcode(ferr));
+    }
+#endif
 
     stage("navigate");
     /* IS THE nsurl SOUND THE MOMENT IT IS MADE? The OS build hands

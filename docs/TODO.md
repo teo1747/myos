@@ -3032,7 +3032,35 @@ Encrypt/RSA), `test wget https`, `test pypi`.
       Each refusal now says which check it was, on the serial log -- which is
       what turned this into a two-minute answer instead of another evening.
 
-### NetSurf port ✅ RENDERS (host) -- and the earlier bug was staleness
+### NetSurf port ✅ COMPLETE -- network to pixels, on the OS
+
+The port fetches over the network, parses, cascades, lays out and draws text,
+on EmbLinkOS: `nsemblink "http://example.com/" 800 600 out.ppm` prints
+[Example Domain] and writes the page.
+
+Deferred, each named where it bites rather than left to be found:
+- [ ] The fetcher BLOCKS. vnet_fetch returns a whole response, so a poll that
+      starts a fetch does not return until the page has arrived -- the browser
+      is unresponsive for the duration and one slow server stops the clock for
+      everything. Fixing it means an incremental vnet API (connect / pump /
+      done), not a change in the fetcher.
+- [ ] COOKIES do not persist. NetSurf keeps its own jar in urldb and applies it
+      inside its own fetchers; ours goes through the OS's HTTP client, which
+      asks the host program for the header. ports/netsurf/fetch/resolve.c
+      answers with nothing rather than with something wrong, so a login does
+      not stick.
+- [ ] A multipart POST (a file upload) is DECLINED at setup rather than sent as
+      a GET, so the form reports a failure the user can see instead of losing
+      their data to a server that never receives it.
+- [ ] No JavaScript (NETSURF_USE_DUKTAPE=NO) and no image decoders wired
+      (PNG/JPEG/GIF off) -- the OS has its own decoders and NetSurf has its own
+      handlers; connecting them is a known, bounded piece of work.
+- [ ] The SHELL cannot pass a bare URL: `nsemblink http://x/` fails in the
+      shell's parser at the colon-slash-slash, and the URL has to be quoted.
+      That is the shell's gap, already logged, and this is the first thing that
+      hits it routinely.
+
+### NetSurf port: earlier notes -- and the first bug was staleness
 
 - [x] ~~The OS build faulted on a deterministic bad pointer (0x1f4cb0)~~ FIXED
       2026-08-10, by a full rebuild -- and the reason is worth more than the

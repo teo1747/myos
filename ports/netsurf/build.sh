@@ -216,6 +216,36 @@ build_emfont() {
 }
 build_emfont
 
+# THE NETWORK FETCHER, and the OS's HTTP/TLS client under it. Cross build only
+# -- the host has no kernel TCP stack of ours -- and an archive rather than a
+# named source for the same reason libemfont is: a path that climbs out of
+# NetSurf's tree is skipped in silence.
+build_emnet() {
+    [ "$HOST" = "x86_64-elf" ] || return 0
+    local a="$PREFIX/lib/libemnet.a"
+    local srcs=("$HERE/fetch/emblink_fetch.c" "$HERE/fetch/resolve.c" \
+                "$EMBLINK_ROOT/user/web/net.c" "$EMBLINK_ROOT/user/web/url.c" \
+                "$EMBLINK_ROOT/user/web/charset.c")
+    local newest=0 o objs=()
+    for c in "${srcs[@]}"; do [ "$c" -nt "$a" ] && newest=1; done
+    [ -f "$a" ] && [ $newest -eq 0 ] && return 0
+    echo "=== libemnet (fetcher + the OS's HTTP/TLS client)"
+    mkdir -p "$PREFIX/lib"
+    for c in "${srcs[@]}"; do
+        o="$PREFIX/lib/$(basename "${c%.c}").o"
+        "$HOST-gcc" -O2 -g -fno-stack-protector -DEMBLINK_NET $(libc_inc) \
+            -I"$EMBLINK_ROOT/user/lib" -I"$EMBLINK_ROOT/user/web" \
+            -I"$EMBLINK_ROOT/user/lib/tls" -I"$EMBLINK_ROOT/user/lib/tls/crypto" \
+            -I"$EMBLINK_ROOT/user/lib/tls/x509" -I"$EMBLINK_ROOT/user/lib/tls/kshim" \
+            -I"$EMBLINK_ROOT/kernel" \
+            -I"$NSSRC/netsurf" -I"$NSSRC/netsurf/include" -I"$PREFIX/include" \
+            -c "$c" -o "$o"
+        objs+=("$o")
+    done
+    "$HOST-ar" rcs "$a" "${objs[@]}"
+}
+build_emnet
+
 # OUR ICONV, as an archive on the link line. NetSurf links -liconv when it is
 # told the C library does not have iconv inside it (which ours does not: see
 # compat/iconv.c for what this is and, more importantly, what it refuses).
