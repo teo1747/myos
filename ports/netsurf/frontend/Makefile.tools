@@ -48,7 +48,14 @@ EMBLINK_NEWLIB  ?= $(HOME)/cross/newlib-c99
 EMBLINK_ZLIB ?= $(PREFIX)
 
 ifeq ($(EMBLINK_HOSTBUILD),)
-CFLAGS  += -mno-red-zone -fno-stack-protector -I$(EMBLINK_ROOT)/user/lib \
+# EMBLINK_AUTOINIT: what an uninitialised local holds. The rest of this OS's
+# userland is built with `=zero` (NEWLIB_CFLAGS in the root Makefile) and the
+# netsurf build was not, which is the asymmetry that makes this port the only
+# thing hitting the bug. `=pattern` is the DIAGNOSTIC form -- it fills locals
+# with 0xAA bytes, so if the faulting address turns into that pattern the read
+# is uninitialised and the question is answered in one boot.
+EMBLINK_AUTOINIT ?= -ftrivial-auto-var-init=pattern
+CFLAGS  += $(EMBLINK_AUTOINIT) -mno-red-zone -fno-stack-protector -I$(EMBLINK_ROOT)/user/lib \
            -isystem $(EMBLINK_NEWLIB)/x86_64-elf/include \
            -I$(EMBLINK_ZLIB)/include
 # The OS's startup and syscall layer, exactly as the root Makefile links every

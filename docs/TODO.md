@@ -3052,6 +3052,13 @@ Encrypt/RSA), `test wget https`, `test pypi`.
           (sizeof stat/dirent and both offsets identical with and without)
         * the two newlib include trees (identical but for two printf switches)
         * orphan sections from our linker script (.text .rodata .data .bss only)
+        * the value being a constant in the binary -- it appears nowhere in
+          .rodata or .data, as 8 bytes or as 4, so it is computed at run time
+        * an uninitialised local in the CORE or the frontend -- rebuilt with
+          -ftrivial-auto-var-init=pattern and the faulting address did not
+          change. NOTE the ten libraries are built separately and were not
+          covered by that flag, so they are still a candidate: the cheap next
+          test is to pass the same flag to build_one() in the port script
         * the kernel handing out unzeroed heap pages -- that WAS real and is
           fixed, and the fault survives it
 
