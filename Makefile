@@ -422,6 +422,16 @@ build/python.elf._pth: | $(BUILD)
 	printf 'python314.zip\npip.zip\n.\n' > $@
 else
 PY_APPS =
+# The CPython toolchain is not on this machine, so nothing here can rebuild
+# these -- but a PREVIOUS build's artifacts may still be sitting in build/,
+# and mkfs packs every build/*.elf it finds. That is exactly the situation the
+# drift guard is meant to catch, and exactly the situation STAGED_APPS exists
+# for: "built outside this tree". Named one by one rather than wildcarded, so
+# the guard stays armed for everything else -- and kept OUT of STAGED_APPS
+# itself so a `make STAGED_APPS=...` on the command line does not silently
+# drop them.
+PREBUILT_APPS += $(wildcard build/python.elf) $(wildcard build/python314.zip) \
+                 $(wildcard build/pip.zip) $(wildcard build/python.elf._pth)
 endif
 
 # Dynamic-link flags (Phase 2): an ET_EXEC app that imports the toolkit from
@@ -704,6 +714,17 @@ build/ns_iconv.o: ports/netsurf/compat/iconv.c | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) -c $< -o $@
 build/nsprobe.o: ports/netsurf/nsprobe.c | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(NS_INC) -c $< -o $@
+# nsemblink: NetSurf itself. Built by the port's own script (it drives
+# NetSurf's buildsystem, which this Makefile has no business reimplementing),
+# then copied in so the image rule can depend on it like any other binary.
+# Copying rather than symlinking because mkfs reads build/*.elf and a dangling
+# link there is a packing failure three steps later.
+NS_TREE ?= $(HOME)/cross/netsurf/netsurf-all-3.11
+build/nsemblink.elf: $(wildcard ports/netsurf/frontend/*.c) $(wildcard ports/netsurf/frontend/*.h) \
+                     ports/netsurf/compat/iconv.c ports/netsurf/build.sh | $(BUILD)
+	./ports/netsurf/build.sh netsurf
+	cp -f $(NS_TREE)/netsurf/nsemblink-x86_64-elf $@
+
 build/nsprobe.elf: build/crt0.o build/syscalls.o build/nsprobe.o build/ns_iconv.o user/lib/newlib.ld
 	$(USER_CC) $(NEWLIB_LDFLAGS) build/crt0.o build/syscalls.o build/nsprobe.o \
 	    build/ns_iconv.o $(NS_LIBS) -lc -lgcc -o $@
@@ -1369,7 +1390,7 @@ EMBKFS_APPS := build/init.elf build/primtest.elf build/hello.elf build/posixdemo
                $(CXX_APPS) $(PY_APPS) $(GIT_APPS) $(TCC_APPS) $(EMUI_APPS) \
                $(if $(HAVE_QJS),build/js.elf,) \
                build/vellum.elf \
-               $(if $(wildcard $(NS_PREFIX)/lib/libdom.a),build/nsprobe.elf,)
+               $(if $(wildcard $(NS_PREFIX)/lib/libdom.a),build/nsprobe.elf build/nsemblink.elf,)
 
 # STAGED_APPS: binaries built OUTSIDE this tree and dropped into build/ to be
 # judged by the machine rather than by their author's host -- e.g. EmbCC (a
@@ -1430,7 +1451,7 @@ icons: $(ICONS_STAMP)
 EMBKFS_CONTENT := $(shell find system data -type f 2>/dev/null) \
                   $(shell find system data -type d 2>/dev/null)
 
-embkfs.img embkfs_tree.img &: tools/embkfs_mkfs/mkfs_embkfs.py $(EMBKFS_APPS) $(STAGED_APPS) build/kernel.embdbg build/libembk.so $(if $(HAVE_TCC),build/libtcc1.o) build/emlink_dynstubs.o $(wildcard build/*.elf) $(wildcard build/*.embx) $(wildcard user/bin/*.ns) $(wildcard user/bin/*.caps) $(wildcard user/bin/*.app) $(ICONS_STAMP) $(EMBKFS_CONTENT)
+embkfs.img embkfs_tree.img &: tools/embkfs_mkfs/mkfs_embkfs.py $(EMBKFS_APPS) $(STAGED_APPS) $(PREBUILT_APPS) build/kernel.embdbg build/libembk.so $(if $(HAVE_TCC),build/libtcc1.o) build/emlink_dynstubs.o $(wildcard build/*.elf) $(wildcard build/*.embx) $(wildcard user/bin/*.ns) $(wildcard user/bin/*.caps) $(wildcard user/bin/*.app) $(ICONS_STAMP) $(EMBKFS_CONTENT)
 	@# Drift guard: mkfs packs every build/*.elf it finds, but make only knows
 	@# about $(EMBKFS_APPS). Anything in the first set and not the second lands
 	@# on the image yet never triggers a rebuild -- a stale-image bug that is
@@ -1443,7 +1464,7 @@ embkfs.img embkfs_tree.img &: tools/embkfs_mkfs/mkfs_embkfs.py $(EMBKFS_APPS) $(
 	@# stale binary against a fresh libembk.so. The guard was right and nobody
 	@# read it. A check that cannot stop the build is not a check.
 	@fail=0; for f in build/*.elf; do \
-	  case " $(EMBKFS_APPS) $(STAGED_APPS) " in \
+	  case " $(EMBKFS_APPS) $(STAGED_APPS) $(PREBUILT_APPS) " in \
 	    *" $$f "*) ;; \
 	    *) echo "*** BUILD DRIFT: $$f is packed onto the image but is NOT a"; \
 	       echo "***   prerequisite of embkfs.img, so changes to it will NOT"; \
