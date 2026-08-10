@@ -1,0 +1,34 @@
+# -*- mode: makefile-gmake -*-
+##
+## EmbLinkOS target tool setup.
+##
+## Every frontend supplies one of these; it names the toolchain and the
+## pkg-config to use for THIS target. Ours is the same cross compiler the rest
+## of the OS's userland is built with (see the Makefile at the repo root), and
+## the pkg-config is the shim in ports/netsurf/tools that build.sh puts on PATH
+## -- this machine has no real one, and the only question being asked is where
+## a sibling library we just built put its headers.
+##
+
+PKG_CONFIG := pkg-config
+
+# HOST is x86_64-elf, which is our cross toolchain's own triple, so the
+# buildsystem's default $(HOST)-gcc already resolves correctly. Named here
+# anyway: a frontend that leaves its compiler to be inferred is one environment
+# change away from silently building for the build machine instead.
+CC  := $(HOST)-gcc
+CXX := $(HOST)-g++
+AR  := $(HOST)-ar
+
+# Freestanding userland: the OS's own crt0 provides _start (user/lib/crt0.c),
+# newlib.ld places the image at 0x400000, and libc.a comes from our rebuilt
+# newlib rather than the toolchain's stock one -- the -L must come first for
+# that to be true. These mirror NEWLIB_CFLAGS/NEWLIB_LDFLAGS in the root
+# Makefile; if those change, this has to follow.
+EMBLINK_ROOT    ?= $(HOME)/myos
+EMBLINK_NEWLIB  ?= $(HOME)/cross/newlib-c99
+
+CFLAGS  += -mno-red-zone -fno-stack-protector -I$(EMBLINK_ROOT)/user/lib \
+           -isystem $(EMBLINK_NEWLIB)/x86_64-elf/include
+LDFLAGS += -nostartfiles -static -T $(EMBLINK_ROOT)/user/lib/newlib.ld \
+           -L$(EMBLINK_NEWLIB)/x86_64-elf/lib

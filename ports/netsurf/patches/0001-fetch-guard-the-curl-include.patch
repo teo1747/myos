@@ -1,0 +1,25 @@
+Guard the curl header include the way its call site already is.
+
+NetSurf's build has a NETSURF_USE_CURL switch, and content/fetchers/Makefile
+honours it by dropping curl.c from the source list. content/fetch.c honours it
+too -- the fetch_curl_register() call is inside `#ifdef WITH_CURL`. The
+`#include` three hundred lines above it is not, so a build with the switch OFF
+stops at a missing curl/curl.h having never needed anything from it.
+
+This port turns curl off because the OS has its own TLS and TCP stack and its
+own HTTPS client (docs/TLS.md), so libcurl and openssl would be two large
+dependencies ported for something already written. One line, and it is the
+only patch the port carries.
+
+--- a/netsurf/content/fetch.c
++++ b/netsurf/content/fetch.c
+@@ -54,7 +54,9 @@
+ #include "content/fetchers.h"
+ #include "content/fetchers/resource.h"
+ #include "content/fetchers/about/about.h"
++#ifdef WITH_CURL
+ #include "content/fetchers/curl.h"
++#endif
+ #include "content/fetchers/data.h"
+ #include "content/fetchers/file/file.h"
+ #include "javascript/fetcher.h"
