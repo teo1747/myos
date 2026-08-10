@@ -723,7 +723,13 @@ NS_TREE ?= $(HOME)/cross/netsurf/netsurf-all-3.11
 build/nsemblink.elf: $(wildcard ports/netsurf/frontend/*.c) $(wildcard ports/netsurf/frontend/*.h) \
                      ports/netsurf/compat/iconv.c ports/netsurf/build.sh | $(BUILD)
 	./ports/netsurf/build.sh netsurf
-	cp -f $(NS_TREE)/netsurf/nsemblink-x86_64-elf $@
+	# STRIPPED for the image, with the debug copy kept beside it. The kernel's
+	# ELF loader refuses the unstripped 5MB binary outright (err 22), and the
+	# debug sections are no use to it anyway -- but they are exactly what
+	# addr2line needs to turn a ring-3 backtrace into line numbers, so they go
+	# to build/nsemblink.debug.elf rather than into the bin.
+	cp -f $(NS_TREE)/netsurf/nsemblink-x86_64-elf build/nsemblink.debug.elf
+	$(STRIP) -o $@ build/nsemblink.debug.elf
 
 build/nsprobe.elf: build/crt0.o build/syscalls.o build/nsprobe.o build/ns_iconv.o user/lib/newlib.ld
 	$(USER_CC) $(NEWLIB_LDFLAGS) build/crt0.o build/syscalls.o build/nsprobe.o \

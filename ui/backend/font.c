@@ -762,6 +762,16 @@ static void backend_draw_text_impl(struct render_target *rt, float x, float y, c
     }
 }
 
+/* THE ONE LINE that ties this file to the toolkit. Everything above it is a
+ * TrueType parser, a rasteriser and a glyph cache that need nothing but malloc
+ * and memcpy -- which is why the NetSurf port can compile this very file into
+ * a browser that has no EmUI in it at all, and get the OS's own typeface.
+ * FONT_NO_BACKEND is that seam, and it is here rather than in the port so the
+ * dependency is documented where it exists. */
+#ifndef FONT_NO_BACKEND
 void font_install_backend(void) {
     cpu_backend_get()->draw_text = backend_draw_text_impl;
 }
+#else
+void font_install_backend(void) { }
+#endif

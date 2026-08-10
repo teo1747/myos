@@ -8,11 +8,10 @@
  * frame for nothing (kernel/gfx/compositor.c, and the lesson in
  * docs/PROJECT_STATUS.md about a per-pixel float blend costing 4946ms).
  *
- * TEXT IS NOT DRAWN YET, and that is the honest state of this file: the
- * measurement side (layout.c) is what the core needs to lay a page out at all,
- * and it is wired; the glyphs need the OS's font raster brought across, which
- * is the next piece. A text call currently draws nothing rather than drawing a
- * placeholder box -- a page of grey boxes photographs as if it worked.
+ * Text is drawn by text.c, from the OS's own typeface -- the same font file
+ * the desktop uses, through the same rasteriser. Measurement lives there too,
+ * deliberately: the two have to agree exactly or a caret lands beside the
+ * glyph it is supposed to be inside.
  */
 #include <stdlib.h>
 #include <stdbool.h>
@@ -286,8 +285,10 @@ static nserror p_bitmap(const struct redraw_context *ctx, struct bitmap *bitmap,
 static nserror p_text(const struct redraw_context *ctx, const plot_font_style_t *fstyle,
                       int x, int y, const char *text, size_t length)
 {
-    (void)ctx; (void)fstyle; (void)x; (void)y; (void)text; (void)length;
-    return NSERROR_OK;      /* see the header: glyphs are the next piece */
+    (void)ctx;
+    if (emblink_target == NULL) return NSERROR_OK;
+    emblink_text_draw(emblink_target, x, y, fstyle, text, length);
+    return NSERROR_OK;
 }
 
 static nserror p_group_start(const struct redraw_context *ctx, const char *name)

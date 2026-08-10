@@ -28,29 +28,10 @@
 #include "emblink.h"
 
 
-/* plot_font_style carries the size in PLOT_STYLE_SCALE'd points. */
-static int px_size(const struct plot_font_style *fstyle)
-{
-    int px = (fstyle->size * 4) / (3 * PLOT_STYLE_SCALE);   /* points -> px at 96dpi */
-    return px > 0 ? px : 1;
-}
-
-/* The advance of one UTF-8 string. Counts CHARACTERS, not bytes: a two-byte
- * e-acute is one glyph, and charging it two advances is how a page full of
- * accents ends up wrapping early. */
-int emblink_text_advance(const struct plot_font_style *fstyle,
-                         const char *utf8, size_t len)
-{
-    int px = px_size(fstyle);
-    size_t chars = 0;
-    for (size_t i = 0; i < len; i++)
-        if ((utf8[i] & 0xC0) != 0x80) chars++;      /* skip continuations */
-
-    /* 0.5 em for a proportional face, 0.6 for the monospace one -- the
-     * measured average advance of the OS's own default faces. */
-    int num = (fstyle->family == PLOT_FONT_FAMILY_MONOSPACE) ? 6 : 5;
-    return (int)((chars * (size_t)px * (size_t)num) / 10);
-}
+/* emblink_text_advance lives in text.c now -- it answers from the OS's real
+ * font metrics, and the three callbacks below have to agree with it or the
+ * caret lands beside the glyph it belongs in. That is the whole reason the
+ * measurement moved out of this file rather than being duplicated in it. */
 
 static nserror layout_width(const struct plot_font_style *fstyle,
                             const char *string, size_t length, int *width)

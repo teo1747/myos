@@ -16,6 +16,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NSSRC="${NSSRC:-/home/motsou/cross/netsurf/netsurf-all-3.11}"
 HOST="${HOST:-x86_64-elf}"
+EMBLINK_ROOT="${EMBLINK_ROOT:-$HOME/myos}"
 # A HOST build reuses every line of this script with a different triple and its
 # own prefix, so the SAME frontend can be run under a sanitizer on the build
 # machine -- which is the only sane instrument for a wild pointer. See
@@ -191,6 +192,29 @@ build_zlib() {
     cp -f "$ZSRC/zlib.h" "$ZSRC/zconf.h" "$PREFIX/include/"
 }
 build_zlib
+
+# THE OS'S FONT MODULE, as an archive. ui/backend/font.c is a TrueType parser,
+# rasteriser and glyph cache that needs nothing but malloc and memcpy -- so the
+# browser can render in the system typeface without a second copy of a
+# TrueType parser existing. Built here rather than named in the frontend's
+# SOURCES because NetSurf's buildsystem resolves source paths relative to its
+# own tree, and a path that climbs out of it resolves to nothing and is
+# skipped in SILENCE -- the build succeeds and the symbols are simply absent.
+build_emfont() {
+    local o="$PREFIX/lib/emfont.o" a="$PREFIX/lib/libemfont.a"
+    local src="$EMBLINK_ROOT/ui/backend/font.c"
+    [ -f "$src" ] || { echo "no font.c at $src" >&2; return 1; }
+    if [ ! -f "$a" ] || [ "$src" -nt "$a" ]; then
+        echo "=== libemfont (the OS's own font.c)"
+        mkdir -p "$PREFIX/lib"
+        "$HOST-gcc" -O2 -g -fno-stack-protector -DFONT_NO_BACKEND $(libc_inc) \
+            -I"$EMBLINK_ROOT/ui/backend" -I"$EMBLINK_ROOT/ui/scene" \
+            -I"$EMBLINK_ROOT/ui/layout" -I"$EMBLINK_ROOT/ui/declare" \
+            -c "$src" -o "$o"
+        "$HOST-ar" rcs "$a" "$o"
+    fi
+}
+build_emfont
 
 # OUR ICONV, as an archive on the link line. NetSurf links -liconv when it is
 # told the C library does not have iconv inside it (which ours does not: see

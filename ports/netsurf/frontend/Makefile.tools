@@ -47,6 +47,12 @@ EMBLINK_NEWLIB  ?= $(HOME)/cross/newlib-c99
 # file API -- the copy already on the machine was missing it.
 EMBLINK_ZLIB ?= $(PREFIX)
 
+# The OS's font module's headers. OUTSIDE the freestanding branch below,
+# because text.c needs them in BOTH builds -- putting them in the cross-only
+# arm is what made the host build fail on a header the cross build could see.
+CFLAGS += -I$(EMBLINK_ROOT)/ui/backend -I$(EMBLINK_ROOT)/ui/scene \
+          -I$(EMBLINK_ROOT)/ui/layout -I$(EMBLINK_ROOT)/ui/declare
+
 ifeq ($(EMBLINK_HOSTBUILD),)
 # EMBLINK_AUTOINIT: what an uninitialised local holds. The rest of this OS's
 # userland is built with `=zero` (NEWLIB_CFLAGS in the root Makefile) and the
@@ -69,9 +75,9 @@ CFLAGS  += -g $(EMBLINK_AUTOINIT) -mno-red-zone -fno-stack-protector -I$(EMBLINK
 LDFLAGS += -nostartfiles -static -T $(EMBLINK_ROOT)/user/lib/newlib.ld \
            -L$(EMBLINK_NEWLIB)/x86_64-elf/lib -L$(EMBLINK_ZLIB)/lib \
            $(EMBLINK_ROOT)/build/crt0.o $(EMBLINK_ROOT)/build/syscalls.o \
-           -lz -lm
+           -lz -lm -lemfont
 else
 # The host build: a real libc, and the sanitizers that are the point of it.
 CFLAGS  += $(EMBLINK_SAN)
-LDFLAGS += $(EMBLINK_SAN) -lz -lm
+LDFLAGS += $(EMBLINK_SAN) -L$(PREFIX)/lib -lz -lm -lemfont
 endif
