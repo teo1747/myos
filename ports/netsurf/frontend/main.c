@@ -206,6 +206,26 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* THE WHOLE DOCUMENT, not the first screenful. Now that it has loaded, the
+     * core knows how tall it is; without this a headless render stops at the
+     * fold and every long page scores as if the engine had lost the text
+     * below it. Only ever grows -- a short page keeps the window it asked
+     * for, which is what a windowed frontend will want. */
+    {
+        int dw = 0, dh = 0;
+        if (browser_window_get_extents(emblink_window_bw(gw), true, &dw, &dh) == NSERROR_OK) {
+            if (dh > surf->height || dw > surf->width) {
+                int nw = dw > surf->width ? dw : surf->width;
+                int nh = dh > surf->height ? dh : surf->height;
+                if (emblink_window_resize(gw, nw, nh)) {
+                    surf = emblink_window_surface(gw);
+                    fprintf(stderr, "nsemblink: document is %dx%d -- surface grown\n",
+                            dw, dh);
+                }
+            }
+        }
+    }
+
     stage("redraw");
     struct redraw_context ctx = {
         .interactive = false,

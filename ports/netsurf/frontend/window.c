@@ -187,6 +187,37 @@ static void win_set_title(struct gui_window *gw, const char *title)
     snprintf(gw->title, sizeof gw->title, "%s", title);
 }
 
+/* GROW THE SURFACE TO THE DOCUMENT. The core plots only what falls inside the
+ * viewport it is given, so a headless render of a long page silently stops at
+ * the fold -- which measures the window rather than the engine. Asked for
+ * after the load, when the document's height is finally known.
+ *
+ * Reallocates rather than resizing in place: the buffer is width*height and
+ * both change. Returns false and keeps the old surface if the new one cannot
+ * be had, because a short render beats no render. */
+bool emblink_window_resize(struct gui_window *gw, int w, int h)
+{
+    if (gw == NULL || w <= 0 || h <= 0) return false;
+    if (w == gw->surf.width && h == gw->surf.height) return true;
+
+    /* A page can be a hundred thousand pixels tall. The cap is a real limit
+     * on the picture, not on the layout -- the core still laid the whole
+     * document out; this is how much of it we are prepared to paint. */
+    if ((long long)w * h > 64LL * 1024 * 1024) return false;
+
+    uint32_t *px = calloc((size_t)w * h, sizeof(uint32_t));
+    if (px == NULL) return false;
+    for (size_t i = 0; i < (size_t)w * h; i++) px[i] = 0x00FFFFFF;
+
+    free(gw->surf.px);
+    gw->surf.px = px;
+    gw->surf.width = w;
+    gw->surf.height = h;
+    gw->surf.stride = w;
+    emblink_surface_clip(&gw->surf, 0, 0, w, h);
+    return true;
+}
+
 /* declared in emblink.h */
 const char *emblink_window_title(struct gui_window *gw)
 {
