@@ -18,6 +18,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "utils/errors.h"
 #include "utils/messages.h"
@@ -43,6 +44,15 @@ static struct netsurf_table emblink_table = {
     .bitmap = NULL,
     .layout = NULL,
 };
+
+/* STAGE MARKERS. A port fails by faulting somewhere in a stack it did not
+ * write, and "exited with code -270" names no phase at all. Each of these is
+ * one line on the serial log, and between two of them is where to look. */
+static void stage(const char *what)
+{
+    fprintf(stderr, "nsemblink: %s\n", what);
+    fflush(stderr);
+}
 
 static bool write_ppm(const struct emblink_surface *s, const char *path)
 {
@@ -79,12 +89,14 @@ int main(int argc, char **argv)
     emblink_table.bitmap = emblink_bitmap_table;
     emblink_table.layout = emblink_layout_table;
 
+    stage("register");
     err = netsurf_register(&emblink_table);
     if (err != NSERROR_OK) {
         fprintf(stderr, "nsemblink: table rejected: %s\n", messages_get_errorcode(err));
         return 1;
     }
 
+    stage("options");
     err = nsoption_init(NULL, NULL, NULL);
     if (err != NSERROR_OK) {
         fprintf(stderr, "nsemblink: options: %s\n", messages_get_errorcode(err));
@@ -93,6 +105,7 @@ int main(int argc, char **argv)
 
     emblink_window_set_size(width, height);
 
+    stage("core init");
     err = netsurf_init(NULL);
     if (err != NSERROR_OK) {
         fprintf(stderr, "nsemblink: core init: %s\n", messages_get_errorcode(err));
@@ -115,6 +128,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    stage("navigate");
     struct browser_window *bw = NULL;
     err = browser_window_create(BW_CREATE_HISTORY, url, NULL, NULL, &bw);
     nsurl_unref(url);
@@ -123,23 +137,45 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* PUMP UNTIL IT SETTLES. There is no event loop to block in: the only
-     * things that make progress are scheduled callbacks, so run them until
-     * nothing is pending. Bounded, because a page that never settles (an
-     * animation, a poll) would otherwise never render -- an animation is not
-     * a reason to refuse to draw the first frame. */
-    for (int spin = 0; spin < 20000; spin++) {
-        int next = emblink_schedule_run();
-        if (next < 0) break;
+    /* PUMP UNTIL IT SETTLES. There is no event loop to block in: everything
+     * that makes progress is a scheduled callback, and the fetch subsystem
+     * re-schedules its own poll every 10ms (content/fetch.c). So run what is
+     * due and then SLEEP for what the scheduler asked for.
+     *
+     * Sleeping rather than spinning is the whole difference. A busy loop over
+     * the clock burns thousands of syscalls to advance a few milliseconds of
+     * guest time -- under TCG that is most of a second per hundred ms of
+     * progress -- and the first version of this exhausted its iteration count
+     * before the file had even been read.
+     *
+     * "Settled" is the core telling us it stopped the throbber, which it does
+     * whether the page loaded or failed. Bounded by a deadline, because a page
+     * that polls forever is not a reason to refuse to draw the first frame. */
+    stage("pump");
+    struct gui_window *gw = emblink_window_get();
+    {
+        const int64_t deadline_ms = 30000;
+        int64_t waited = 0;
+        while (waited < deadline_ms) {
+            int next = emblink_schedule_run();
+            if (emblink_window_settled(gw)) break;
+            if (next < 0) next = 10;      /* nothing pending yet: let it arrive */
+            if (next < 1) next = 1;
+            usleep((useconds_t)next * 1000);
+            waited += next;
+        }
+        if (!emblink_window_settled(gw))
+            fprintf(stderr, "nsemblink: page did not settle in %llds\n",
+                    (long long)(deadline_ms / 1000));
     }
 
-    struct gui_window *gw = emblink_window_get();
     struct emblink_surface *surf = emblink_window_surface(gw);
     if (gw == NULL || surf == NULL) {
         fprintf(stderr, "nsemblink: the core never asked for a window\n");
         return 1;
     }
 
+    stage("redraw");
     struct redraw_context ctx = {
         .interactive = false,
         .background_images = true,
@@ -163,6 +199,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    stage("done");
     browser_window_destroy(bw);
     netsurf_exit();
     emblink_schedule_finalise();

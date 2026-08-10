@@ -31,6 +31,11 @@ struct gui_window {
     struct rect invalid;
     bool has_invalid;
     int scroll_x, scroll_y;
+    /* THE ONLY SIGNAL that a load has finished. There is no "is it done"
+     * question to ask the core; it TELLS the frontend, by stopping the
+     * throbber it told it to start. A headless render has no throbber and
+     * still needs the fact. */
+    bool loading, loaded;
     char title[128];
 };
 
@@ -134,10 +139,22 @@ static nserror win_get_dimensions(struct gui_window *gw, int *width, int *height
 
 static nserror win_event(struct gui_window *gw, enum gui_window_event event)
 {
-    (void)gw; (void)event;
-    /* Start/stop throbber, update the back/forward state, and so on. There is
-     * no chrome to update yet; the windowed frontend fills this in. */
+    if (gw == NULL) return NSERROR_OK;
+    switch (event) {
+    case GW_EVENT_START_THROBBER: gw->loading = true;  break;
+    case GW_EVENT_STOP_THROBBER:  gw->loading = false;
+                                  gw->loaded  = true;  break;
+    default: break;   /* the rest update chrome this frontend does not have */
+    }
     return NSERROR_OK;
+}
+
+/* True once the core has said it finished -- however it finished. A page that
+ * failed still stops its throbber, and waiting for a SUCCESSFUL load would
+ * hang forever on a 404. */
+bool emblink_window_settled(struct gui_window *gw)
+{
+    return gw != NULL && gw->loaded && !gw->loading;
 }
 
 static void win_set_title(struct gui_window *gw, const char *title)
