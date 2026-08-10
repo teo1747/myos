@@ -14,6 +14,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
+
+/* newlib hides CLOCK_MONOTONIC behind __POSIX_VISIBLE, and which feature
+ * macros survive to this file depends on flags the netsurf build sets for
+ * reasons of its own -- turning Duktape on was enough to lose it. The value is
+ * newlib's own (time.h, CLOCK_MONOTONIC = 4) and the kernel's clock_gettime
+ * switches on exactly that, so naming it here changes nothing except whether
+ * this file compiles. */
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 4
+#endif
 #include <string.h>
 
 #include "utils/errors.h"

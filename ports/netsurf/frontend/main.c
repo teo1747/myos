@@ -109,6 +109,12 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* JAVASCRIPT IS AN OPTION, and its default is false -- building with
+     * Duktape linked in is necessary and not sufficient, which is exactly the
+     * kind of gap that looks like a broken interpreter. A page that sets its
+     * own text from a script proves the difference. */
+    nsoption_set_bool(enable_javascript, true);
+
     emblink_window_set_size(width, height);
 
     stage("core init");

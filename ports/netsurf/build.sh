@@ -97,7 +97,10 @@ build_one() {
 # need or already have:
 #   CURL      -- our own fetcher goes in over the OS's TLS stack, so libcurl
 #                and openssl leave the port entirely
-#   DUKTAPE   -- JavaScript, which also drags in the nsgenbind host tool
+#   (DUKTAPE is ON: Duktape is bundled portable C, and nsgenbind -- the host
+#    tool that generates its DOM bindings -- is built from the same bundle by
+#    build_nsgenbind below. No JS is how brave and github lose a fifth of
+#    their text.)
 #   PNG/JPEG/ -- the image handlers want libpng and libjpeg; the OS has its own
 #   WEBP/JXL     decoders and they will be wired to NetSurf's own handlers
 #   PSL/NSLOG -- optional, and neither is load-bearing for a first render
@@ -114,7 +117,7 @@ build_browser() {
     echo "=== netsurf (TARGET=emblink)"
     make -C "$NSSRC/netsurf" \
         PREFIX="$PREFIX" NSSHARED="$NSSHARED" HOST="$HOST" TARGET=emblink \
-        NETSURF_USE_CURL=NO NETSURF_USE_OPENSSL=NO NETSURF_USE_DUKTAPE=NO \
+        NETSURF_USE_CURL=NO NETSURF_USE_OPENSSL=NO NETSURF_USE_DUKTAPE=YES \
         NETSURF_USE_PNG=NO NETSURF_USE_JPEG=NO NETSURF_USE_JPEGXL=NO \
         NETSURF_USE_WEBP=NO NETSURF_USE_BMP=NO NETSURF_USE_GIF=NO \
         NETSURF_USE_NSPSL=NO NETSURF_USE_NSLOG=NO NETSURF_USE_UTF8PROC=YES \
@@ -192,6 +195,18 @@ build_zlib() {
     cp -f "$ZSRC/zlib.h" "$ZSRC/zconf.h" "$PREFIX/include/"
 }
 build_zlib
+
+# nsgenbind: the HOST tool that turns NetSurf's WebIDL into Duktape bindings.
+# Built from the same bundle, with the host compiler -- it runs on the build
+# machine, not on the OS -- and put on PATH for the netsurf build to find.
+build_nsgenbind() {
+    [ -x "$PREFIX/bin/nsgenbind" ] && return 0
+    echo "=== nsgenbind (host tool: WebIDL -> Duktape bindings)"
+    make -C "$NSSRC/nsgenbind" install PREFIX="$PREFIX" \
+         NSSHARED="$NSSHARED" >/dev/null
+}
+build_nsgenbind
+export PATH="$PREFIX/bin:$PATH"
 
 # THE OS'S FONT MODULE, as an archive. ui/backend/font.c is a TrueType parser,
 # rasteriser and glyph cache that needs nothing but malloc and memcpy -- so the

@@ -3052,9 +3052,21 @@ Deferred, each named where it bites rather than left to be found:
 - [ ] A multipart POST (a file upload) is DECLINED at setup rather than sent as
       a GET, so the form reports a failure the user can see instead of losing
       their data to a server that never receives it.
-- [ ] No JavaScript (NETSURF_USE_DUKTAPE=NO) and no image decoders wired
-      (PNG/JPEG/GIF off) -- the OS has its own decoders and NetSurf has its own
-      handlers; connecting them is a known, bounded piece of work.
+- [x] ~~No JavaScript~~ ON, 2026-08-11. Duktape is built (278 symbols in the
+      binary) and nsgenbind -- the host tool that turns NetSurf's WebIDL into
+      its DOM bindings -- is built from the same bundle by build.sh. TWO steps
+      were needed and the second is the one that looks like a broken
+      interpreter: `NSOPTION_BOOL(enable_javascript, false)`, so linking the
+      engine in is necessary and not sufficient. Proved by a page that sets its
+      own text from a script: SCRIPTDIDNOTRUN -> "JAVASCRIPTRAN 5", on the host
+      and on the metal.
+      It did NOT move the corpus scores. That is expected and worth knowing:
+      the saved pages' missing words are the <details> accordion and
+      word-boundary artefacts already diagnosed for the other browser, not
+      script-generated content -- and a saved copy's external <script src> is
+      not on disk to run.
+- [ ] Image decoders are still off (PNG/JPEG/GIF) -- the OS has its own and
+      NetSurf has its own handlers; connecting them is bounded work.
 - [ ] `make web-shots` / `web-verify` can now be pointed at either engine
       (RENDERER=...), but the two scores are NOT comparable yet: Vellum's
       harness reports every text node in the document, while NetSurf plots only
