@@ -118,6 +118,51 @@ for pf in "$HERE"/patches/*.patch; do
     patch -p1 -d "$NSSRC" --forward --silent <"$pf"
 done
 
+# ZLIB, built by the port into the port's own prefix. There is a cross-built
+# libz.a on this machine already from an earlier port, but it was built WITHOUT
+# the gzip file API (gzopen/gzgets/gzclose), which NetSurf's about: fetcher
+# uses -- and quietly linking against a zlib that is missing a quarter of
+# itself is how you get an undefined symbol at the last step of a long build.
+# Building it here means the port owns its copy and nothing else on the machine
+# is disturbed.
+ZSRC="${ZSRC:-$HOME/cross/zlib-1.3.1}"
+build_zlib() {
+    local a="$PREFIX/lib/libz.a"
+    [ -d "$ZSRC" ] || { echo "no zlib source at $ZSRC (set ZSRC=)" >&2; return 1; }
+    [ -f "$a" ] && [ "$a" -nt "$ZSRC/zlib.h" ] && return 0
+    echo "=== zlib"
+    mkdir -p "$PREFIX/lib" "$PREFIX/include" "$PREFIX/build-zlib"
+    local objs=()
+    for c in "$ZSRC"/*.c; do
+        local o="$PREFIX/build-zlib/$(basename "${c%.c}").o"
+        "$HOST-gcc" -O2 -mno-red-zone -fno-stack-protector -DHAVE_UNISTD_H \
+            -isystem "${EMBLINK_NEWLIB:-$HOME/cross/newlib-c99}/x86_64-elf/include" \
+            -I"$ZSRC" -c "$c" -o "$o"
+        objs+=("$o")
+    done
+    "$HOST-ar" rcs "$a" "${objs[@]}"
+    cp -f "$ZSRC/zlib.h" "$ZSRC/zconf.h" "$PREFIX/include/"
+}
+build_zlib
+
+# OUR ICONV, as an archive on the link line. NetSurf links -liconv when it is
+# told the C library does not have iconv inside it (which ours does not: see
+# compat/iconv.c for what this is and, more importantly, what it refuses).
+# Built here rather than in the OS's Makefile because it is the netsurf link
+# that needs the -l form; the OS builds the same source as a plain object.
+build_iconv() {
+    local o="$PREFIX/lib/ns_iconv.o" a="$PREFIX/lib/libiconv.a"
+    if [ ! -f "$a" ] || [ "$HERE/compat/iconv.c" -nt "$a" ]; then
+        echo "=== libiconv (ours)"
+        mkdir -p "$PREFIX/lib"
+        "$HOST-gcc" -O2 -mno-red-zone -fno-stack-protector \
+            -isystem "${EMBLINK_NEWLIB:-$HOME/cross/newlib-c99}/x86_64-elf/include" \
+            -c "$HERE/compat/iconv.c" -o "$o"
+        "$HOST-ar" rcs "$a" "$o"
+    fi
+}
+build_iconv
+
 # OUR FRONTEND lives in this repo and is SYMLINKED into NetSurf's tree, not
 # copied into it. Copying would fork the file the moment either side changed;
 # a link keeps one copy, under our history, and leaves NetSurf's tree pristine

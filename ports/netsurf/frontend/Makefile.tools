@@ -28,7 +28,19 @@ AR  := $(HOST)-ar
 EMBLINK_ROOT    ?= $(HOME)/myos
 EMBLINK_NEWLIB  ?= $(HOME)/cross/newlib-c99
 
+# zlib: gzip transfer encoding, and utils/hashtable.c's crc. Built by
+# ports/netsurf/build.sh into the port's own prefix, complete with the gzip
+# file API -- the copy already on the machine was missing it.
+EMBLINK_ZLIB ?= $(PREFIX)
+
 CFLAGS  += -mno-red-zone -fno-stack-protector -I$(EMBLINK_ROOT)/user/lib \
-           -isystem $(EMBLINK_NEWLIB)/x86_64-elf/include
+           -isystem $(EMBLINK_NEWLIB)/x86_64-elf/include \
+           -I$(EMBLINK_ZLIB)/include
+# The OS's startup and syscall layer, exactly as the root Makefile links every
+# other userland binary: crt0.c provides _start (there is no crtX here) and
+# syscalls.c is the whole libc-to-kernel boundary. Without them the link has no
+# entry symbol and every read(), open() and stat() in the core is undefined.
 LDFLAGS += -nostartfiles -static -T $(EMBLINK_ROOT)/user/lib/newlib.ld \
-           -L$(EMBLINK_NEWLIB)/x86_64-elf/lib
+           -L$(EMBLINK_NEWLIB)/x86_64-elf/lib -L$(EMBLINK_ZLIB)/lib \
+           $(EMBLINK_ROOT)/build/crt0.o $(EMBLINK_ROOT)/build/syscalls.o \
+           -lz -lm

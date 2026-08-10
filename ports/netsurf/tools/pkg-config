@@ -106,11 +106,18 @@ def main():
     resolved = []
     seen = set()
     for n in names:
-        if not deps(n, static or "libs" in modes, resolved, seen):
+        # REVERSED per package, because a STATIC link resolves left to right:
+        # -ldom must come BEFORE -lhubbub or the linker has already passed
+        # hubbub by the time dom asks for it. deps() walks post-order (a
+        # package after everything it requires), which is exactly the order a
+        # static link needs read backwards.
+        group = []
+        if not deps(n, static or "libs" in modes, group, seen):
             if "print-errors" in modes:
                 sys.stderr.write("pkg-config: no package '%s' in %s\n"
                                  % (n, ":".join(SEARCH)))
             return 1
+        resolved.extend(reversed(group))
 
     if modes & {"exists", "version-check"} and not (modes & {"cflags", "libs", "modversion",
                                                              "variable", "cflags-only-I",
