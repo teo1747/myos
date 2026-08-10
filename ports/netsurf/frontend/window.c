@@ -160,6 +160,13 @@ bool emblink_window_settled(struct gui_window *gw)
 static void win_set_title(struct gui_window *gw, const char *title)
 {
     if (gw == NULL || title == NULL) return;
+    /* THE POINTER, BEFORE IT IS DEREFERENCED. This is where the OS build
+     * faults, and the value is the whole question: the heap starts at
+     * 0x600000000000, so anything smaller than that was never a malloc()
+     * result and the bug is upstream of the string. Cheap enough to keep --
+     * one line per navigation. */
+    fprintf(stderr, "nsemblink: set_title(%p)\n", (const void *)title);
+    fflush(stderr);
     snprintf(gw->title, sizeof gw->title, "%s", title);
 }
 

@@ -2015,6 +2015,16 @@ int64_t process_sbrk(struct process *proc, int64_t increment){
                 proc->heap_mapped_top = addr;  // update to the last successfully mapped page
                 return -EMBK_ENOMEM;  // physical memory exhausted
             }
+            // ZERO IT BEFORE IT IS USER-VISIBLE. pmm_alloc_page() hands back
+            // whatever the last owner left, so a page recycled from another
+            // process arrived in this one's heap with that process's data
+            // still in it -- readable by anyone who called malloc() and did
+            // not initialise. That is an information leak between processes
+            // first and a correctness problem second: brk(2) specifies the
+            // new space as zero-filled, and code that trusts it is entitled
+            // to. Zeroed through the direct map, which is how the kernel
+            // reaches a physical page it has not mapped anywhere else.
+            memset((void *)P2V(phys_page), 0, PAGE_SIZE);
             if (vmm_map_in(proc->pml4_phys, addr, phys_page, VMM_WRITABLE | VMM_USER) < 0) {
                 pmm_free_page(phys_page);
                 proc->heap_mapped_top = addr;   // don't claim a page we failed to map

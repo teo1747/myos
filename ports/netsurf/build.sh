@@ -111,6 +111,14 @@ build_browser() {
         PKGCONFIG=pkg-config PKG_CONFIG=pkg-config \
         $(host_relax) \
         "$@"
+    # ONE OUTPUT NAME, TWO BUILDS. NetSurf links its executable to a fixed
+    # `nsemblink` at the top of its tree, so a cross build and a host build
+    # overwrite each other -- and make then reports the survivor as up to date,
+    # because it is NEWER than the other build's objects. That is how a
+    # cross-built binary came to be run on the build machine, which fails in a
+    # way that looks like the program crashing rather than the wrong file.
+    cp -f "$NSSRC/netsurf/nsemblink" "$NSSRC/netsurf/nsemblink-$HOST"
+    echo "    -> $NSSRC/netsurf/nsemblink-$HOST"
 }
 
 if [ ! -d "$NSSHARED" ]; then
