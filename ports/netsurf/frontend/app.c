@@ -156,9 +156,17 @@ static void pump_keys(struct gui_window *gw)
 int emblink_app_run(struct gui_window *gw, const char *title);
 int emblink_app_run(struct gui_window *gw, const char *title)
 {
+    /* THE PROGRAM'S NAME FIRST, then the page's. Titling the window with the
+     * document alone put "Vellum" on NetSurf's window when it opened the OS's
+     * start page -- correct, and unreadable as anything but a bug. */
+    char wtitle[128];
+    if (title != NULL && title[0] != '\0')
+        snprintf(wtitle, sizeof wtitle, "NetSurf - %s", title);
+    else
+        snprintf(wtitle, sizeof wtitle, "NetSurf");
+
     void *pixels = NULL;
-    g_app.win = embk_win_create_shared(APP_W, APP_H, 60, 60,
-                                       title != NULL ? title : "NetSurf", &pixels);
+    g_app.win = embk_win_create_shared(APP_W, APP_H, 60, 60, wtitle, &pixels);
     if (g_app.win < 0 || pixels == NULL) {
         fprintf(stderr, "nsemblink: no window (%d)\n", g_app.win);
         return 1;

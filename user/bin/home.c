@@ -94,8 +94,9 @@ static struct app_item g_dock[16] = {
     { "/system/images/terminal.eic", "Terminal", "/data/apps/term/term.elf",         0 },
     { "/system/images/setting.eic",  "Settings", "/data/apps/settings/settings.elf", 0 },
     { "/system/images/file.eic",     "Vellum",   "/data/apps/vellum/vellum.elf",     0 },
+    { "/system/images/file.eic",     "NetSurf",  "/data/apps/nsemblink/nsemblink.elf", 0 },
 };
-static int g_dock_n = 4;
+static int g_dock_n = 5;
 
 /* Fill an item's icon+label from the app's OWN presentation manifest at
  * /data/apps/<name>/<name>.app ("name X" / "icon Y" lines) -- so the desktop

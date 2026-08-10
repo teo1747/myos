@@ -1,0 +1,11 @@
+# What NetSurf may DO. Its namespace (nsemblink.ns) says what it may NAME.
+#
+# The same three classes Vellum gets, for the same reason: a browser runs
+# whatever the network hands it, so it is the program on this machine that
+# most needs to be unable to reach anything it was not given. No audio, no
+# camera, no USB, no raw disk, no debug -- a bug in a foreign HTML parser
+# cannot reach a device that was never granted.
+
+filesystem     # the font, its own resources, local documents
+network        # http and https over our own TCP and TLS
+gpu            # a window is a GPU resource -- without this it cannot draw

@@ -1,0 +1,11 @@
+# What NetSurf may NAME. The other half is nsemblink.caps, which says what it
+# may DO; the kernel enforces both, and a grant here can only ever narrow what
+# the session already holds.
+#
+# It reads three things and writes nothing: the OS's font, NetSurf's own
+# resources (its user-agent stylesheet -- a page never finishes loading
+# without them), and whatever documents ship with the system. Everything else
+# it renders arrives over the network and is never written down, because this
+# port has no cookie jar and no cache on disk yet.
+
+ro /system                  # the font, netsurf's resources, /system/web

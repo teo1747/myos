@@ -90,15 +90,23 @@ int main(int argc, char **argv)
      * started -- the same gap that makes a bare URL need quoting. Supporting
      * the dash-free spelling is a workaround for the shell, and it is written
      * down as one in docs/TODO.md rather than left looking like a preference. */
-    bool windowed = false;
+    /* WINDOWED IS THE DEFAULT, because this is an application: the launcher
+     * spawns it with no arguments at all, and a browser that starts by writing
+     * a file nobody asked for is not one. Headless is what you get when you
+     * NAME an output file -- which is exactly the grading path
+     * (`make web-shots`) and nothing else.
+     *
+     * `window` is also accepted as an explicit first argument: the OS's shell
+     * parses a leading dash as a unary minus, so `-w` never reaches this
+     * program. That is a workaround for the shell, logged as one. */
     if (argc > 1 && (strcmp(argv[1], "-w") == 0 || strcmp(argv[1], "window") == 0)) {
-        windowed = true;
         argv++; argc--;
     }
-    const char *target = argc > 1 ? argv[1] : "about:blank";
+    const char *target = argc > 1 ? argv[1] : "file:///system/web/index.html";
     int width  = argc > 2 ? atoi(argv[2]) : 1100;
     int height = argc > 3 ? atoi(argv[3]) : 900;
-    const char *out = argc > 4 ? argv[4] : "nsrender.ppm";
+    const char *out = argc > 4 ? argv[4] : NULL;
+    bool windowed = (out == NULL);
     nserror err;
 
     g_textdump = getenv("TEXTDUMP") != NULL;
