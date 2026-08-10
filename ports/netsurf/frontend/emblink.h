@@ -87,6 +87,7 @@ int emblink_text_advance(const struct plot_font_style *fstyle,
                          const char *utf8, size_t len);
 /* `y` is the BASELINE, which is what the core passes and what a glyph's
  * bearing is measured from. */
+int  emblink_text_advance_str(const char *utf8);   /* at the chrome's own size */
 void emblink_text_draw(struct emblink_surface *s, int x, int y,
                        const struct plot_font_style *fstyle,
                        const char *utf8, size_t len);

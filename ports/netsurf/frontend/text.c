@@ -117,6 +117,18 @@ int emblink_text_advance(const struct plot_font_style *fstyle,
     return (int)(w + 0.5f);
 }
 
+/* The width of a chrome label at the toolbar's own size -- app.c needs it to
+ * put a caret after the text somebody is typing. */
+int emblink_text_advance_str(const char *utf8)
+{
+    struct plot_font_style f;
+    memset(&f, 0, sizeof f);
+    f.family = PLOT_FONT_FAMILY_SANS_SERIF;
+    f.size = 11 * PLOT_STYLE_SCALE;
+    f.weight = 400;
+    return emblink_text_advance(&f, utf8, strlen(utf8));
+}
+
 /* --- drawing -------------------------------------------------------------- */
 
 /* `y` is the BASELINE, which is what NetSurf passes and what a font's

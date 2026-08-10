@@ -3084,9 +3084,16 @@ Deferred, each named where it bites rather than left to be found:
       and present() is a damage call rather than a 760x500 memcpy per frame.
       window.c was written so the only change was adopting a different buffer,
       which is what it means for the core never to learn where its pixels live.
-- [ ] The app has NO CHROME of its own: no address bar, no back button, no
-      tabs. The URL comes from the command line and the only navigation is
-      following a link. Vellum's own chrome is the model.
+- [x] ~~The app has NO CHROME~~ IT HAS SOME, 2026-08-11: a toolbar with back,
+      forward, reload and an address field you can click, type into and press
+      Enter on. What you type is interpreted the way an address bar has to be
+      -- a leading slash is a file, a bare host is http -- because a field
+      that only accepts what a program would have written is not an address
+      bar. Drawn with the same plotters and font as the document; there is no
+      second drawing stack here and four buttons do not justify one.
+- [ ] Still no TABS, no bookmarks, no find-in-page, no downloads UI, and the
+      address field has no caret movement or selection -- it appends and
+      backspaces. Enough to browse with, not enough to call finished.
 - [ ] `nsemblink -w` does not work from the shell, which parses a leading dash
       as a unary minus; `window` is accepted as a dash-free spelling. That is a
       workaround for the shell, not a preference -- the same gap that makes a

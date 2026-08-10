@@ -34,6 +34,8 @@
 #include "netsurf/keypress.h"
 #include "netsurf/types.h"
 
+#include "desktop/browser_history.h"
+
 #include "emblink.h"
 #include "embk.h"
 
@@ -48,6 +50,18 @@
 #define APP_H 500
 #endif
 
+/* THE CHROME. A browser without it opens one page and can go nowhere, which
+ * is what "not usable" means precisely. NetSurf draws no chrome of its own --
+ * every frontend supplies it -- so this is a toolbar strip above the page:
+ * back, forward, reload, and an address field you can type into.
+ *
+ * Drawn with the same plotters and the same font as the document, because
+ * there is no second drawing stack here and inventing one for four buttons
+ * would be the wrong kind of work. */
+#define TB_H     30            /* toolbar height, in pixels */
+#define BTN_W    28
+#define URL_MAX  512
+
 struct app {
     int       win;
     uint32_t *px;
@@ -56,11 +70,59 @@ struct app {
     int        doc_h;
     bool       dirty;
     uint32_t   last_buttons;
+    /* the address field */
+    char       url[URL_MAX];
+    int        url_len;
+    bool       url_focus;
 };
 
 static struct app g_app;
 
-/* The core's redraw, into the window's own pixels, at the current scroll. */
+/* One label, drawn through the same text path the document uses. */
+static void chrome_text(struct emblink_surface *s, int x, int y,
+                        const char *str, uint32_t colour)
+{
+    plot_font_style_t f;
+    memset(&f, 0, sizeof f);
+    f.family = PLOT_FONT_FAMILY_SANS_SERIF;
+    f.size = 11 * PLOT_STYLE_SCALE;
+    f.weight = 400;
+    f.foreground = colour;
+    f.background = 0x00FFFFFF;
+    emblink_text_draw(s, x, y, &f, str, strlen(str));
+}
+
+static void draw_chrome(struct emblink_surface *s)
+{
+    /* NetSurf's colour word is 0xAABBGGRR -- red LOW -- so these read
+     * backwards from an HTML hex triple. Same convention as plot.c. */
+    const uint32_t bar   = 0x00E8E8E8;
+    const uint32_t line  = 0x00B0B0B0;
+    const uint32_t ink   = 0x00202020;
+    const uint32_t field = 0x00FFFFFF;
+
+    emblink_surface_clip(s, 0, 0, g_app.w, g_app.h);
+    emblink_surface_fill(s, 0, 0, g_app.w, TB_H, bar);
+    emblink_surface_fill(s, 0, TB_H - 1, g_app.w, TB_H, line);
+
+    /* back / forward / reload, as glyphs rather than icons: the font is
+     * already here and three .eic files are three more things to ship. */
+    chrome_text(s, 10,          20, "<", ink);
+    chrome_text(s, 10 + BTN_W,  20, ">", ink);
+    chrome_text(s, 10 + BTN_W*2, 20, "R", ink);
+
+    int fx = 10 + BTN_W * 3 + 6;
+    emblink_surface_fill(s, fx, 4, g_app.w - 8, TB_H - 5, field);
+    emblink_surface_fill(s, fx, 4, g_app.w - 8, 5, line);        /* top edge */
+    chrome_text(s, fx + 6, 20, g_app.url, ink);
+    if (g_app.url_focus) {
+        /* a caret, so it is obvious the field is taking keys */
+        int cx = fx + 6 + emblink_text_advance_str(g_app.url);
+        emblink_surface_fill(s, cx, 7, cx + 1, TB_H - 7, ink);
+    }
+}
+
+/* The core's redraw, into the window's own pixels, below the toolbar. */
 static void repaint(struct gui_window *gw)
 {
     struct emblink_surface *s = emblink_window_surface(gw);
@@ -69,19 +131,55 @@ static void repaint(struct gui_window *gw)
         .background_images = true,
         .plot = &emblink_plotters,
     };
-    struct rect clip = { 0, 0, g_app.w, g_app.h };
+    /* The page lives BELOW the toolbar, so it is clipped to that band and the
+     * document origin is pushed down by it. Getting this wrong draws the page
+     * over the address bar, which looks like the chrome failing to paint. */
+    struct rect clip = { 0, TB_H, g_app.w, g_app.h };
 
     /* White first: the core paints a document's own background, and whatever
      * it does not cover has to be the canvas rather than the last frame. */
     for (size_t i = 0; i < (size_t)g_app.w * g_app.h; i++) g_app.px[i] = 0x00FFFFFF;
 
     emblink_target = s;
-    emblink_surface_clip(s, 0, 0, g_app.w, g_app.h);
-    browser_window_redraw(emblink_window_bw(gw), 0, -g_app.scroll, &clip, &ctx);
+    emblink_surface_clip(s, 0, TB_H, g_app.w, g_app.h);
+    browser_window_redraw(emblink_window_bw(gw), 0, TB_H - g_app.scroll, &clip, &ctx);
+    draw_chrome(s);
     emblink_target = NULL;
 
     embk_win_present(g_app.win, g_app.px, (uint32_t)g_app.w, (uint32_t)g_app.h);
     g_app.dirty = false;
+}
+
+/* Follow whatever is in the address field. */
+static void go(struct gui_window *gw)
+{
+    struct nsurl *u = NULL;
+    char buf[URL_MAX + 8];
+    const char *t = g_app.url;
+
+    /* What people type is not a URL. A bare path is a file and a bare host is
+     * http -- guessing here is the difference between an address bar and a
+     * field that only accepts what a program would have written. */
+    if (t[0] == '/') snprintf(buf, sizeof buf, "file://%s", t);
+    else if (strstr(t, "://") == NULL) snprintf(buf, sizeof buf, "http://%s", t);
+    else snprintf(buf, sizeof buf, "%s", t);
+
+    if (nsurl_create(buf, &u) != NSERROR_OK) return;
+    browser_window_navigate(emblink_window_bw(gw), u, NULL,
+                            BW_NAVIGATE_HISTORY, NULL, NULL, NULL);
+    nsurl_unref(u);
+    g_app.scroll = 0;
+    g_app.dirty = true;
+}
+
+/* Keep the field showing where we actually are, unless it is being edited. */
+static void sync_url(struct gui_window *gw)
+{
+    if (g_app.url_focus) return;
+    struct nsurl *u = browser_window_access_url(emblink_window_bw(gw));
+    if (u == NULL) return;
+    snprintf(g_app.url, sizeof g_app.url, "%s", nsurl_access(u));
+    g_app.url_len = (int)strlen(g_app.url);
 }
 
 static void clamp_scroll(void)
@@ -102,7 +200,8 @@ static void pump_pointer(struct gui_window *gw)
     if (!in.focused) return;
 
     struct browser_window *bw = emblink_window_bw(gw);
-    int dx = in.x, dy = in.y + g_app.scroll;
+    /* Window space -> DOCUMENT space: minus the toolbar, plus the scroll. */
+    int dx = in.x, dy = in.y - TB_H + g_app.scroll;
 
     if (in.wheel != 0) {
         g_app.scroll -= in.wheel * 48;      /* three lines, roughly */
@@ -116,7 +215,28 @@ static void pump_pointer(struct gui_window *gw)
      * is down makes one click open a link as many times as the loop runs. */
     bool now = (in.buttons & 1) != 0;
     bool was = (g_app.last_buttons & 1) != 0;
+
+    if (now && !was && in.y < TB_H) {
+        /* THE TOOLBAR gets the click, not the page. */
+        if (in.x < 10 + BTN_W) {
+            browser_window_history_back(bw, false);
+            g_app.scroll = 0; g_app.dirty = true;
+        } else if (in.x < 10 + BTN_W * 2) {
+            browser_window_history_forward(bw, false);
+            g_app.scroll = 0; g_app.dirty = true;
+        } else if (in.x < 10 + BTN_W * 3) {
+            browser_window_reload(bw, false);
+            g_app.dirty = true;
+        } else {
+            g_app.url_focus = true;         /* clicked the address field */
+            g_app.dirty = true;
+        }
+        g_app.last_buttons = in.buttons;
+        return;
+    }
+
     if (now && !was) {
+        g_app.url_focus = false;            /* clicking the page leaves the field */
         browser_window_mouse_click(bw, BROWSER_MOUSE_PRESS_1, dx, dy);
     } else if (!now && was) {
         browser_window_mouse_click(bw, BROWSER_MOUSE_CLICK_1, dx, dy);
@@ -133,6 +253,30 @@ static void pump_keys(struct gui_window *gw)
     while (embk_key_event_poll(&ev) == 1) {
         if (!ev.pressed) continue;
         struct browser_window *bw = emblink_window_bw(gw);
+
+        /* THE ADDRESS FIELD TAKES EVERY KEY while it is focused -- including
+         * the arrows and PgDn that would otherwise scroll. A field that
+         * scrolls the page while you type in it is not a field. */
+        if (g_app.url_focus) {
+            if (ev.code == '\r' || ev.code == '\n') {
+                g_app.url_focus = false;
+                go(gw);
+            } else if (ev.code == '\b' || ev.code == 0x7F) {
+                if (g_app.url_len > 0) g_app.url[--g_app.url_len] = '\0';
+                g_app.dirty = true;
+            } else if (ev.code == 0x1B) {          /* escape: give up editing */
+                g_app.url_focus = false;
+                sync_url(gw);
+                g_app.dirty = true;
+            } else if (ev.code >= 0x20 && ev.code < 0x7F &&
+                       g_app.url_len < URL_MAX - 1) {
+                g_app.url[g_app.url_len++] = (char)ev.code;
+                g_app.url[g_app.url_len] = '\0';
+                g_app.dirty = true;
+            }
+            continue;
+        }
+
         switch (ev.code) {
         case EMBK_KEY_PGDN: g_app.scroll += g_app.h - 40; g_app.dirty = true; break;
         case EMBK_KEY_PGUP: g_app.scroll -= g_app.h - 40; g_app.dirty = true; break;
@@ -189,6 +333,7 @@ int emblink_app_run(struct gui_window *gw, const char *title)
     if (browser_window_get_extents(emblink_window_bw(gw), true, &dw, &dh) == NSERROR_OK)
         g_app.doc_h = dh;
 
+    sync_url(gw);
     repaint(gw);
 
     for (;;) {
@@ -199,6 +344,8 @@ int emblink_app_run(struct gui_window *gw, const char *title)
 
         /* The core invalidates when a fetch lands or a reflow finishes; that
          * is the signal to draw, not a timer. */
+        sync_url(gw);
+
         if (emblink_window_take_invalid(gw)) {
             if (browser_window_get_extents(emblink_window_bw(gw), true, &dw, &dh) == NSERROR_OK)
                 g_app.doc_h = dh;
