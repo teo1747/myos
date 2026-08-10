@@ -15,8 +15,16 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NSSRC="${NSSRC:-/home/motsou/cross/netsurf/netsurf-all-3.11}"
-PREFIX="${PREFIX:-$NSSRC/inst-emblink}"
 HOST="${HOST:-x86_64-elf}"
+# A HOST build reuses every line of this script with a different triple and its
+# own prefix, so the SAME frontend can be run under a sanitizer on the build
+# machine -- which is the only sane instrument for a wild pointer. See
+# frontend/Makefile.tools for what changes when the triple is not ours.
+if [ "$HOST" = "x86_64-elf" ]; then
+    PREFIX="${PREFIX:-$NSSRC/inst-emblink}"
+else
+    PREFIX="${PREFIX:-$NSSRC/inst-$HOST}"
+fi
 
 [ -d "$NSSRC" ] || { echo "no NetSurf source at $NSSRC (set NSSRC=)" >&2; exit 1; }
 
@@ -43,6 +51,24 @@ component_flags() {
     esac
 }
 
+# The build machine's gcc is newer than the one NetSurf 3.11 was released
+# against, and every component compiles with -Werror. A HOST build is a
+# diagnostic tool, not a shipping artifact, so its warnings are not worth
+# turning into a porting task -- the cross build keeps -Werror exactly as
+# upstream set it.
+# Which libc's headers the port's own small pieces (zlib, our iconv) compile
+# against. Freestanding newlib for the OS; the build machine's own for a host
+# diagnostic build. Getting this wrong links a newlib __errno into a glibc
+# binary, which fails at the very last step of a long build.
+libc_inc() {
+    [ "$HOST" = "x86_64-elf" ] && \
+        echo "-isystem ${EMBLINK_NEWLIB:-$HOME/cross/newlib-c99}/x86_64-elf/include"
+}
+
+host_relax() {
+    [ "$HOST" = "x86_64-elf" ] || echo 'WARNFLAGS=-Wall -w'
+}
+
 build_one() {
     local lib="$1"
     echo "=== $lib"
@@ -50,7 +76,7 @@ build_one() {
     make -C "$NSSRC/$lib" install \
         PREFIX="$PREFIX" NSSHARED="$NSSHARED" HOST="$HOST" \
         COMPONENT_TYPE=lib-static \
-        $(component_flags "$lib")
+        $(component_flags "$lib") $(host_relax)
 }
 
 # THE BROWSER ITSELF. Everything turned off here is a dependency we do not
@@ -83,6 +109,7 @@ build_browser() {
         NETSURF_FB_FONTLIB=internal \
         VLDTARGET="amiga atari beos framebuffer gtk monkey riscos windows emblink" \
         PKGCONFIG=pkg-config PKG_CONFIG=pkg-config \
+        $(host_relax) \
         "$@"
 }
 
@@ -135,8 +162,7 @@ build_zlib() {
     local objs=()
     for c in "$ZSRC"/*.c; do
         local o="$PREFIX/build-zlib/$(basename "${c%.c}").o"
-        "$HOST-gcc" -O2 -mno-red-zone -fno-stack-protector -DHAVE_UNISTD_H \
-            -isystem "${EMBLINK_NEWLIB:-$HOME/cross/newlib-c99}/x86_64-elf/include" \
+        "$HOST-gcc" -O2 -fno-stack-protector -DHAVE_UNISTD_H $(libc_inc) \
             -I"$ZSRC" -c "$c" -o "$o"
         objs+=("$o")
     done
@@ -155,8 +181,7 @@ build_iconv() {
     if [ ! -f "$a" ] || [ "$HERE/compat/iconv.c" -nt "$a" ]; then
         echo "=== libiconv (ours)"
         mkdir -p "$PREFIX/lib"
-        "$HOST-gcc" -O2 -mno-red-zone -fno-stack-protector \
-            -isystem "${EMBLINK_NEWLIB:-$HOME/cross/newlib-c99}/x86_64-elf/include" \
+        "$HOST-gcc" -O2 -fno-stack-protector $(libc_inc) \
             -c "$HERE/compat/iconv.c" -o "$o"
         "$HOST-ar" rcs "$a" "$o"
     fi

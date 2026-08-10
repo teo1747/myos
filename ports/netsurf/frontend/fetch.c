@@ -74,11 +74,22 @@ static const char *fetch_filetype(const char *unix_path)
 /* resource: URLs name the browser's own files. The core asks for a handful by
  * name at startup (adblock.css, default.css, quirks.css, favicon.ico...) and
  * maps each to a real path here. */
+/* Where the browser's own files are. Compiled in, but overridable at RUN time
+ * by NSRESPATH -- the same binary then serves a host diagnostic run out of the
+ * source tree and a real one out of /system, and a path that only exists at
+ * build time is a path nobody can move. */
+static const char *respath(void)
+{
+    const char *env = getenv("NSRESPATH");
+    if (env != NULL && env[0] != '\0') return env;
+    return EMBLINK_RESPATH[0] != '\0' ? EMBLINK_RESPATH : "/system/netsurf";
+}
+
 static struct nsurl *fetch_get_resource_url(const char *path)
 {
     char buf[512];
     struct nsurl *url = NULL;
-    snprintf(buf, sizeof buf, "file://" EMBLINK_RESPATH "/%s", path);
+    snprintf(buf, sizeof buf, "file://%s/%s", respath(), path);
     if (nsurl_create(buf, &url) != NSERROR_OK) return NULL;
     return url;
 }

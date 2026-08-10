@@ -44,10 +44,22 @@ void emblink_surface_clip(struct emblink_surface *s, int x0, int y0, int x1, int
     s->cx0 = x0; s->cy0 = y0; s->cx1 = x1; s->cy1 = y1;
 }
 
+/* NetSurf's colour word is 0xAABBGGRR: RED in the LOW byte, and an alpha where
+ * 0 means OPAQUE -- both the inverse of what everything else here uses. The
+ * surface is 0x00RRGGBB, which is what the compositor takes, so the channels
+ * have to be exchanged rather than copied. Copying them straight through is a
+ * bug that looks like a design decision: the first page rendered came out with
+ * its three columns in believable-but-wrong colours, and the fastest way to be
+ * sure was to read the pixel back and compare it to the stylesheet. */
+static inline uint32_t ns_to_surface(uint32_t c)
+{
+    return ((c & 0x000000FFu) << 16) |      /* R */
+           ( c & 0x0000FF00u)        |      /* G */
+           ((c & 0x00FF0000u) >> 16);       /* B */
+}
+
 /* One solid rectangle, clipped, with the alpha of `argb` honoured as
- * source-over. NetSurf's colours are 0xAABBGGRR (BGR order, and an alpha where
- * 0 is OPAQUE -- the inverse of everyone else's, which is worth stating
- * because getting it backwards paints a page black). */
+ * source-over. */
 void emblink_surface_fill(struct emblink_surface *s, int x0, int y0, int x1, int y1,
                           uint32_t argb)
 {
@@ -60,22 +72,23 @@ void emblink_surface_fill(struct emblink_surface *s, int x0, int y0, int x1, int
     unsigned a = 255 - ((argb >> 24) & 0xFF);      /* NetSurf: 0 == opaque */
     if (a == 0) return;
 
+    uint32_t rgb = ns_to_surface(argb);
     if (a == 255) {                                 /* the common case: no blend */
         for (int y = y0; y < y1; y++) {
             uint32_t *row = s->px + (size_t)y * s->stride;
-            for (int x = x0; x < x1; x++) row[x] = argb & 0x00FFFFFFu;
+            for (int x = x0; x < x1; x++) row[x] = rgb;
         }
         return;
     }
-    unsigned sr = argb & 0xFF, sg = (argb >> 8) & 0xFF, sb = (argb >> 16) & 0xFF;
+    unsigned sr = (rgb >> 16) & 0xFF, sg = (rgb >> 8) & 0xFF, sb = rgb & 0xFF;
     for (int y = y0; y < y1; y++) {
         uint32_t *row = s->px + (size_t)y * s->stride;
         for (int x = x0; x < x1; x++) {
             uint32_t d = row[x];
-            unsigned dr = d & 0xFF, dg = (d >> 8) & 0xFF, db = (d >> 16) & 0xFF;
-            row[x] = (uint32_t)(((sr * a + dr * (255 - a)) / 255)) |
+            unsigned dr = (d >> 16) & 0xFF, dg = (d >> 8) & 0xFF, db = d & 0xFF;
+            row[x] = (uint32_t)(((sr * a + dr * (255 - a)) / 255) << 16) |
                      (uint32_t)(((sg * a + dg * (255 - a)) / 255) << 8) |
-                     (uint32_t)(((sb * a + db * (255 - a)) / 255) << 16);
+                     (uint32_t)(((sb * a + db * (255 - a)) / 255));
         }
     }
 }
@@ -255,14 +268,15 @@ static nserror p_bitmap(const struct redraw_context *ctx, struct bitmap *bitmap,
             const unsigned char *sp = srow + (size_t)(sx >> 16) * 4;
             unsigned a = sp[3];
             if (a == 0) continue;
+            /* the decoded buffer is R,G,B,A in MEMORY order (bitmap.c) */
             if (a == 255) {
-                drow[px] = (uint32_t)sp[0] | ((uint32_t)sp[1] << 8) | ((uint32_t)sp[2] << 16);
+                drow[px] = ((uint32_t)sp[0] << 16) | ((uint32_t)sp[1] << 8) | (uint32_t)sp[2];
             } else {
                 uint32_t d = drow[px];
-                unsigned dr = d & 0xFF, dg = (d >> 8) & 0xFF, db = (d >> 16) & 0xFF;
-                drow[px] = (uint32_t)((sp[0] * a + dr * (255 - a)) / 255) |
+                unsigned dr = (d >> 16) & 0xFF, dg = (d >> 8) & 0xFF, db = d & 0xFF;
+                drow[px] = (uint32_t)(((sp[0] * a + dr * (255 - a)) / 255) << 16) |
                            (uint32_t)(((sp[1] * a + dg * (255 - a)) / 255) << 8) |
-                           (uint32_t)(((sp[2] * a + db * (255 - a)) / 255) << 16);
+                           (uint32_t)((sp[2] * a + db * (255 - a)) / 255);
             }
         }
     }

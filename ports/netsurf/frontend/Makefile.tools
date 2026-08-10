@@ -12,13 +12,27 @@
 
 PKG_CONFIG := pkg-config
 
+# THE SAME FRONTEND, BUILT FOR THE BUILD MACHINE. Everything above the syscall
+# layer is portable C, and the OS's own browser proved what that is worth:
+# render_host.c runs the whole pipeline in two seconds, and the last heap bug
+# of the kind this port is now chasing was found by AddressSanitizer in one run
+# after an hour of stack traces pointing at innocent code. A five-minute boot
+# is the wrong instrument for a wild pointer.
+#
+# Selected by HOST=x86_64-linux-gnu, in which case none of the freestanding
+# setup below applies -- there is a real libc, real startup files, and no
+# linker script.
+EMBLINK_HOSTBUILD := $(filter-out x86_64-elf,$(HOST))
+
 # HOST is x86_64-elf, which is our cross toolchain's own triple, so the
 # buildsystem's default $(HOST)-gcc already resolves correctly. Named here
 # anyway: a frontend that leaves its compiler to be inferred is one environment
 # change away from silently building for the build machine instead.
+ifeq ($(EMBLINK_HOSTBUILD),)
 CC  := $(HOST)-gcc
 CXX := $(HOST)-g++
 AR  := $(HOST)-ar
+endif
 
 # Freestanding userland: the OS's own crt0 provides _start (user/lib/crt0.c),
 # newlib.ld places the image at 0x400000, and libc.a comes from our rebuilt
@@ -33,6 +47,7 @@ EMBLINK_NEWLIB  ?= $(HOME)/cross/newlib-c99
 # file API -- the copy already on the machine was missing it.
 EMBLINK_ZLIB ?= $(PREFIX)
 
+ifeq ($(EMBLINK_HOSTBUILD),)
 CFLAGS  += -mno-red-zone -fno-stack-protector -I$(EMBLINK_ROOT)/user/lib \
            -isystem $(EMBLINK_NEWLIB)/x86_64-elf/include \
            -I$(EMBLINK_ZLIB)/include
@@ -44,3 +59,8 @@ LDFLAGS += -nostartfiles -static -T $(EMBLINK_ROOT)/user/lib/newlib.ld \
            -L$(EMBLINK_NEWLIB)/x86_64-elf/lib -L$(EMBLINK_ZLIB)/lib \
            $(EMBLINK_ROOT)/build/crt0.o $(EMBLINK_ROOT)/build/syscalls.o \
            -lz -lm
+else
+# The host build: a real libc, and the sanitizers that are the point of it.
+CFLAGS  += $(EMBLINK_SAN)
+LDFLAGS += $(EMBLINK_SAN) -lz -lm
+endif

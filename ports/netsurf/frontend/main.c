@@ -183,12 +183,16 @@ int main(int argc, char **argv)
     };
     struct rect clip = { 0, 0, surf->width, surf->height };
 
+    /* browser_window_redraw returns a BOOL, not an nserror -- the one call in
+     * this file that does. Reading its `true` as an error code printed
+     * "redraw: Unknown" on a redraw that had worked perfectly, and sent the
+     * search into the layout for a bug that was in this line. */
     emblink_target = surf;
     emblink_surface_clip(surf, 0, 0, surf->width, surf->height);
-    err = browser_window_redraw(emblink_window_bw(gw), 0, 0, &clip, &ctx);
+    bool drawn = browser_window_redraw(emblink_window_bw(gw), 0, 0, &clip, &ctx);
     emblink_target = NULL;
-    if (err != NSERROR_OK) {
-        fprintf(stderr, "nsemblink: redraw: %s\n", messages_get_errorcode(err));
+    if (!drawn) {
+        fprintf(stderr, "nsemblink: redraw refused\n");
         return 1;
     }
 
