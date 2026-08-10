@@ -16,6 +16,10 @@ What EmbLinkOS's libc does not have, and why each is honest rather than lazy:
   REALPATH  the libc normalises paths (path_abs) but does not resolve symlinks,
             which is the part realpath is for.
   INETATON  inet_pton and inet_addr are there; the older spelling is not.
+  MMAP      the libc's mmap honestly returns MAP_FAILED with ENOSYS. NetSurf
+            has a read() path behind the same switch; taking the mmap one and
+            failing gives "Unable to map memory for file data buffer" on every
+            local file.
   DIRFD /   the *at family needs a directory-relative resolve in the kernel's
   UNLINKAT/ VFS, which it does not have -- paths are resolved from a process
   FSTATAT   namespace root (docs/USERSPACE_v2.md), not from an open fd.
@@ -43,7 +47,14 @@ Any of these becoming true later is a one-line revert of the relevant hunk.
  #undef HAVE_REALPATH
  char *realpath(const char *path, char *resolved_path);
  #endif
-@@ -142,21 +143,22 @@
+@@ -136,27 +137,28 @@
+ #endif
+ 
+ #define HAVE_MMAP
+-#if (defined(_WIN32) || defined(__riscos__) || defined(__HAIKU__) || defined(__BEOS__) || defined(__amigaos4__) || defined(__AMIGA__) || defined(__MINT__))
++#if (defined(_WIN32) || defined(__riscos__) || defined(__HAIKU__) || defined(__BEOS__) || defined(__amigaos4__) || defined(__AMIGA__) || defined(__MINT__) || defined(nsemblink))
+ #undef HAVE_MMAP
+ #endif
  
  #define HAVE_SCANDIR
  #if (defined(_WIN32) ||				\
