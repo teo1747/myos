@@ -1753,7 +1753,64 @@ Every claim above is a number in `tests/web/flex2.html` rather than a
 screenshot to squint at, and the whole set was re-rendered against 17 real
 sites and diffed against the pre-change tree.
 
-### Phase 36 — Lists, and the floats that were quietly dropped ✅
+### Phase 36 — NetSurf, ported: a second browser, on our own stack ✅
+
+`nsemblink "http://example.com/" 800 600 out.ppm` on the booted OS prints
+**[Example Domain]** and writes the page. Fetch, parse, cascade, layout, text,
+pixels — a real browser engine, running on EmbLinkOS.
+
+**Ten libraries cross-built with zero patches to their sources** — wapcaplet,
+parserutils, hubbub (the HTML5 parser), css, dom, nsgif, nsbmp, nsutils,
+utf8proc, nslog. NetSurf's buildsystem cross-compiles on `HOST=x86_64-elf`,
+which is our toolchain's own triple. Their entire external surface is **36
+symbols and our libc already had 31**; the five it lacked were `iconv`
+(a deliberate non-iconv: windows-1252 ↔ UTF-8 from the tables the other
+browser proved, and `EINVAL` for anything else) and `pread`/`pwrite`, which
+belonged in the libc rather than in a port.
+
+Two host tools this machine lacks were **answered rather than acquired**:
+`nsgperf.py` emits what gperf emits (verified against all 106 keywords of
+hubbub's element table, both cases, no false hits on prefixes), and a
+`pkg-config` that answers the only question asked — where the sibling library
+we just built put its headers.
+
+**Two patches, both one line in spirit.** `content/fetch.c` guards the curl
+*include* the way its call site already was; and `utils/config.h` — the file
+that exists so a platform can declare what its libc lacks, with SerenityOS
+already in three of those lists — gains EmbLinkOS for REGEX, SCANDIR,
+REALPATH, INETATON, MMAP and the `*at` family.
+
+**No libcurl and no openssl.** The fetcher is ours, over the kernel's TCP and
+our own TLS 1.3 — so the browser authenticates with the same code the package
+manager does, and two large dependencies never entered the port.
+
+**The frontend is one file per table**, because the table is the seam: a
+scheduler whose re-register *replaces* rather than queues, a viewport that
+does not know whether it is on a screen, text measurement and drawing from a
+single source (answer those from two and the caret lands beside its glyph),
+and twelve plotters — including NetSurf's inverted alpha, where 0 means
+opaque, and its `0xAABBGGRR` colour word, which is red-low against our
+red-high surface. Copying it straight through is a bug that looks like a
+design decision: the first page came out in believable, wrong colours.
+
+It renders in **the OS's own typeface**: `ui/backend/font.c` compiles straight
+into the browser behind a one-line `FONT_NO_BACKEND` seam, so a program with
+no EmUI in it draws with the same rasteriser as the desktop.
+
+Three things the port pushed back into the OS. The kernel was **handing out
+unzeroed heap pages** — a real leak between processes. The **ELF loader
+refused a binary eight ways and returned the same EINVAL for all of them**, so
+"can't run (err 22)" named nothing; each refusal now says which check it was.
+And `make` packs the image with no manual flags again.
+
+The two bugs that cost the most were both **staleness**, and neither was in
+the code being debugged: objects compiled before the config.h patch (half the
+program believing the platform had mmap), and a stale image after packing
+failed while compiling succeeded. Each presented as a deterministic wild
+pointer in a program that was correct on the host. `build.sh` stamps the patch
+set and discards the build directory when it changes.
+
+### Phase 37 — Lists, and the floats that were quietly dropped ✅
 
 Four fixes, all found by pointing `make web-verify` at the sites that were not
 yet at 100% and asking what the missing word had in common.
