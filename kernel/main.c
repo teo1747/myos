@@ -16,6 +16,7 @@
 #include "drivers/timer/hpet.h"
 #include "drivers/timer/rtc.h"
 #include "drivers/bus/pci.h"
+#include "drivers/audio/ac97.h"
 #include "drivers/usb/usb.h"
 #include "drivers/storage/ata.h"
 #include "drivers/storage/ahci.h"
@@ -1753,6 +1754,7 @@ void kernel_main(uint64_t bp_phys) {   /* bp_phys: the boot-protocol record
     // --- Devices ---
     
     pci_init();
+    ac97_init();   // sound out; harmless when no AC97 device is attached
     usb_init();
     ata_init();    // registers ATA drives as block devices internally
     ahci_init();   // runs IDENTIFY per port, stores sector counts

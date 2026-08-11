@@ -83,6 +83,7 @@ KERNEL_SRC = kernel/main.c \
              kernel/drivers/video/gpu.c \
              kernel/drivers/video/bochs_vbe.c \
              kernel/drivers/video/virtio_gpu.c \
+             kernel/drivers/audio/ac97.c \
              kernel/drivers/video/font_8x16.c \
              kernel/drivers/video/console.c \
              kernel/drivers/video/bootanim.c \
@@ -1255,6 +1256,20 @@ DRIVES = -drive format=raw,file=$(IMG),if=ide,index=0 \
 # ARP + ICMP, so `test net` pings the gateway out of the box. Appended to the
 # run targets below. Add hostfwd=tcp::HOST-:GUEST here once TCP (M3) lands.
 NET = -netdev user,id=net0 -device virtio-net,netdev=net0
+
+# AUDIO. AC'97 because it is the smallest device that makes a noise (see
+# kernel/drivers/audio/ac97.c). The BACKEND is the interesting part for
+# testing: `-audiodev wav` writes what the guest played to a file on the host,
+# so `make test-audio` can MEASURE the tone -- frequency and amplitude -- and
+# pass or fail on a number instead of on whether somebody heard something.
+# Override AUDIO_BACKEND=pa (or sdl/alsa) to actually listen.
+AUDIO_BACKEND ?= wav
+AUDIO_WAV     ?= build/audio-out.wav
+ifeq ($(AUDIO_BACKEND),wav)
+  AUDIO = -device AC97,audiodev=snd0 -audiodev wav,id=snd0,path=$(AUDIO_WAV)
+else
+  AUDIO = -device AC97,audiodev=snd0 -audiodev $(AUDIO_BACKEND),id=snd0
+endif
 
 # `make` builds a COMPLETE, CURRENT system: the boot image AND the userland
 # image. embkfs.img was deliberately absent here before, so a plain `make` could
