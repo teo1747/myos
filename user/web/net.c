@@ -178,7 +178,13 @@ static int http_once(const struct url *u, char *out, size_t cap,
     char ckhdr[1088]; ckhdr[0] = 0;
     if (cn) snprintf(ckhdr, sizeof ckhdr, "Cookie: %s\r\n", ck);
 
-    char req[2048];
+    /* 8K, and the length is CHECKED below. snprintf returns what it WOULD have
+     * written, so a request that overflows this buffer used to be sent as
+     * `rl` bytes out of a smaller array -- a truncated request line plus a
+     * read past the end. Unreachable while the cookie header was always empty;
+     * the moment cookies worked, a site with big ones (Google's are) sent a
+     * malformed request and got a 404 for a path that was never there. */
+    char req[8192];
     int rl;
     if (g_post_body) {
         rl = snprintf(req, sizeof req,
@@ -201,6 +207,32 @@ static int http_once(const struct url *u, char *out, size_t cap,
                       "%s"
                       "Connection: close\r\n\r\n",
                       u->path, u->host, ckhdr);
+    }
+    /* If it STILL does not fit, drop the cookies and try again: a request
+     * without them is a working request that loses your session, while a
+     * truncated one is not a request at all. Only then give up. */
+    if (rl < 0 || (size_t)rl >= sizeof req) {
+        rl = snprintf(req, sizeof req,
+                      "%s %s HTTP/1.0\r\n"
+                      "Host: %s\r\n"
+                      "User-Agent: Vellum (EmbLinkOS)\r\n"
+                      "Accept: text/html,*/*\r\n"
+                      "Connection: close\r\n\r\n",
+                      g_post_body ? "POST" : "GET", u->path, u->host);
+        if (rl < 0 || (size_t)rl >= sizeof req) {
+            snprintf(r->err, sizeof r->err, "Request too large to send");
+            x_close(&x);
+            return -1;
+        }
+    }
+    /* THE REQUEST LINE, on the console. A malformed one is invisible from this
+     * side -- the server answers a 404 for a path you never asked for and the
+     * bug looks like it is at the far end. NSREQ=1 to see it. */
+    if (getenv("NSREQ") != NULL) {
+        int n = 0;
+        while (n < rl && req[n] != '\r') n++;
+        fprintf(stderr, "net: [%.*s] pathlen=%d\n", n, req, (int)strlen(u->path));
+        fflush(stderr);
     }
     if (x_send(&x, req, (size_t)rl) < 0) {
         snprintf(r->err, sizeof r->err, "Request failed");

@@ -75,7 +75,15 @@ CFLAGS  += -g -DEMBLINK_NET $(EMBLINK_AUTOINIT) -mno-red-zone -fno-stack-protect
 # archive because that is how the root Makefile produces them.
 # tls_*.o ONLY: url.c is compiled into libemnet above, and naming build/web_url.o
 # here as well is a duplicate definition, not a fallback.
-EMBLINK_TLS_OBJS := $(wildcard $(EMBLINK_ROOT)/build/tls_*.o) -I$(EMBLINK_ROOT)/user/lib \
+EMBLINK_TLS_OBJS := $(wildcard $(EMBLINK_ROOT)/build/tls_*.o)
+
+# THE COMPILE FLAGS, which belong here and not in a list of object files. An
+# earlier edit folded these three includes into EMBLINK_TLS_OBJS above, so
+# CFLAGS silently lost -I user/lib -- and every core file that includes
+# <sys/socket.h> (which this libc provides as an override header) stopped
+# compiling. It only surfaced on a clean rebuild, because the objects from
+# before the edit were still on disk and being linked.
+CFLAGS  += -I$(EMBLINK_ROOT)/user/lib \
            -isystem $(EMBLINK_NEWLIB)/x86_64-elf/include \
            -I$(EMBLINK_ZLIB)/include
 # The OS's startup and syscall layer, exactly as the root Makefile links every

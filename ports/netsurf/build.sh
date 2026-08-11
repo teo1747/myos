@@ -247,9 +247,13 @@ build_emnet() {
                 "$HERE/frontend/app.c" \
                 "$EMBLINK_ROOT/user/web/net.c" "$EMBLINK_ROOT/user/web/url.c" \
                 "$EMBLINK_ROOT/user/web/charset.c")
-    local newest=0 o objs=()
-    for c in "${srcs[@]}"; do [ "$c" -nt "$a" ] && newest=1; done
-    [ -f "$a" ] && [ $newest -eq 0 ] && return 0
+    # ALWAYS REBUILD. The mtime check here was wrong twice and each time it
+    # cost a boot chasing a fix that was not in the binary: net.o kept strings
+    # from a source that had already changed. Six small files compile in under
+    # a second, and a stale archive in a browser port is a bug that presents as
+    # a bug somewhere else entirely -- which is exactly how this port lost two
+    # sessions already (docs/TODO.md, the staleness trap).
+    local o objs=()
     echo "=== libemnet (fetcher + the OS's HTTP/TLS client)"
     mkdir -p "$PREFIX/lib"
     for c in "${srcs[@]}"; do
