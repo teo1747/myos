@@ -102,7 +102,10 @@ int main(int argc, char **argv)
     if (argc > 1 && (strcmp(argv[1], "-w") == 0 || strcmp(argv[1], "window") == 0)) {
         argv++; argc--;
     }
-    const char *target = argc > 1 ? argv[1] : "file:///system/web/index.html";
+    /* NetSurf's OWN welcome page, not the OS's start page -- that one is
+     * Vellum's, titled "Vellum", which made this browser look like it had
+     * opened the other one. A program's default document should be its own. */
+    const char *target = argc > 1 ? argv[1] : "file:///system/netsurf/welcome.html";
     int width  = argc > 2 ? atoi(argv[2]) : 1100;
     int height = argc > 3 ? atoi(argv[3]) : 900;
     const char *out = argc > 4 ? argv[4] : NULL;

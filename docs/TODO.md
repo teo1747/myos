@@ -3113,6 +3113,15 @@ Deferred, each named where it bites rather than left to be found:
       its own decoders (user/web/png.c, jpeg.c); writing content handlers over
       them replaces two ports with one bounded piece of work, and is now the
       single biggest gap between this and a browser you would use.
+- [ ] SHIFTED PUNCTUATION in the address field is unverified, and it is the
+      one thing a URL needs. Typing `https://...` through the QMP harness
+      produced `https;//...` -- a `;` where the `:` should be -- and the fetch
+      failed with "Cannot resolve https;", which is the HTTP client telling
+      the exact truth about a hostname it was really given. That was the
+      HARNESS not holding shift, but the same failure would occur if app.c's
+      key handling drops the shift modifier: it reads ev.code and ignores
+      ev.mods entirely. Check EMBK_KM_* against a real keyboard before
+      trusting `:` `/` `?` `&` from the address bar.
 - [ ] Still no TABS, no bookmarks, no find-in-page, no downloads UI, no
       text selection in the page, and no dragging the scrollbar (it shows
       position; the wheel and keys do the scrolling).
