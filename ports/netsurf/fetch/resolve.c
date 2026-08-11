@@ -21,6 +21,13 @@
 #include "utils/nsurl.h"
 #include "content/urldb.h"
 
+/* THE DECLARATIONS WE ARE IMPLEMENTING, included so the compiler checks them.
+ * Without this the only thing tying these definitions to their callers is the
+ * linker matching a name, which is how a three-argument cookie_header came to
+ * satisfy a five-argument call and corrupt the request path. A prototype that
+ * is copied rather than included is a prototype that can drift. */
+#include "cookie.h"
+
 /* Declared by user/web/html.h, which is not included here: pulling in Vellum's
  * parser header for one prototype would be the coupling this file exists to
  * avoid. The signature is copied and must match. */
@@ -55,58 +62,76 @@ int html_resolve_url(const char *base, const char *href, char *out, size_t cap)
     return rc;
 }
 
-/* COOKIES, through NetSurf's own jar. The OS's HTTP client asks its host
- * program for the Cookie header and hands back the Set-Cookie lines; NetSurf
- * keeps a real jar in urldb with expiry, domain and path matching and the
- * HttpOnly rule. Forwarding to it is how a login sticks -- and how it stays
- * scoped, which a naive "remember every header" would not be.
+/* COOKIES, through NetSurf's own jar (urldb): expiry, domain and path
+ * matching and the HttpOnly rule, rather than remembering strings.
  *
- * In memory only: urldb's file is not loaded or saved yet, so a cookie lives
- * as long as the process. That is the difference between a session cookie and
- * a persistent one, and it is the remaining half of this feature. */
-int cookie_header(const char *url, char *out, size_t cap);
-int cookie_header(const char *url, char *out, size_t cap)
+ * THE SIGNATURES ARE user/web/cookie.h's, EXACTLY. The first version of this
+ * file invented three-argument versions, and C let it: net.c saw cookie.h's
+ * five-argument declaration, the linker matched by name alone, and the
+ * arguments landed in the wrong registers -- so `out` was really `u->path`
+ * and `cap` was really the secure flag. Writing the terminating NUL then
+ * emptied the request path, and every request went out as `GET  HTTP/1.0`.
+ * Google parsed the bare "HTTP/1.0" as an absolute URI and answered "the
+ * requested URL /1.0 was not found", which is a 404 from the far end of the
+ * internet caused by a prototype in this file.
+ *
+ * In memory only: urldb's file is neither loaded nor saved, so a cookie lives
+ * as long as the process. */
+
+/* The `Cookie:` value for host+path, without the header name. Returns the
+ * number of bytes written. */
+size_t cookie_header(const char *host, const char *path, int secure,
+                     char *out, size_t cap)
 {
     struct nsurl *u = NULL;
+    char urlbuf[1024];
     char *jar;
+    size_t n;
 
     if (out == NULL || cap == 0) return 0;
     out[0] = '\0';
-    if (url == NULL) return 0;
-    if (nsurl_create(url, &u) != NSERROR_OK) return 0;
+    if (host == NULL) return 0;
 
-    /* false: HttpOnly cookies are for the network layer, and this IS the
-     * network layer -- but the OS's client puts the string on the wire
-     * verbatim, so asking for them here is what makes HttpOnly mean anything
-     * at all rather than nothing. */
+    /* urldb matches on a URL, not on host+path, and the SCHEME decides
+     * whether a Secure cookie may be sent -- which is the entire point of the
+     * `secure` argument being here. */
+    snprintf(urlbuf, sizeof urlbuf, "%s://%s%s",
+             secure ? "https" : "http", host,
+             (path != NULL && path[0] != '\0') ? path : "/");
+    if (nsurl_create(urlbuf, &u) != NSERROR_OK) return 0;
+
+    /* true: this IS the network layer, and HttpOnly exists to hide a cookie
+     * from scripts rather than from the request that carries it. */
     jar = urldb_get_cookie(u, true);
     nsurl_unref(u);
     if (jar == NULL) return 0;
 
     snprintf(out, cap, "%s", jar);
     free(jar);
-    return (int)strlen(out);
+    n = strlen(out);
+    return n;
 }
 
-/* Every Set-Cookie line in the response, one call. The client hands the whole
- * header block; urldb wants one header at a time. */
-void cookie_take_headers(const char *url, const char *headers, size_t len);
-void cookie_take_headers(const char *url, const char *headers, size_t len)
+/* Every Set-Cookie line in a response header block. Returns how many were
+ * stored -- a server may send several, and they are separate headers rather
+ * than one comma-joined list. */
+int cookie_take_headers(const char *host, const char *headers)
 {
     struct nsurl *u = NULL;
-    const char *p = headers, *end;
+    char urlbuf[1024];
+    const char *p = headers;
+    int stored = 0;
 
-    if (url == NULL || headers == NULL || len == 0) return;
-    if (nsurl_create(url, &u) != NSERROR_OK) return;
+    if (host == NULL || headers == NULL) return 0;
+    snprintf(urlbuf, sizeof urlbuf, "https://%s/", host);
+    if (nsurl_create(urlbuf, &u) != NSERROR_OK) return 0;
 
-    end = headers + len;
-    while (p < end) {
-        const char *eol = memchr(p, '\n', (size_t)(end - p));
-        size_t n = eol != NULL ? (size_t)(eol - p) : (size_t)(end - p);
+    while (*p != '\0') {
+        const char *eol = strchr(p, '\n');
+        size_t n = eol != NULL ? (size_t)(eol - p) : strlen(p);
         while (n > 0 && (p[n - 1] == '\r' || p[n - 1] == ' ')) n--;
 
-        /* case-insensitive "set-cookie:" -- servers spell it every way */
-        if (n > 11) {
+        if (n > 11) {                       /* case-insensitive "set-cookie:" */
             static const char key[] = "set-cookie:";
             size_t i = 0;
             while (i < 11) {
@@ -123,11 +148,12 @@ void cookie_take_headers(const char *url, const char *headers, size_t len)
                 if (vlen >= sizeof line) vlen = sizeof line - 1;
                 memcpy(line, v, vlen);
                 line[vlen] = '\0';
-                urldb_set_cookie(line, u, NULL);
+                if (urldb_set_cookie(line, u, NULL)) stored++;
             }
         }
         if (eol == NULL) break;
         p = eol + 1;
     }
     nsurl_unref(u);
+    return stored;
 }
