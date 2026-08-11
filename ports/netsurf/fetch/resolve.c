@@ -14,10 +14,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "utils/errors.h"
 #include "utils/nsurl.h"
+#include "content/urldb.h"
 
 /* Declared by user/web/html.h, which is not included here: pulling in Vellum's
  * parser header for one prototype would be the coupling this file exists to
@@ -53,23 +55,79 @@ int html_resolve_url(const char *base, const char *href, char *out, size_t cap)
     return rc;
 }
 
-/* COOKIES. NetSurf keeps its own jar (urldb) and applies it inside its own
- * fetchers; ours goes through the OS's HTTP client, which asks the host
- * program for the header. Wiring the two together means teaching the client
- * about urldb, which is a real feature and not a stub -- so these say NOTHING
- * rather than say something wrong, and a session cookie simply does not
- * persist yet. Logged in docs/TODO.md rather than left to be discovered when
- * a login does not stick. */
+/* COOKIES, through NetSurf's own jar. The OS's HTTP client asks its host
+ * program for the Cookie header and hands back the Set-Cookie lines; NetSurf
+ * keeps a real jar in urldb with expiry, domain and path matching and the
+ * HttpOnly rule. Forwarding to it is how a login sticks -- and how it stays
+ * scoped, which a naive "remember every header" would not be.
+ *
+ * In memory only: urldb's file is not loaded or saved yet, so a cookie lives
+ * as long as the process. That is the difference between a session cookie and
+ * a persistent one, and it is the remaining half of this feature. */
 int cookie_header(const char *url, char *out, size_t cap);
 int cookie_header(const char *url, char *out, size_t cap)
 {
-    (void)url;
-    if (out != NULL && cap > 0) out[0] = '\0';
-    return 0;
+    struct nsurl *u = NULL;
+    char *jar;
+
+    if (out == NULL || cap == 0) return 0;
+    out[0] = '\0';
+    if (url == NULL) return 0;
+    if (nsurl_create(url, &u) != NSERROR_OK) return 0;
+
+    /* false: HttpOnly cookies are for the network layer, and this IS the
+     * network layer -- but the OS's client puts the string on the wire
+     * verbatim, so asking for them here is what makes HttpOnly mean anything
+     * at all rather than nothing. */
+    jar = urldb_get_cookie(u, true);
+    nsurl_unref(u);
+    if (jar == NULL) return 0;
+
+    snprintf(out, cap, "%s", jar);
+    free(jar);
+    return (int)strlen(out);
 }
 
+/* Every Set-Cookie line in the response, one call. The client hands the whole
+ * header block; urldb wants one header at a time. */
 void cookie_take_headers(const char *url, const char *headers, size_t len);
 void cookie_take_headers(const char *url, const char *headers, size_t len)
 {
-    (void)url; (void)headers; (void)len;
+    struct nsurl *u = NULL;
+    const char *p = headers, *end;
+
+    if (url == NULL || headers == NULL || len == 0) return;
+    if (nsurl_create(url, &u) != NSERROR_OK) return;
+
+    end = headers + len;
+    while (p < end) {
+        const char *eol = memchr(p, '\n', (size_t)(end - p));
+        size_t n = eol != NULL ? (size_t)(eol - p) : (size_t)(end - p);
+        while (n > 0 && (p[n - 1] == '\r' || p[n - 1] == ' ')) n--;
+
+        /* case-insensitive "set-cookie:" -- servers spell it every way */
+        if (n > 11) {
+            static const char key[] = "set-cookie:";
+            size_t i = 0;
+            while (i < 11) {
+                char c = p[i];
+                if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+                if (c != key[i]) break;
+                i++;
+            }
+            if (i == 11) {
+                char line[1024];
+                size_t vlen = n - 11;
+                const char *v = p + 11;
+                while (vlen > 0 && *v == ' ') { v++; vlen--; }
+                if (vlen >= sizeof line) vlen = sizeof line - 1;
+                memcpy(line, v, vlen);
+                line[vlen] = '\0';
+                urldb_set_cookie(line, u, NULL);
+            }
+        }
+        if (eol == NULL) break;
+        p = eol + 1;
+    }
+    nsurl_unref(u);
 }

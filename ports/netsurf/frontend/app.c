@@ -60,6 +60,7 @@
  * would be the wrong kind of work. */
 #define TB_H     30            /* toolbar height, in pixels */
 #define BTN_W    28
+#define SB_W     10            /* scrollbar */
 #define URL_MAX  512
 
 struct app {
@@ -73,7 +74,9 @@ struct app {
     /* the address field */
     char       url[URL_MAX];
     int        url_len;
+    int        url_caret;       /* insertion point, in bytes */
     bool       url_focus;
+    bool       loading;
 };
 
 static struct app g_app;
@@ -115,11 +118,49 @@ static void draw_chrome(struct emblink_surface *s)
     emblink_surface_fill(s, fx, 4, g_app.w - 8, TB_H - 5, field);
     emblink_surface_fill(s, fx, 4, g_app.w - 8, 5, line);        /* top edge */
     chrome_text(s, fx + 6, 20, g_app.url, ink);
+
+    /* LOADING, said rather than guessed at. A browser that looks identical
+     * whether it is fetching or finished is one you press Enter on twice. */
+    if (g_app.loading) {
+        const uint32_t busy = 0x0020A0F0;                 /* 0xAABBGGRR */
+        emblink_surface_fill(s, fx, TB_H - 4, g_app.w - 8, TB_H - 1, busy);
+    }
+
     if (g_app.url_focus) {
-        /* a caret, so it is obvious the field is taking keys */
+        /* The caret sits after the text BEFORE it, so it tracks the insertion
+         * point rather than always sitting at the end. */
+        char save = g_app.url[g_app.url_caret];
+        g_app.url[g_app.url_caret] = '\0';
         int cx = fx + 6 + emblink_text_advance_str(g_app.url);
+        g_app.url[g_app.url_caret] = save;
         emblink_surface_fill(s, cx, 7, cx + 1, TB_H - 7, ink);
     }
+}
+
+/* THE SCROLLBAR. Not decoration: without it a long page gives no clue that
+ * there is more of it, or how far down you are -- which is most of what makes
+ * a window feel like a browser rather than a picture. */
+static void draw_scrollbar(struct emblink_surface *s)
+{
+    if (g_app.doc_h <= g_app.h - TB_H) return;      /* it all fits */
+
+    /* Dark enough to SEE. The first version used a near-white track and a pale
+     * thumb, which on a white page is an affordance you cannot find -- the
+     * scrollbar existed and told nobody anything. */
+    const uint32_t track = 0x00D8D8D8, thumb = 0x00707070;
+    int top = TB_H, height = g_app.h - TB_H;
+    int x0 = g_app.w - SB_W;
+
+    emblink_surface_clip(s, 0, 0, g_app.w, g_app.h);
+    emblink_surface_fill(s, x0, top, g_app.w, g_app.h, track);
+    emblink_surface_fill(s, x0, top, x0 + 1, g_app.h, 0x00A0A0A0);   /* an edge */
+
+    int span = g_app.doc_h;
+    int th = height * height / span;
+    if (th < 20) th = 20;
+    int ty = top + (int)((long long)g_app.scroll * (height - th) /
+                         (span - height > 0 ? span - height : 1));
+    emblink_surface_fill(s, x0 + 1, ty, g_app.w - 1, ty + th, thumb);
 }
 
 /* The core's redraw, into the window's own pixels, below the toolbar. */
@@ -144,6 +185,7 @@ static void repaint(struct gui_window *gw)
     emblink_surface_clip(s, 0, TB_H, g_app.w, g_app.h);
     browser_window_redraw(emblink_window_bw(gw), 0, TB_H - g_app.scroll, &clip, &ctx);
     draw_chrome(s);
+    draw_scrollbar(s);
     emblink_target = NULL;
 
     embk_win_present(g_app.win, g_app.px, (uint32_t)g_app.w, (uint32_t)g_app.h);
@@ -180,6 +222,7 @@ static void sync_url(struct gui_window *gw)
     if (u == NULL) return;
     snprintf(g_app.url, sizeof g_app.url, "%s", nsurl_access(u));
     g_app.url_len = (int)strlen(g_app.url);
+    g_app.url_caret = g_app.url_len;
 }
 
 static void clamp_scroll(void)
@@ -229,6 +272,7 @@ static void pump_pointer(struct gui_window *gw)
             g_app.dirty = true;
         } else {
             g_app.url_focus = true;         /* clicked the address field */
+            g_app.url_caret = g_app.url_len;
             g_app.dirty = true;
         }
         g_app.last_buttons = in.buttons;
@@ -262,16 +306,37 @@ static void pump_keys(struct gui_window *gw)
                 g_app.url_focus = false;
                 go(gw);
             } else if (ev.code == '\b' || ev.code == 0x7F) {
-                if (g_app.url_len > 0) g_app.url[--g_app.url_len] = '\0';
+                /* delete BEFORE the caret and close the gap -- an editor that
+                 * only truncates the end is a field you cannot correct. */
+                if (g_app.url_caret > 0) {
+                    memmove(g_app.url + g_app.url_caret - 1,
+                            g_app.url + g_app.url_caret,
+                            (size_t)(g_app.url_len - g_app.url_caret) + 1);
+                    g_app.url_caret--;
+                    g_app.url_len--;
+                }
                 g_app.dirty = true;
             } else if (ev.code == 0x1B) {          /* escape: give up editing */
                 g_app.url_focus = false;
                 sync_url(gw);
                 g_app.dirty = true;
+            } else if (ev.code == EMBK_KEY_LEFT) {
+                if (g_app.url_caret > 0) g_app.url_caret--;
+                g_app.dirty = true;
+            } else if (ev.code == EMBK_KEY_RIGHT) {
+                if (g_app.url_caret < g_app.url_len) g_app.url_caret++;
+                g_app.dirty = true;
+            } else if (ev.code == EMBK_KEY_HOME) {
+                g_app.url_caret = 0; g_app.dirty = true;
+            } else if (ev.code == EMBK_KEY_END) {
+                g_app.url_caret = g_app.url_len; g_app.dirty = true;
             } else if (ev.code >= 0x20 && ev.code < 0x7F &&
                        g_app.url_len < URL_MAX - 1) {
-                g_app.url[g_app.url_len++] = (char)ev.code;
-                g_app.url[g_app.url_len] = '\0';
+                memmove(g_app.url + g_app.url_caret + 1,
+                        g_app.url + g_app.url_caret,
+                        (size_t)(g_app.url_len - g_app.url_caret) + 1);
+                g_app.url[g_app.url_caret++] = (char)ev.code;
+                g_app.url_len++;
                 g_app.dirty = true;
             }
             continue;
@@ -310,7 +375,11 @@ int emblink_app_run(struct gui_window *gw, const char *title)
         snprintf(wtitle, sizeof wtitle, "NetSurf");
 
     void *pixels = NULL;
-    g_app.win = embk_win_create_shared(APP_W, APP_H, 60, 60, wtitle, &pixels);
+    /* x=20, not 60: at 760 wide a window placed at 60 has its right-hand
+     * 20 pixels off an 800-wide screen -- which is exactly where the
+     * scrollbar is, so the one affordance that tells you a page is longer
+     * than the window was the part that could not be seen. */
+    g_app.win = embk_win_create_shared(APP_W, APP_H, 20, 46, wtitle, &pixels);
     if (g_app.win < 0 || pixels == NULL) {
         fprintf(stderr, "nsemblink: no window (%d)\n", g_app.win);
         return 1;
@@ -345,6 +414,9 @@ int emblink_app_run(struct gui_window *gw, const char *title)
         /* The core invalidates when a fetch lands or a reflow finishes; that
          * is the signal to draw, not a timer. */
         sync_url(gw);
+
+        bool busy = emblink_window_loading(gw);
+        if (busy != g_app.loading) { g_app.loading = busy; g_app.dirty = true; }
 
         if (emblink_window_take_invalid(gw)) {
             if (browser_window_get_extents(emblink_window_bw(gw), true, &dw, &dh) == NSERROR_OK)

@@ -101,8 +101,13 @@ build_one() {
 #    tool that generates its DOM bindings -- is built from the same bundle by
 #    build_nsgenbind below. No JS is how brave and github lose a fifth of
 #    their text.)
-#   PNG/JPEG/ -- the image handlers want libpng and libjpeg; the OS has its own
-#   WEBP/JXL     decoders and they will be wired to NetSurf's own handlers
+#   GIF/BMP   -- ON: libnsgif and libnsbmp are NetSurf's own decoders, already
+#                cross-built in the library stack above, so these cost nothing
+#                but the switch. A browser with no images at all is not one.
+#   PNG/JPEG/ -- still off: those handlers want libpng and libjpeg, which are
+#   WEBP/JXL     separate ports. The OS has its own decoders (user/web/png.c,
+#                jpeg.c) and connecting them to NetSurf's handler interface is
+#                the bounded piece of work that replaces those two ports
 #   PSL/NSLOG -- optional, and neither is load-bearing for a first render
 #
 # PKGCONFIG is named explicitly because the buildsystem only sets it for cross
@@ -119,7 +124,7 @@ build_browser() {
         PREFIX="$PREFIX" NSSHARED="$NSSHARED" HOST="$HOST" TARGET=emblink \
         NETSURF_USE_CURL=NO NETSURF_USE_OPENSSL=NO NETSURF_USE_DUKTAPE=YES \
         NETSURF_USE_PNG=NO NETSURF_USE_JPEG=NO NETSURF_USE_JPEGXL=NO \
-        NETSURF_USE_WEBP=NO NETSURF_USE_BMP=NO NETSURF_USE_GIF=NO \
+        NETSURF_USE_WEBP=NO NETSURF_USE_BMP=YES NETSURF_USE_GIF=YES \
         NETSURF_USE_NSPSL=NO NETSURF_USE_NSLOG=NO NETSURF_USE_UTF8PROC=YES \
         NETSURF_USE_NSSVG=NO NETSURF_USE_ROSPRITE=NO NETSURF_USE_VIDEO=NO \
         NETSURF_USE_LIBICONV_PLUG=NO NETSURF_USE_HARU_PDF=NO \

@@ -3091,9 +3091,31 @@ Deferred, each named where it bites rather than left to be found:
       that only accepts what a program would have written is not an address
       bar. Drawn with the same plotters and font as the document; there is no
       second drawing stack here and four buttons do not justify one.
-- [ ] Still no TABS, no bookmarks, no find-in-page, no downloads UI, and the
-      address field has no caret movement or selection -- it appends and
-      backspaces. Enough to browse with, not enough to call finished.
+- [x] ~~The address field has no caret~~ It has one: left/right/home/end move
+      it, and typing and backspace act AT it rather than only at the end.
+- [x] ~~No scrollbar~~ There is one, and it took two goes: the first used a
+      near-white track on a white page, so the affordance existed and told
+      nobody anything.
+- [x] ~~No loading indication~~ A bar under the address field while the
+      throbber is running. A browser that looks identical whether it is
+      fetching or finished is one you press Enter on twice.
+- [x] ~~Cookies do not persist~~ Wired to NetSurf's own jar (urldb): the OS's
+      HTTP client asks for the Cookie header and hands back the Set-Cookie
+      lines, and urldb does expiry, domain/path matching and HttpOnly. IN
+      MEMORY ONLY -- urldb's file is neither loaded nor saved, so a cookie
+      lives as long as the process. That is the difference between a session
+      cookie and a persistent one and it is the remaining half.
+- [x] ~~No images at all~~ GIF and BMP are on: libnsgif and libnsbmp are
+      NetSurf's own decoders and were already in the cross-built stack, so
+      these cost nothing but the switch.
+- [ ] PNG and JPEG -- the two formats that actually matter -- are still off,
+      because NetSurf's handlers for them want libpng and libjpeg. The OS has
+      its own decoders (user/web/png.c, jpeg.c); writing content handlers over
+      them replaces two ports with one bounded piece of work, and is now the
+      single biggest gap between this and a browser you would use.
+- [ ] Still no TABS, no bookmarks, no find-in-page, no downloads UI, no
+      text selection in the page, and no dragging the scrollbar (it shows
+      position; the wheel and keys do the scrolling).
 - [ ] `nsemblink -w` does not work from the shell, which parses a leading dash
       as a unary minus; `window` is accepted as a dash-free spelling. That is a
       workaround for the shell, not a preference -- the same gap that makes a

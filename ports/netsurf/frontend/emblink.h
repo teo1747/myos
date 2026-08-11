@@ -69,6 +69,7 @@ bool                   emblink_window_settled(struct gui_window *gw);
 bool                   emblink_window_resize(struct gui_window *gw, int w, int h);
 bool                   emblink_window_adopt(struct gui_window *gw, uint32_t *px, int w, int h);
 bool                   emblink_window_take_invalid(struct gui_window *gw);
+bool                   emblink_window_loading(struct gui_window *gw);
 
 /* --- the clock ------------------------------------------------------------
  * NetSurf schedules callbacks in milliseconds and expects someone to run them.

@@ -157,6 +157,13 @@ bool emblink_window_settled(struct gui_window *gw)
     return gw != NULL && gw->loaded && !gw->loading;
 }
 
+/* Is a load in flight right now? The throbber the core starts and stops IS
+ * the answer; the app draws a bar from it. */
+bool emblink_window_loading(struct gui_window *gw)
+{
+    return gw != NULL && gw->loading;
+}
+
 static void win_set_title(struct gui_window *gw, const char *title)
 {
     if (gw == NULL || title == NULL) return;
