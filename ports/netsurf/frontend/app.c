@@ -95,14 +95,27 @@ static void chrome_text(struct emblink_surface *s, int x, int y,
     emblink_text_draw(s, x, y, &f, str, strlen(str));
 }
 
+/* THE DESKTOP'S OWN PALETTE, taken from ui/theme/theme.c's light theme rather
+ * than invented here -- the toolbar was grey rectangles that matched nothing
+ * else on the screen. NetSurf's colour word is 0xAABBGGRR (red LOW), so each
+ * of these reads backwards from the #RRGGBB in the theme file: surface_alt
+ * #F4F5F7 becomes 0x00F7F5F4. Getting that the wrong way round is the same
+ * red/blue swap plot.c already had, and it looks like a colour scheme rather
+ * than a bug. */
+#define TH_SURFACE_ALT 0x00F7F5F4   /* 244,245,247 -- the toolbar */
+#define TH_SURFACE     0x00FFFFFF   /* 255,255,255 -- the field   */
+#define TH_BORDER      0x00ECE8E6   /* 230,232,236 */
+#define TH_BORDER_STR  0x00DDD6D2   /* 210,214,221 */
+#define TH_TEXT        0x001C1817   /* 23,24,28    */
+#define TH_TEXT_SEC    0x006E615B   /* 91,97,110   */
+#define TH_ACCENT      0x00E55754   /* 84,87,229   */
+
 static void draw_chrome(struct emblink_surface *s)
 {
-    /* NetSurf's colour word is 0xAABBGGRR -- red LOW -- so these read
-     * backwards from an HTML hex triple. Same convention as plot.c. */
-    const uint32_t bar   = 0x00E8E8E8;
-    const uint32_t line  = 0x00B0B0B0;
-    const uint32_t ink   = 0x00202020;
-    const uint32_t field = 0x00FFFFFF;
+    const uint32_t bar   = TH_SURFACE_ALT;
+    const uint32_t line  = TH_BORDER;
+    const uint32_t ink   = TH_TEXT;
+    const uint32_t field = TH_SURFACE;
 
     emblink_surface_clip(s, 0, 0, g_app.w, g_app.h);
     emblink_surface_fill(s, 0, 0, g_app.w, TB_H, bar);
@@ -110,19 +123,31 @@ static void draw_chrome(struct emblink_surface *s)
 
     /* back / forward / reload, as glyphs rather than icons: the font is
      * already here and three .eic files are three more things to ship. */
-    chrome_text(s, 10,          20, "<", ink);
-    chrome_text(s, 10 + BTN_W,  20, ">", ink);
-    chrome_text(s, 10 + BTN_W*2, 20, "R", ink);
+    /* The arrows in the desktop's secondary ink, so they read as controls
+     * rather than as page text that happens to be up here. */
+    chrome_text(s, 12,           20, "\xE2\x80\xB9", TH_TEXT_SEC);   /* ‹ */
+    chrome_text(s, 12 + BTN_W,   20, "\xE2\x80\xBA", TH_TEXT_SEC);   /* › */
+    chrome_text(s, 12 + BTN_W*2, 20, "\xE2\x9F\xB3", TH_TEXT_SEC);   /* ⟳ */
 
+    /* The address WELL: an inset surface with a hairline, which is how every
+     * other input on this desktop is drawn (ui/kit, "input wells"). */
     int fx = 10 + BTN_W * 3 + 6;
-    emblink_surface_fill(s, fx, 4, g_app.w - 8, TB_H - 5, field);
-    emblink_surface_fill(s, fx, 4, g_app.w - 8, 5, line);        /* top edge */
+    int fw = g_app.w - 10;
+    emblink_surface_fill(s, fx, 4, fw, TB_H - 5, field);
+    emblink_surface_fill(s, fx, 4, fw, 5, TH_BORDER_STR);            /* top */
+    emblink_surface_fill(s, fx, TB_H - 6, fw, TB_H - 5, TH_BORDER);  /* bottom */
+    emblink_surface_fill(s, fx, 4, fx + 1, TB_H - 5, TH_BORDER);     /* left */
+    emblink_surface_fill(s, fw - 1, 4, fw, TB_H - 5, TH_BORDER);     /* right */
+    if (g_app.url_focus) {   /* focus ring, in the accent, like the toolkit */
+        emblink_surface_fill(s, fx, 4, fw, 5, TH_ACCENT);
+        emblink_surface_fill(s, fx, TB_H - 6, fw, TB_H - 5, TH_ACCENT);
+    }
     chrome_text(s, fx + 6, 20, g_app.url, ink);
 
     /* LOADING, said rather than guessed at. A browser that looks identical
      * whether it is fetching or finished is one you press Enter on twice. */
     if (g_app.loading) {
-        const uint32_t busy = 0x0020A0F0;                 /* 0xAABBGGRR */
+        const uint32_t busy = TH_ACCENT;   /* the desktop's indigo, not a random orange */
         emblink_surface_fill(s, fx, TB_H - 4, g_app.w - 8, TB_H - 1, busy);
     }
 
@@ -133,7 +158,7 @@ static void draw_chrome(struct emblink_surface *s)
         g_app.url[g_app.url_caret] = '\0';
         int cx = fx + 6 + emblink_text_advance_str(g_app.url);
         g_app.url[g_app.url_caret] = save;
-        emblink_surface_fill(s, cx, 7, cx + 1, TB_H - 7, ink);
+        emblink_surface_fill(s, cx, 8, cx + 1, TB_H - 8, TH_ACCENT);
     }
 }
 
@@ -147,13 +172,13 @@ static void draw_scrollbar(struct emblink_surface *s)
     /* Dark enough to SEE. The first version used a near-white track and a pale
      * thumb, which on a white page is an affordance you cannot find -- the
      * scrollbar existed and told nobody anything. */
-    const uint32_t track = 0x00D8D8D8, thumb = 0x00707070;
+    const uint32_t track = TH_SURFACE_ALT, thumb = TH_BORDER_STR;
     int top = TB_H, height = g_app.h - TB_H;
     int x0 = g_app.w - SB_W;
 
     emblink_surface_clip(s, 0, 0, g_app.w, g_app.h);
     emblink_surface_fill(s, x0, top, g_app.w, g_app.h, track);
-    emblink_surface_fill(s, x0, top, x0 + 1, g_app.h, 0x00A0A0A0);   /* an edge */
+    emblink_surface_fill(s, x0, top, x0 + 1, g_app.h, TH_BORDER);    /* an edge */
 
     int span = g_app.doc_h;
     int th = height * height / span;
@@ -289,6 +314,45 @@ static void pump_pointer(struct gui_window *gw)
     g_app.last_buttons = in.buttons;
 }
 
+/* WHAT THE KEY ACTUALLY MEANS.
+ *
+ * embk_key_event.code is the UNSHIFTED ASCII and the shift state lives in
+ * .mods -- so a frontend that reads code alone gets ';' when you press colon,
+ * '/' when you press question mark, and lower case for every capital. Which
+ * means you cannot type "https://" or any host with a capital in it: the
+ * address bar was unusable for the one thing an address bar is for, and it
+ * looked like the network failing rather than the keyboard.
+ *
+ * US layout, because that is what the kernel's keymap produces (and dvorak,
+ * which shares this punctuation). Caps Lock affects letters ONLY -- a caps
+ * lock that also shifted the number row would be a different bug in the same
+ * place. */
+static unsigned short shift_char(unsigned short c, unsigned char mods)
+{
+    bool shift = (mods & EMBK_KM_SHIFT) != 0;
+    bool caps  = (mods & EMBK_KM_CAPS) != 0;
+
+    if (c >= 'a' && c <= 'z') {
+        /* shift XOR caps: both held is lower case, which is what a keyboard
+         * does and what a naive `if (shift || caps)` gets wrong. */
+        return (shift != caps) ? (unsigned short)(c - 32) : c;
+    }
+    if (!shift) return c;
+
+    switch (c) {
+    case '1': return '!';  case '2': return '@';  case '3': return '#';
+    case '4': return '$';  case '5': return '%';  case '6': return '^';
+    case '7': return '&';  case '8': return '*';  case '9': return '(';
+    case '0': return ')';
+    case '-': return '_';  case '=': return '+';
+    case '[': return '{';  case ']': return '}';  case '\\': return '|';
+    case ';': return ':';  case '\'': return '"';
+    case ',': return '<';  case '.': return '>';  case '/': return '?';
+    case '`': return '~';
+    default:  return c;
+    }
+}
+
 static void pump_keys(struct gui_window *gw)
 {
     struct embk_key_event ev;
@@ -302,6 +366,7 @@ static void pump_keys(struct gui_window *gw)
          * the arrows and PgDn that would otherwise scroll. A field that
          * scrolls the page while you type in it is not a field. */
         if (g_app.url_focus) {
+            unsigned short ch = shift_char(ev.code, ev.mods);
             if (ev.code == '\r' || ev.code == '\n') {
                 g_app.url_focus = false;
                 go(gw);
@@ -330,12 +395,12 @@ static void pump_keys(struct gui_window *gw)
                 g_app.url_caret = 0; g_app.dirty = true;
             } else if (ev.code == EMBK_KEY_END) {
                 g_app.url_caret = g_app.url_len; g_app.dirty = true;
-            } else if (ev.code >= 0x20 && ev.code < 0x7F &&
+            } else if (ch >= 0x20 && ch < 0x7F &&
                        g_app.url_len < URL_MAX - 1) {
                 memmove(g_app.url + g_app.url_caret + 1,
                         g_app.url + g_app.url_caret,
                         (size_t)(g_app.url_len - g_app.url_caret) + 1);
-                g_app.url[g_app.url_caret++] = (char)ev.code;
+                g_app.url[g_app.url_caret++] = (char)ch;
                 g_app.url_len++;
                 g_app.dirty = true;
             }
@@ -352,9 +417,12 @@ static void pump_keys(struct gui_window *gw)
         default:
             /* Anything else belongs to the page -- a form field, a shortcut
              * the document installed. The core decides, not this loop. */
-            if (ev.code != 0 && ev.code < 0x80 &&
-                browser_window_key_press(bw, (uint32_t)ev.code))
+            {
+            unsigned short pch = shift_char(ev.code, ev.mods);
+            if (pch != 0 && pch < 0x80 &&
+                browser_window_key_press(bw, (uint32_t)pch))
                 g_app.dirty = true;
+            }
             break;
         }
         clamp_scroll();

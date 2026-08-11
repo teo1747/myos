@@ -3113,8 +3113,15 @@ Deferred, each named where it bites rather than left to be found:
       its own decoders (user/web/png.c, jpeg.c); writing content handlers over
       them replaces two ports with one bounded piece of work, and is now the
       single biggest gap between this and a browser you would use.
-- [ ] SHIFTED PUNCTUATION in the address field is unverified, and it is the
-      one thing a URL needs. Typing `https://...` through the QMP harness
+- [x] ~~SHIFTED PUNCTUATION was dropped~~ FIXED, and it was the reason the
+      browser could not be used. embk_key_event.code is the UNSHIFTED ASCII
+      with the shift state in .mods, and app.c read code alone -- so ':' typed
+      as ';', '?' as '/', and every capital came out lower case. You could not
+      type "https://" or any host with a capital in it. A US shift map (which
+      dvorak shares for punctuation) plus caps-lock-affects-letters-only, and
+      shift XOR caps rather than shift OR caps. Verified with a real shift
+      press through QMP: the field now reads http://example.com and navigates.
+      OLD NOTE, kept because it was the misdiagnosis: Typing `https://...` through the QMP harness
       produced `https;//...` -- a `;` where the `:` should be -- and the fetch
       failed with "Cannot resolve https;", which is the HTTP client telling
       the exact truth about a hostname it was really given. That was the
@@ -3122,6 +3129,12 @@ Deferred, each named where it bites rather than left to be found:
       key handling drops the shift modifier: it reads ev.code and ignores
       ev.mods entirely. Check EMBK_KM_* against a real keyboard before
       trusting `:` `/` `?` `&` from the address bar.
+- [ ] The chrome uses the desktop's PALETTE (ui/theme light theme) but not the
+      toolkit: it is drawn with NetSurf's plotters, so there are no rounded
+      corners, no hover states and no EmUI widgets. Drawing it with em.h would
+      mean running two retained-mode UIs in one process; the realistic path is
+      a chromeless window (EMBK_WINF_CHROMELESS exists) with the app drawing
+      an EmUI-shaped bar itself.
 - [ ] Still no TABS, no bookmarks, no find-in-page, no downloads UI, no
       text selection in the page, and no dragging the scrollbar (it shows
       position; the wheel and keys do the scrolling).
