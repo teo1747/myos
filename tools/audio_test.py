@@ -24,6 +24,10 @@ OUT = os.path.join(ROOT, "build", "audio-out.wav")
 SOCK = os.path.join(ROOT, "build", "audio-ser.sock")
 SCRATCH = os.path.join(ROOT, "build", "audio-persist.img")
 HZ = 440
+# HOW LONG it must be. A tone can be exactly right and the sound still cut
+# short -- which is what the streaming path did for three iterations, at the
+# length of its prefill regardless of how much was queued behind it.
+MIN_SECONDS = os.environ.get("AUDIO_MIN_SECONDS", "0.4")
 # WHICH path is under test. The kernel self-test proves the driver; `beep`
 # proves the whole stack -- a program asking for the speaker, the capability
 # check, the syscalls, and the same hardware underneath.
@@ -97,7 +101,7 @@ def main():
             q.kill()
 
     for line in out.splitlines():
-        if "audio" in line.lower() or "[cmd]" in line:
+        if "audio" in line.lower() or "ac97" in line.lower() or "[cmd]" in line:
             print("  guest: %s" % line.strip())
 
     if "PLAYED" not in out and "played" not in out:
@@ -108,7 +112,8 @@ def main():
     # The guest saying PLAYED is NOT the result. This is.
     return subprocess.call([sys.executable,
                             os.path.join(ROOT, "tools", "audio_check.py"),
-                            OUT, "--hz", str(HZ)], cwd=ROOT)
+                            OUT, "--hz", str(HZ),
+                            "--min-seconds", MIN_SECONDS], cwd=ROOT)
 
 
 if __name__ == "__main__":

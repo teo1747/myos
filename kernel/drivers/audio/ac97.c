@@ -148,14 +148,28 @@ void ac97_set_last(int last)
      * exactly where a program streams, which is what `beep` found: 0.03s of
      * audio out of half a second, and the checker called it silence. */
     uint16_t sr = inw((uint16_t)(g_ac97.bus + AC97_PO_SR));
-    if (sr & (AC97_SR_BCIS | AC97_SR_LVBCI))
-        outw((uint16_t)(g_ac97.bus + AC97_PO_SR), sr);   /* write-1-to-clear */
+    bool halted = (sr & AC97_SR_LVBCI) != 0;
 
+    /* MOVE THE GOALPOST FIRST, and only touch anything else if the device has
+     * actually stopped. Rewriting CR on every extend is what kept a stream at
+     * the length of its prefill no matter how much was queued after it: the
+     * control write restarts the run rather than continuing it, so the device
+     * walked the descriptors (CIV reached 29 of a 94-buffer stream) while the
+     * speaker only ever heard the first burst. A one-shot never showed it --
+     * it writes CR once. */
     outb((uint16_t)(g_ac97.bus + AC97_PO_LVI), (uint8_t)last);
-    /* Re-assert RUN: if the device reached the old LVI and halted before the
-     * next buffer arrived, LVI alone does not start it again. An underrun
-     * should cost a gap, not the rest of the sound. */
-    outb((uint16_t)(g_ac97.bus + AC97_PO_CR), AC97_CR_IOCE | AC97_CR_RPBM);
+
+    if (halted) {
+        /* It DID reach the old end and stop. Clear the latch -- while it is
+         * set, a new LVI does not restart anything -- and run again. An
+         * underrun costs a gap, not the rest of the sound. */
+        outw((uint16_t)(g_ac97.bus + AC97_PO_SR), (uint16_t)(sr & (AC97_SR_BCIS | AC97_SR_LVBCI)));
+        outb((uint16_t)(g_ac97.bus + AC97_PO_CR), AC97_CR_IOCE | AC97_CR_RPBM);
+    } else if (sr & AC97_SR_BCIS) {
+        /* Buffer-completed is routine bookkeeping and must be cleared, but it
+         * is NOT a reason to touch the control register. */
+        outw((uint16_t)(g_ac97.bus + AC97_PO_SR), AC97_SR_BCIS);
+    }
 }
 
 /* Start the DMA walking descriptors 0..last inclusive. */
@@ -185,7 +199,10 @@ bool ac97_done(int last)
     uint16_t sr = inw((uint16_t)(g_ac97.bus + AC97_PO_SR));
     if (sr & (AC97_SR_BCIS | AC97_SR_LVBCI))
         outw((uint16_t)(g_ac97.bus + AC97_PO_SR), sr);  /* write-1-to-clear */
-    return civ > (uint8_t)last || (sr & AC97_SR_LVBCI) != 0;
+    bool done = civ > (uint8_t)last || (sr & AC97_SR_LVBCI) != 0;
+    if (done) kprintf("ac97: done civ=%u last=%d sr=0x%x\n",
+                      (unsigned)civ, last, (unsigned)sr);
+    return done;
 }
 
 void ac97_stop(void)

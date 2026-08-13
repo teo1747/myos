@@ -2146,6 +2146,10 @@ web-verify:
 # that reports success while emitting silence fails here.
 test-audio: $(IMG) $(EMBKFS_MASTER)
 	@python3 tools/audio_test.py
+	@# ...and the STREAMING path, which is a different thing: the kernel
+	@# self-test fills every descriptor before starting, so it never exercised
+	@# extending the range under a running device -- where the real bug was.
+	@AUDIO_CMD="run /data/apps/beep/beep.elf" python3 tools/audio_test.py
 
 .PHONY: test-audio
 
