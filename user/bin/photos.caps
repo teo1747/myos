@@ -1,0 +1,12 @@
+# Photos -- what the viewer may DO. The other half is photos.ns, which says
+# what it may NAME; the kernel enforces both, and a class here can only ever
+# narrow what the session already holds.
+#
+# A picture viewer runs a DECODER over files it did not write, which is the
+# same exposure a browser has in miniature: a malformed JPEG is an attacker's
+# input reaching a Huffman decoder. So it gets the two classes it cannot work
+# without and nothing else -- no network, no audio, no USB, no raw disk. A bug
+# in the resampler cannot reach a device that was never granted.
+
+filesystem     # read the pictures, and the font the chrome is set in
+gpu            # a window is a GPU resource -- without this it cannot draw

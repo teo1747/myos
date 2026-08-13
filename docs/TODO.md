@@ -3911,3 +3911,47 @@ so they match directly.
 
 It found a bug in one boot that an afternoon of elimination had not:
 `gctr <- gcm_seal <- tls_record_seal <- tls_close <- vnet_fetch`.
+
+## Media apps (Photos, and what comes next)
+
+Three apps were asked for, from scratch rather than ported: a picture viewer,
+an MP3 player, and video. They are not the same size of job and the honest
+scoping is recorded here rather than discovered later.
+
+### Photos — SHIPPED
+- [x] PNG + JPEG over our own decoders, EXIF orientation, folder as album,
+      zoom/fit/1:1, drag to pan, our chrome (traffic lights).
+- [x] AREA-AVERAGE resampling (`user/photos/resample.c`) instead of the
+      compositor's bilinear, which is right for magnifying and aliases when
+      shrinking. Measured: area off by 1 where bilinear is off by 101 on a
+      checkerboard (`make test-photos`); on the metal, a band-limited zone
+      plate at 50% gives std 0.7 in the outer field and std 86.5 in the centre.
+- [ ] No GIF, no BMP, no WebP, no interlaced PNG, no progressive JPEG (the
+      decoders say EUNSUP honestly rather than showing something wrong).
+- [ ] No rotate/crop/save -- the namespace grant is READ-ONLY on purpose, so
+      adding editing means widening authority, which should be a decision and
+      not a side effect.
+- [ ] No thumbnail strip, no slideshow, no full-screen mode.
+- [ ] A viewer icon. `photos.app` points at `file.eic` because the icon set has
+      no picture glyph -- the art is user-supplied (`icons/masters/`).
+- [ ] Decoding is SYNCHRONOUS: a very large JPEG stalls the frame it lands on.
+      The resampler is already viewport-bounded, so this is decode only.
+
+### MP3 player — NEXT
+- [ ] MPEG-1 Layer III decoder from nothing: bit reservoir, Huffman tables,
+      scalefactors, requantisation, stereo modes, alias reduction, IMDCT and
+      the polyphase synthesis filterbank. This is a real DSP job, not a
+      weekend's parsing, and it is the reason the audio stack was built first.
+- [ ] Verify by MEASUREMENT, the way audio already is: decode a known tone on
+      the HOST, compare against the reference, and only then put it on metal.
+
+### Video — SCOPED HONESTLY, NOT PROMISED
+- [ ] The MP4/ISO-BMFF container is a parser and is achievable.
+- [ ] H.264 is NOT. A conformant decoder is tens of thousands of lines
+      (CABAC, deblocking, B-frames, multiple reference frames) and would run
+      far slower than real time under TCG even if written. Claiming "like VLC"
+      and delivering a slideshow would be worse than saying this now.
+- [ ] The achievable version is a container demuxer plus a codec we can
+      actually decode in real time -- MJPEG reuses the JPEG decoder we already
+      have and ship. That is real video playback and it is not H.264, and the
+      difference should be stated in the app rather than glossed.

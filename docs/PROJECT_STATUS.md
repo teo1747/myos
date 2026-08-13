@@ -2034,6 +2034,23 @@ Full list, kept current: `TODO.md`. Summary of the ones most likely to bite:
 - ATA: both IDE channels now fully interrupt-driven and DMA-capable
   (Phase 21 fixed the secondary channel — see Phase 21 above); AHCI is
   still port-0-only.
+- Audio: AC'97 output works end to end — driver (`kernel/drivers/audio/`),
+  a device-independent PCM sink, and syscalls 93/94/95 gated on
+  `EMBK_CAP_AUDIO`. `beep` is a ring-3 program that asks for the speaker
+  and gets it. ONE stream at a time by design (a second opener gets
+  `EBUSY`): mixing needs a resampling/clipping policy, and a wrong mixer
+  makes every program quieter and none of them correct. No capture, no
+  userspace volume, no Intel HDA. Verified by MEASURING the WAV QEMU
+  writes (`make test-audio`), never by ear.
+- Photos: the picture viewer (`user/bin/photos.c` + `user/photos/`) reads
+  PNG and JPEG through the browser's own decoders and resamples by AREA
+  AVERAGE rather than leaving it to the compositor's bilinear blitter —
+  which is right for magnifying and aliases badly when shrinking. On the
+  metal, the outer field of a band-limited zone plate at 50% measures
+  std 0.7 (flat, as it must be) while the centre measures std 86.5 (every
+  representable ring kept). EXIF orientation applied; the folder is an
+  album; read-only namespace. `make test-photos`, `make photo-probe`,
+  `tools/app_shot.py`.
 
 ### User Mode / Process
 - User pointers are now validated (`access_ok`/`copy_from_user`/

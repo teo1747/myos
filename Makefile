@@ -1191,7 +1191,7 @@ libembk: build/libembk.so
 # posixdemo.c is filtered out for the same reason as hello.c: it's a plain
 # static-newlib console program with its own rule above, NOT an EmUI app to be
 # linked against libembk.so.
-EMUI_APP_SRCS := $(filter-out user/bin/init.c user/bin/hello.c user/bin/posixdemo.c user/bin/ioracer.c user/bin/crasher.c user/bin/httpget.c user/bin/httpd.c user/bin/udptest.c user/bin/wget.c user/bin/tlstest.c user/bin/pkgfetch.c user/bin/sockdemo.c user/bin/nbsock.c user/bin/gitclone.c user/bin/gitpush.c user/bin/pkg.c user/bin/pkgbuild.c user/bin/pkgprobe.c user/bin/emlibc_net.c user/bin/emlibc_demo.c user/bin/emlibc_caps.c user/bin/emlibc_embxapp.c user/bin/emlibc_math.c user/bin/mathself.c user/bin/capchild.c user/bin/capspawn.c user/bin/capreload.c user/bin/capgpu.c user/bin/capfs.c user/bin/vellum.c user/bin/js.c, $(wildcard user/bin/*.c))
+EMUI_APP_SRCS := $(filter-out user/bin/init.c user/bin/hello.c user/bin/posixdemo.c user/bin/ioracer.c user/bin/crasher.c user/bin/httpget.c user/bin/httpd.c user/bin/udptest.c user/bin/wget.c user/bin/tlstest.c user/bin/pkgfetch.c user/bin/sockdemo.c user/bin/nbsock.c user/bin/gitclone.c user/bin/gitpush.c user/bin/pkg.c user/bin/pkgbuild.c user/bin/pkgprobe.c user/bin/emlibc_net.c user/bin/emlibc_demo.c user/bin/emlibc_caps.c user/bin/emlibc_embxapp.c user/bin/emlibc_math.c user/bin/mathself.c user/bin/capchild.c user/bin/capspawn.c user/bin/capreload.c user/bin/capgpu.c user/bin/capfs.c user/bin/vellum.c user/bin/js.c user/bin/photos.c, $(wildcard user/bin/*.c))
 EMUI_APPS     := $(patsubst user/bin/%.c,build/%.elf,$(EMUI_APP_SRCS))
 
 # One compile rule for any EmUI app object (newlib CFLAGS + the toolkit
@@ -1209,6 +1209,57 @@ build/%.o: user/bin/%.c user/lib/embk.h | $(BUILD)
 build/%.elf: build/%.o build/crt0.o build/syscalls.o build/libembk.so
 	$(USER_CC) $(NEWLIB_DYN_LDFLAGS) build/crt0.o build/syscalls.o $< \
 	    build/libembk.so -lc -lm -lgcc $(NEWLIB_DYN_WL) -o $@
+
+# Photos -- the picture viewer. Like vellum it needs more than one object, so
+# it gets an explicit rule and is filtered out of the generic EmUI link above.
+# It shares the browser's decoders rather than carrying its own: png.c and
+# jpeg.c already decode to exactly the premultiplied BGRA the toolkit blits,
+# and a second copy of a JPEG decoder is a second place for a bug to live.
+build/photos.o: user/bin/photos.c user/photos/photo.h user/lib/embk.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) $(UIDEMO_INC) -Iuser/photos -c $< -o $@
+build/photo_decode.o: user/photos/decode.c user/photos/photo.h user/web/png.h user/web/jpeg.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/photos -Iuser/web -c $< -o $@
+build/photo_resample.o: user/photos/resample.c user/photos/photo.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/photos -c $< -o $@
+build/photo_album.o: user/photos/album.c user/photos/photo.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -Iuser/photos -c $< -o $@
+
+PHOTOS_OBJS := build/photos.o build/photo_decode.o build/photo_resample.o \
+               build/photo_album.o build/web_png.o build/web_jpeg.o build/pkg_inflate.o
+
+build/photos.elf: build/crt0.o build/syscalls.o $(PHOTOS_OBJS) build/libembk.so
+	$(USER_CC) $(NEWLIB_DYN_LDFLAGS) build/crt0.o build/syscalls.o $(PHOTOS_OBJS) \
+	    build/libembk.so -lc -lm -lgcc $(NEWLIB_DYN_WL) -o $@
+
+# The viewer's resampler, measured on the HOST. The claim the app makes is
+# checkable arithmetic -- shrinking produces the area average of the pixels
+# each output pixel covers -- and this reports it as a number next to what the
+# compositor's bilinear blitter would have produced on the same input. See
+# user/photos/photo_test.c for why the comparison is the point.
+.PHONY: test-photos
+test-photos: | $(BUILD)
+	$(HOSTCC) -O2 -Wall -Iuser/photos -o build/photo_test \
+	    user/photos/photo_test.c user/photos/resample.c
+	./build/photo_test
+
+# photo_probe -- the whole decode/orient/resample path on the host, so a
+# picture that renders wrong can be diagnosed in two seconds instead of a boot.
+# The same reflex as `make browser-render`.
+build/photo_probe: user/photos/photo_probe.c user/photos/decode.c \
+                   user/photos/resample.c user/web/png.c user/web/jpeg.c \
+                   user/lib/inflate.c | $(BUILD)
+	$(HOSTCC) -O2 -w -Iuser/photos -Iuser/web -Iuser/lib -o $@ $^
+.PHONY: photo-probe
+photo-probe: build/photo_probe $(PICTURES_STAMP)
+	@for f in data/pictures/*; do ./build/photo_probe "$$f"; done
+
+# The sample album, generated rather than checked in -- see tools/mkpictures.py.
+PICTURES_STAMP := build/.pictures.stamp
+$(PICTURES_STAMP): tools/mkpictures.py system/web/photo.jpg | $(BUILD)
+	python3 tools/mkpictures.py
+	@touch $@
+.PHONY: pictures
+pictures: $(PICTURES_STAMP)
 
 # home links one thing the generic rule does not: the shared reader for an
 # app's declared authority (user/lib/appauth.c). An explicit rule beats the
@@ -1421,7 +1472,7 @@ EMBKFS_APPS := build/init.elf build/primtest.elf build/hello.elf build/posixdemo
                build/pk_v11/pkgprobe.pkg build/pk_wide/pkgprobe.pkg \
                $(CXX_APPS) $(PY_APPS) $(GIT_APPS) $(TCC_APPS) $(EMUI_APPS) \
                $(if $(HAVE_QJS),build/js.elf,) \
-               build/vellum.elf \
+               build/vellum.elf build/photos.elf \
                $(if $(wildcard $(NS_PREFIX)/lib/libdom.a),build/nsprobe.elf build/nsemblink.elf,)
 
 # STAGED_APPS: binaries built OUTSIDE this tree and dropped into build/ to be
@@ -1483,7 +1534,7 @@ icons: $(ICONS_STAMP)
 EMBKFS_CONTENT := $(shell find system data -type f 2>/dev/null) \
                   $(shell find system data -type d 2>/dev/null)
 
-embkfs.img embkfs_tree.img &: tools/embkfs_mkfs/mkfs_embkfs.py $(EMBKFS_APPS) $(STAGED_APPS) $(PREBUILT_APPS) build/kernel.embdbg build/libembk.so $(if $(HAVE_TCC),build/libtcc1.o) build/emlink_dynstubs.o $(wildcard build/*.elf) $(wildcard build/*.embx) $(wildcard user/bin/*.ns) $(wildcard user/bin/*.caps) $(wildcard user/bin/*.app) $(ICONS_STAMP) $(EMBKFS_CONTENT)
+embkfs.img embkfs_tree.img &: tools/embkfs_mkfs/mkfs_embkfs.py $(EMBKFS_APPS) $(STAGED_APPS) $(PREBUILT_APPS) build/kernel.embdbg build/libembk.so $(if $(HAVE_TCC),build/libtcc1.o) build/emlink_dynstubs.o $(wildcard build/*.elf) $(wildcard build/*.embx) $(wildcard user/bin/*.ns) $(wildcard user/bin/*.caps) $(wildcard user/bin/*.app) $(ICONS_STAMP) $(PICTURES_STAMP) $(EMBKFS_CONTENT)
 	@# Drift guard: mkfs packs every build/*.elf it finds, but make only knows
 	@# about $(EMBKFS_APPS). Anything in the first set and not the second lands
 	@# on the image yet never triggers a rebuild -- a stale-image bug that is

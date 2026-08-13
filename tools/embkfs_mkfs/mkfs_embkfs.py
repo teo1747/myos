@@ -850,6 +850,12 @@ def discover_userland_objects(build_dir="build"):
     # browser must have something to open before it can reach a network.
     objects.extend(_tree_objects("system/web", b"system/web/", (".html", ".png", ".jpg", ".json", ".css")))
     objects.extend(_tree_objects("system/js", b"system/js/", (".js",)))
+    # The sample album Photos opens when it is launched with no argument (from
+    # the dock, which is how it is normally launched). Under /data because it
+    # is USER content the viewer only reads -- see user/bin/photos.ns -- and
+    # generated at build time by tools/mkpictures.py rather than checked in.
+    objects.extend(_tree_objects("data/pictures", b"data/pictures/",
+                                 (".png", ".jpg", ".jpeg")))
     # NetSurf's own resources: its user-agent stylesheet and the pages it
     # serves for about:. The core fetches these through resource: URLs at
     # startup and a page never finishes loading without them -- which looks

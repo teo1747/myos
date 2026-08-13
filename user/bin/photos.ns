@@ -1,0 +1,11 @@
+# Photos -- what the viewer may NAME. The other half is photos.caps.
+#
+# READ-ONLY everywhere, deliberately. A viewer has no reason to write: it does
+# not edit, it does not cache, it keeps no state worth persisting. Declaring
+# that here means a bug in it cannot damage a picture even in principle, which
+# is a stronger statement than "the code has no write calls in it" -- that is a
+# property of today's code, and this is a property of the process.
+
+ro /system                  # its font and chrome resources
+ro /data/pictures           # the sample album it opens with no argument
+ro $HOME                    # the user's own pictures, wherever they keep them
