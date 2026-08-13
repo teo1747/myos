@@ -1236,6 +1236,19 @@ build/photos.elf: build/crt0.o build/syscalls.o $(PHOTOS_OBJS) build/libembk.so
 # each output pixel covers -- and this reports it as a number next to what the
 # compositor's bilinear blitter would have produced on the same input. See
 # user/photos/photo_test.c for why the comparison is the point.
+# The MP3 frame layer, on the host. Point it at any real .mp3:
+#   make test-mp3 MP3=/path/to/file.mp3
+# The frame chain is SELF-CHECKING -- where the next frame starts is computed
+# from this one's header, so walking a whole file without hunting for a sync
+# word proves every bitrate/samplerate/padding field was read correctly, a few
+# thousand times in a row, on a file nobody wrote for this test.
+MP3 ?=
+.PHONY: test-mp3
+test-mp3: | $(BUILD)
+	$(HOSTCC) -O2 -Wall -Iuser/audio/mp3 -o build/mp3_test \
+	    user/audio/mp3/mp3_test.c user/audio/mp3/bits.c user/audio/mp3/frame.c
+	./build/mp3_test $(MP3)
+
 .PHONY: test-photos
 test-photos: | $(BUILD)
 	$(HOSTCC) -O2 -Wall -Iuser/photos -o build/photo_test \
