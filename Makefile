@@ -2132,6 +2132,15 @@ web-verify:
 # reader actually judges -- whether it is in the right PLACE -- by putting our
 # render and Firefox's side by side as pictures and comparing where the words
 # ended up. Not a pixel diff: our fonts and colours are our own.
+# Sound, end to end and MEASURED: boots headless with an AC'97 and a WAV sink,
+# drives the kernel's serial console to play a tone, then checks the file's
+# frequency and amplitude on this machine. Nobody has to listen, and a driver
+# that reports success while emitting silence fails here.
+test-audio: $(IMG) $(EMBKFS_MASTER)
+	@python3 tools/audio_test.py
+
+.PHONY: test-audio
+
 web-shots:
 	@$(MAKE) --no-print-directory build/browser_render
 	@python3 tools/web_shots.py $(PAGES)

@@ -43,6 +43,7 @@
 #include "ipc/channel.h"
 #include "ipc/endpoint.h"
 #include "ipc/pipe.h"
+#include "drivers/audio/ac97.h"
 
 static struct fat32_volume *g_fat32 = NULL;
 static bool g_has_fat32 = false;
@@ -386,6 +387,7 @@ static void selftests_print_commands(void)
     kprintf("  test blockrace\n");
     kprintf("  test usercopy\n");
     kprintf("  test pmm\n");
+    kprintf("  test audio\n");
     kprintf("  test caps\n");
     kprintf("  test spawncaps\n");
     kprintf("  test embx\n");
@@ -555,6 +557,81 @@ int selftests_handle_command(const char *cmd)
 
     if (strcmp(cmd, "test list") == 0) {
         selftests_print_commands();
+        return 1;
+    }
+
+    /* AUDIO: play a tone the HOST can measure.
+     *
+     * The point of this test is that it does not ask anyone to listen. QEMU is
+     * run with `-audiodev wav`, so what the guest plays lands in a file on the
+     * build machine, and tools/audio_check.py reads that file back and checks
+     * the frequency and amplitude. A driver that runs, reports success and
+     * emits silence -- which is exactly what an AC'97 with an unmuted-codec
+     * bug does -- fails here on a number.
+     *
+     * 440 Hz because it is unambiguous in a spectrum and nobody has to trust
+     * a description of what they heard. Half a second: long enough to measure,
+     * short enough that the test is not a wait. */
+    if (strcmp(cmd, "test audio") == 0) {
+        if (!ac97_present()) {
+            kprintf("\n[cmd] test audio: NO DEVICE (add -device AC97 to the QEMU line)\n");
+            return 1;
+        }
+
+        const uint32_t rate  = ac97_sample_rate();
+        const uint32_t percb = ac97_frames_per_buffer();
+        const uint32_t want  = rate / 2;            /* half a second */
+        const int      tone  = 440;
+
+        /* One buffer at a time, generated straight into the descriptor: a
+         * half-second of stereo S16 is 96 KB, which is not going on a kernel
+         * stack and does not need to exist all at once. */
+        static int16_t chunk[4096];                 /* frames * 2 channels */
+        uint32_t done = 0;
+        int last = -1;
+
+        for (int i = 0; i < 32 && done < want; i++) {
+            uint32_t n = want - done;
+            if (n > percb) n = percb;
+            if (n > (sizeof chunk / sizeof chunk[0]) / 2)
+                n = (sizeof chunk / sizeof chunk[0]) / 2;
+
+            for (uint32_t f = 0; f < n; f++) {
+                /* A square wave, deliberately: it needs no sin() in the
+                 * kernel (there is no libm here and a table would be one more
+                 * thing to get wrong), its fundamental is exactly `tone`, and
+                 * a zero-crossing count on the host recovers that frequency
+                 * without an FFT. Quarter amplitude so nothing clips. */
+                uint32_t period = rate / (uint32_t)tone;
+                int16_t v = ((done + f) % period) < (period / 2) ? 8000 : -8000;
+                chunk[f * 2 + 0] = v;               /* left  */
+                chunk[f * 2 + 1] = v;               /* right */
+            }
+            uint32_t took = ac97_fill(i, chunk, n);
+            if (took == 0) break;
+            done += took;
+            last = i;
+        }
+
+        if (last < 0) {
+            kprintf("\n[cmd] test audio: FAILED to fill any buffer\n");
+            return 1;
+        }
+
+        kprintf("audio: playing %u frames of %d Hz across %d buffers\n",
+                done, tone, last + 1);
+        ac97_play(last);
+
+        /* Wait for the device to walk the list, bounded -- a driver that never
+         * starts must fail rather than hang the console. */
+        int spins = 0;
+        while (!ac97_done(last) && spins < 2000) { for (volatile int d = 0; d < 200000; d++) {} spins++; }
+        ac97_stop();
+
+        kprintf("\n[cmd] test audio: %s (%u frames, %d Hz; check the WAV with "
+                "tools/audio_check.py)\n",
+                spins < 2000 ? "PLAYED" : "TIMED OUT waiting for the device",
+                done, tone);
         return 1;
     }
 
