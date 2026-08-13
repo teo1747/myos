@@ -1,0 +1,7 @@
+# What beep may DO. One class: it writes to the speaker and nothing else --
+# no filesystem, no network, no gpu. The narrowest capability set of any
+# program on this image, and a useful demonstration that a program CAN be
+# that narrow: the kernel refuses the audio syscalls without this line, and
+# refuses everything else because it is absent.
+
+audio

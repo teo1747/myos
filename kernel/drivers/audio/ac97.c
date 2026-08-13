@@ -125,6 +125,39 @@ uint32_t ac97_fill(int i, const int16_t *frames, uint32_t nframes)
     return take;
 }
 
+/* Which descriptor the device is playing RIGHT NOW. Everything above this
+ * file schedules against it: a ring that writes past the current index
+ * overwrites audio that has not been heard yet. */
+uint8_t ac97_civ(void)
+{
+    if (!g_ac97.present) return 0;
+    return inb((uint16_t)(g_ac97.bus + AC97_PO_CIV));
+}
+
+/* Extend how far the list is valid, without restarting. This is how a stream
+ * differs from a one-shot: the device keeps walking and the writer keeps
+ * moving the goalpost ahead of it. */
+void ac97_set_last(int last)
+{
+    if (!g_ac97.present) return;
+
+    /* CLEAR THE STATUS FIRST. When the device reaches LVI it halts and latches
+     * "last valid buffer completed"; while that bit is set, writing a new LVI
+     * and re-asserting RUN does not restart it. The one-shot path never sees
+     * this -- it fills every descriptor before starting -- so the bug lives
+     * exactly where a program streams, which is what `beep` found: 0.03s of
+     * audio out of half a second, and the checker called it silence. */
+    uint16_t sr = inw((uint16_t)(g_ac97.bus + AC97_PO_SR));
+    if (sr & (AC97_SR_BCIS | AC97_SR_LVBCI))
+        outw((uint16_t)(g_ac97.bus + AC97_PO_SR), sr);   /* write-1-to-clear */
+
+    outb((uint16_t)(g_ac97.bus + AC97_PO_LVI), (uint8_t)last);
+    /* Re-assert RUN: if the device reached the old LVI and halted before the
+     * next buffer arrived, LVI alone does not start it again. An underrun
+     * should cost a gap, not the rest of the sound. */
+    outb((uint16_t)(g_ac97.bus + AC97_PO_CR), AC97_CR_IOCE | AC97_CR_RPBM);
+}
+
 /* Start the DMA walking descriptors 0..last inclusive. */
 void ac97_play(int last)
 {
@@ -132,6 +165,12 @@ void ac97_play(int last)
 
     outl((uint16_t)(g_ac97.bus + AC97_PO_BDBAR), (uint32_t)g_ac97.bdl_phys);
     outb((uint16_t)(g_ac97.bus + AC97_PO_CR), AC97_CR_IOCE);
+    /* CLEAR THE LATCHED STATUS BEFORE STARTING. "Last valid buffer completed"
+     * stays set from whatever ran before, and ac97_done() reads it -- so a
+     * fresh playback reported itself finished the instant it began, the writer
+     * closed the device, and the sound was cut to whatever had been prefilled.
+     * Exactly 0.18s of a 0.5s beep, which is the prefill and nothing else. */
+    outw((uint16_t)(g_ac97.bus + AC97_PO_SR), AC97_SR_BCIS | AC97_SR_LVBCI);
     /* LVI LAST: this is the write that tells the device how far the list is
      * valid, and therefore the one that starts it moving. */
     outb((uint16_t)(g_ac97.bus + AC97_PO_LVI), (uint8_t)last);

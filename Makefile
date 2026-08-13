@@ -84,6 +84,7 @@ KERNEL_SRC = kernel/main.c \
              kernel/drivers/video/bochs_vbe.c \
              kernel/drivers/video/virtio_gpu.c \
              kernel/drivers/audio/ac97.c \
+             kernel/drivers/audio/audio.c \
              kernel/drivers/video/font_8x16.c \
              kernel/drivers/video/console.c \
              kernel/drivers/video/bootanim.c \
@@ -746,6 +747,13 @@ iconv-test:
 
 .PHONY: iconv-test
 
+# beep: the first program to use the audio syscalls, and the first user of
+# EMBK_CAP_AUDIO. Plain newlib link -- sound needs no toolkit.
+build/beep.o: user/bin/beep.c user/lib/embk.h | $(BUILD)
+	$(USER_CC) $(NEWLIB_CFLAGS) -c $< -o $@
+build/beep.elf: build/crt0.o build/syscalls.o build/beep.o user/lib/newlib.ld
+	$(USER_CC) $(NEWLIB_LDFLAGS) build/crt0.o build/syscalls.o build/beep.o -lc -lgcc -o $@
+
 build/wget.o: user/bin/wget.c user/lib/embk.h user/lib/embk_socket.h user/lib/tls/tls.h | $(BUILD)
 	$(USER_CC) $(NEWLIB_CFLAGS) $(TLS_LIB_INC) -c $< -o $@
 build/wget.elf: build/crt0.o build/syscalls.o build/wget.o $(TLS_LIB_OBJS) user/lib/newlib.ld
@@ -1407,7 +1415,7 @@ EMBKFS_APPS := build/init.elf build/primtest.elf build/hello.elf build/posixdemo
                build/capchild.elf build/capspawn.elf build/capreload.elf build/capgpu.elf build/capfs.elf build/capchild.embx \
                build/crasher.elf build/httpget.elf build/httpd.elf build/udptest.elf build/wget.elf build/tlstest.elf build/pkgfetch.elf build/sockdemo.elf build/nbsock.elf build/gitclone.elf build/gitpush.elf \
                build/emlibc_demo.elf build/emlibc_net.elf build/emlibc_caps.elf build/emlibc_math.elf $(if $(wildcard $(HOST_EMBLD)),build/emlibc_embxapp.embx,) $(if $(wildcard $(HOST_EMBCC)),build/mathself.embx,) \
-               build/shell.elf build/sysinfo.elf build/tally.elf \
+               build/shell.elf build/sysinfo.elf build/tally.elf build/beep.elf \
                build/embbuild.elf build/pkg.elf build/pkgbuild.elf \
                build/pkgprobe.elf build/pkgprobe.embx build/pkgprobe.pkg \
                build/pk_v11/pkgprobe.pkg build/pk_wide/pkgprobe.pkg \

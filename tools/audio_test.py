@@ -24,6 +24,10 @@ OUT = os.path.join(ROOT, "build", "audio-out.wav")
 SOCK = os.path.join(ROOT, "build", "audio-ser.sock")
 SCRATCH = os.path.join(ROOT, "build", "audio-persist.img")
 HZ = 440
+# WHICH path is under test. The kernel self-test proves the driver; `beep`
+# proves the whole stack -- a program asking for the speaker, the capability
+# check, the syscalls, and the same hardware underneath.
+CMD = os.environ.get("AUDIO_CMD", "test audio")
 
 
 def boot():
@@ -47,7 +51,7 @@ def boot():
     return subprocess.Popen(argv, cwd=ROOT, stdout=log, stderr=log)
 
 
-def drive(boot_wait, play_wait):
+def drive(cmd, boot_wait, play_wait):
     s = None
     for _ in range(90):
         try:
@@ -75,7 +79,7 @@ def drive(boot_wait, play_wait):
             seen += b
 
     pump(boot_wait)
-    s.sendall(b"test audio\n")
+    s.sendall(cmd.encode() + b"\n")
     pump(play_wait)
     return seen.decode("utf-8", "replace")
 
@@ -84,7 +88,7 @@ def main():
     print("=== test-audio: booting with an AC'97 and a WAV sink")
     q = boot()
     try:
-        out = drive(75, 120)
+        out = drive(CMD, 75, 140)
     finally:
         q.terminate()
         try:
@@ -96,8 +100,9 @@ def main():
         if "audio" in line.lower() or "[cmd]" in line:
             print("  guest: %s" % line.strip())
 
-    if "test audio: PLAYED" not in out:
+    if "PLAYED" not in out and "played" not in out:
         print("=== test-audio: FAIL -- the guest did not report playing")
+        print(out[-600:])
         return 1
 
     # The guest saying PLAYED is NOT the result. This is.

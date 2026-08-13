@@ -95,6 +95,12 @@ def main():
     want_hz = 440.0
     if "--hz" in sys.argv:
         want_hz = float(sys.argv[sys.argv.index("--hz") + 1])
+    # How long it SHOULD be. Without this a truncated stream passes on tone
+    # alone: 0.16s of a 0.5s beep is the right note and the wrong sound, and
+    # the only thing that catches it is asserting the length.
+    min_sec = 0.05
+    if "--min-seconds" in sys.argv:
+        min_sec = float(sys.argv[sys.argv.index("--min-seconds") + 1])
 
     try:
         fmt, raw = read_wav(path)
@@ -108,8 +114,10 @@ def main():
              a["nonsilent"] * 100, a["hz"]))
 
     fails = []
-    if a["seconds"] < 0.05:
-        fails.append("almost nothing was played (%.3fs)" % a["seconds"])
+    if a["seconds"] < min_sec:
+        fails.append("only %.3fs played, expected at least %.2fs -- the tone can "
+                     "be right and the sound still be cut short"
+                     % (a["seconds"], min_sec))
     if a["nonsilent"] < 0.5:
         fails.append("mostly SILENCE (%.0f%% non-silent) -- muted codec, or the "
                      "DMA never ran" % (a["nonsilent"] * 100))

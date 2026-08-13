@@ -937,6 +937,35 @@ static inline int embk_screen_luma(int x, int y, int w, int h) {
 
 /* Park my own window. The process keeps running and its dock dot stays lit;
  * clicking that dock icon calls embk_win_restore and brings it back. */
+/* --- sound ------------------------------------------------------------------
+ * Interleaved stereo, 16-bit signed, at embk_audio_rate(). One process owns
+ * the device at a time; a second gets EBUSY rather than a silently shared
+ * stream. Every call needs the `audio` capability -- declare it in the app's
+ * .caps or these return -EPERM before touching the hardware.
+ *
+ * The write is SHORT-WRITE by design: it returns how many frames the ring
+ * took, and a program feeds the rest next time round. Treating a short write
+ * as an error is how a caller ends up dropping the middle of a sound. */
+static inline uint32_t embk_audio_rate(void) {
+    return (uint32_t)embk_syscall1(EMBK_SYS_audio_open, 1);   /* query, no claim */
+}
+static inline int embk_audio_open(void) {
+    return (int)embk_syscall1(EMBK_SYS_audio_open, 0);
+}
+/* Returns frames accepted (may be 0 when the ring is full), or -errno. */
+static inline int embk_audio_write(const int16_t *frames, uint32_t nframes) {
+    return (int)embk_syscall2(EMBK_SYS_audio_write,
+                              (int64_t)(intptr_t)frames, (int64_t)nframes);
+}
+/* 1 once the hardware has played everything queued. Ask before exiting, or
+ * the tail of the sound goes with the process. */
+static inline int embk_audio_drained(void) {
+    return (int)embk_syscall1(EMBK_SYS_audio_close, 1);
+}
+static inline int embk_audio_close(void) {
+    return (int)embk_syscall1(EMBK_SYS_audio_close, 0);
+}
+
 static inline int embk_win_minimize(int win) {
     return (int)embk_syscall1(EMBK_SYS_win_minimize, win);
 }

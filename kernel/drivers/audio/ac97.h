@@ -22,6 +22,9 @@ uint32_t ac97_frames_per_buffer(void);
 /* Copy interleaved S16 stereo into descriptor `i`; returns frames taken. */
 uint32_t ac97_fill(int i, const int16_t *frames, uint32_t nframes);
 
+uint8_t  ac97_civ(void);      /* descriptor being played now */
+void     ac97_set_last(int last);  /* extend the valid range, keep running */
+
 void ac97_play(int last);     /* walk descriptors 0..last, inclusive */
 bool ac97_done(int last);     /* has it walked past `last` yet?      */
 void ac97_stop(void);
