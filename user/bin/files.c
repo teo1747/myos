@@ -140,7 +140,7 @@ static void folder_cell(int index) {
         if (e->is_dir) {
             /* Every folder uses the same bitmap, but must retain an independent
              * interaction identity or their hover states become shared. */
-            if (ImageButtonKey("/system/images/icon-files.pam", 62, e))
+            if (ImageButtonKey("/system/images/pam/icon-files.pam", 62, e))
                 enter_dir(e->name);
         } else {
             if (IconButton(IconDoc).frame(62, 62).font(Title).clicked())
@@ -198,14 +198,14 @@ static void app(void) {
                     Text("Files").heading();
                 }
                 Divider();
-                sidebar_image_item("/system/images/icon-home.pam",      "Home",      home);
-                sidebar_image_item("/system/images/icon-star.pam",      "Desktop",   desktop);
-                sidebar_image_item("/system/images/icon-documents.pam", "Documents", documents);
-                sidebar_image_item("/system/images/icon-downloads.pam", "Downloads", downloads);
-                sidebar_image_item("/system/images/icon-music.pam",     "Music",     music);
-                sidebar_image_item("/system/images/icon-images.pam",    "Pictures",  pictures);
-                sidebar_image_item("/system/images/icon-videos.pam",    "Videos",    videos);
-                sidebar_image_item("/system/images/icon-trash.pam",     "Trash",     trash);
+                sidebar_image_item("/system/images/pam/icon-home.pam",      "Home",      home);
+                sidebar_image_item("/system/images/pam/icon-star.pam",      "Desktop",   desktop);
+                sidebar_image_item("/system/images/pam/icon-documents.pam", "Documents", documents);
+                sidebar_image_item("/system/images/pam/icon-downloads.pam", "Downloads", downloads);
+                sidebar_image_item("/system/images/pam/icon-music.pam",     "Music",     music);
+                sidebar_image_item("/system/images/pam/icon-images.pam",    "Pictures",  pictures);
+                sidebar_image_item("/system/images/pam/icon-videos.pam",    "Videos",    videos);
+                sidebar_image_item("/system/images/pam/icon-trash.pam",     "Trash",     trash);
                 Divider();
                 Text("Disks").caption().tertiary();
                 sidebar_item(IconFiles, "System Disk", "/");

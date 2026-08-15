@@ -10,8 +10,8 @@
 *.img
 
 # Local vector sources used to generate the PAM assets packed by EmbLinkOS.
-# The runtime cannot decode SVG; only the generated system/images/*.pam files
-# belong in the repository and in embkfs.img.
+# The runtime cannot decode SVG; only the generated system/images/pam/*.pam
+# files belong in the repository and in embkfs.img.
 /system/images/svg/
 
 # QEMU / debug logs

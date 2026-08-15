@@ -76,7 +76,7 @@ static void task_image(const char *image, const char *app, const char *dir) {
  * corresponding services instead of being decorative lies. */
 static void home_ui(void) {
     Screen(.width = g_sw, .height = g_sh, .padding = -1, .align = Fill) {
-        BackgroundImage("/system/images/colibri-user.ppm");
+        BackgroundImage("/system/images/ppm/colibri-user.ppm");
         VStack(.width = g_sw, .height = g_sh, .padding = 0, .spacing = 0,
                .align = Fill) {
             Glass(.width = g_sw, .height = 32, .padding = 6, .corner = -1,
@@ -97,11 +97,11 @@ static void home_ui(void) {
              * remaining desktop height here, which left the taskbar mid-screen. */
             HStack(.padding = 16, .height = g_sh - 32 - 64, .align = Leading) {
                 VStack(.spacing = 18, .align = Center) {
-                    desktop_image("/system/images/icon-files.pam",
+                    desktop_image("/system/images/pam/icon-files.pam",
                                   "Home", getenv("HOME"));
-                    desktop_image("/system/images/icon-launcher.pam",
+                    desktop_image("/system/images/pam/icon-launcher.pam",
                                   "Apps", "/data/apps");
-                    desktop_image("/system/images/icon-settings.pam",
+                    desktop_image("/system/images/pam/icon-settings.pam",
                                   "System", "/system");
                 }
                 Spacer();
@@ -111,13 +111,13 @@ static void home_ui(void) {
                   .background = { .r=.025f, .g=.028f, .b=.038f, .a=.94f },
                   .border = 1, .shadow = -1) {
                 HStack(.width = g_sw - 16, .spacing = 8, .align = Center) {
-                    task_image("/system/images/icon-launcher.pam",
+                    task_image("/system/images/pam/icon-launcher.pam",
                                NULL, "/data/apps");
-                    task_image("/system/images/icon-files.pam",
+                    task_image("/system/images/pam/icon-files.pam",
                                "/data/apps/files/files.elf", NULL);
-                    task_image("/system/images/icon-terminal.pam",
+                    task_image("/system/images/pam/icon-terminal.pam",
                                "/data/apps/term/term.elf", NULL);
-                    task_image("/system/images/icon-settings.pam",
+                    task_image("/system/images/pam/icon-settings.pam",
                                NULL, "/system");
                     Spacer();
                     Text(getenv("USER") ? getenv("USER") : "user").caption().secondary();

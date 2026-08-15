@@ -85,7 +85,7 @@ static void view(void) {
     if (side < 32) side = 32;
     if (side > 120) side = 120;
     Screen(.padding = -1, .justify = Center, .align = Center) {
-        BackgroundImage("/system/images/colibri-user.ppm");
+        BackgroundImage("/system/images/ppm/colibri-user.ppm");
         HStack(.width = em_viewport_width(), .height = em_viewport_height(),
                .padding = side, .align = Center) {
             Glass(.width = panel, .spacing = 14, .padding = 32, .align = Fill,

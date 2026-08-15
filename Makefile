@@ -960,7 +960,7 @@ STAGED_APPS ?=
 
 # Visual resources are packed into /system/images by mkfs.  Keep them explicit
 # prerequisites so adding or changing an icon cannot leave embkfs.img stale.
-SYSTEM_IMAGES := $(wildcard system/images/*.ppm system/images/*.pam)
+SYSTEM_IMAGES := $(wildcard system/images/ppm/*.ppm system/images/pam/*.pam)
 
 # One recipe, two outputs. & tells GNU Make (4.3+) this recipe produces BOTH
 # targets in one run, rather than potentially invoking the script twice if
