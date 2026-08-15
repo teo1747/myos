@@ -107,6 +107,15 @@ static void go_up(void) {
     navigate_to(parent);
 }
 
+static void sidebar_image_item(const char *image, const char *label, const char *path) {
+    HStack(.spacing = 0, .width = 180, .align = Center) {
+        if (ImageButtonKey(image, 28, path))
+            navigate_to(path);
+        if (Button(label).ghost().grow().leading().padding(-1).clicked())
+            navigate_to(path);
+    }
+}
+
 static void sidebar_item(int icon, const char *label, const char *path) {
     HStack(.spacing = 10, .width = 180, .align = Center) {
         Icon(icon).secondary();
@@ -189,14 +198,14 @@ static void app(void) {
                     Text("Files").heading();
                 }
                 Divider();
-                sidebar_item(IconHome,   "Home",      home);
-                sidebar_item(IconGrid,   "Desktop",   desktop);
-                sidebar_item(IconDoc,    "Documents", documents);
-                sidebar_item(IconArrowR, "Downloads", downloads);
-                sidebar_item(IconList,   "Music",     music);
-                sidebar_item(IconFiles,  "Pictures",  pictures);
-                sidebar_item(IconGrid,   "Videos",    videos);
-                sidebar_item(IconTrash,  "Trash",     trash);
+                sidebar_image_item("/system/images/icon-home.pam",      "Home",      home);
+                sidebar_image_item("/system/images/icon-star.pam",      "Desktop",   desktop);
+                sidebar_image_item("/system/images/icon-documents.pam", "Documents", documents);
+                sidebar_image_item("/system/images/icon-downloads.pam", "Downloads", downloads);
+                sidebar_image_item("/system/images/icon-music.pam",     "Music",     music);
+                sidebar_image_item("/system/images/icon-images.pam",    "Pictures",  pictures);
+                sidebar_image_item("/system/images/icon-videos.pam",    "Videos",    videos);
+                sidebar_image_item("/system/images/icon-trash.pam",     "Trash",     trash);
                 Divider();
                 Text("Disks").caption().tertiary();
                 sidebar_item(IconFiles, "System Disk", "/");

@@ -958,10 +958,14 @@ EMBKFS_APPS := build/init.elf build/primtest.elf build/hello.elf build/posixdemo
 # catch. Naming the file is the point.
 STAGED_APPS ?=
 
+# Visual resources are packed into /system/images by mkfs.  Keep them explicit
+# prerequisites so adding or changing an icon cannot leave embkfs.img stale.
+SYSTEM_IMAGES := $(wildcard system/images/*.ppm system/images/*.pam)
+
 # One recipe, two outputs. & tells GNU Make (4.3+) this recipe produces BOTH
 # targets in one run, rather than potentially invoking the script twice if
 # both are requested stale in the same `make` invocation.
-embkfs.img embkfs_tree.img &: tools/embkfs_mkfs/mkfs_embkfs.py $(EMBKFS_APPS) $(STAGED_APPS) build/kernel.embdbg build/libembk.so $(if $(HAVE_TCC),build/libtcc1.o) build/emlink_dynstubs.o
+embkfs.img embkfs_tree.img &: tools/embkfs_mkfs/mkfs_embkfs.py $(EMBKFS_APPS) $(STAGED_APPS) $(SYSTEM_IMAGES) build/kernel.embdbg build/libembk.so $(if $(HAVE_TCC),build/libtcc1.o) build/emlink_dynstubs.o
 	@# Drift guard: mkfs packs every build/*.elf it finds, but make only knows
 	@# about $(EMBKFS_APPS). Anything in the first set and not the second lands
 	@# on the image yet never triggers a rebuild -- a stale-image bug that is
@@ -1033,6 +1037,7 @@ DISPLAY_1TO1 = -display gtk,zoom-to-fit=off
 #   make run-embkfs-cow QEMU_ACCEL=tcg,thread=multi QEMU_CPU=qemu64,+rdrand
 QEMU_ACCEL ?= kvm
 QEMU_CPU ?= host
+SMP ?= 1
 
 run-embkfs-cow: $(IMG) $(DISK) $(EMBKFS_MASTER)
 	cp -f $(EMBKFS_MASTER) $(EMBKFS_SCRATCH)
@@ -1042,7 +1047,7 @@ run-embkfs-cow: $(IMG) $(DISK) $(EMBKFS_MASTER)
 	    -drive format=raw,file=$(EMBKFS_SCRATCH),if=ide,index=1 \
 	    -usb -device usb-tablet \
 	    $(VGA_VIRTIO) $(DISPLAY_1TO1) \
-	    -serial stdio -no-reboot -no-shutdown -m 521m -smp 1 -accel $(QEMU_ACCEL) $(NET)
+	    -serial stdio -no-reboot -no-shutdown -m 521m -smp $(SMP) -accel $(QEMU_ACCEL) $(NET)
 	@echo "--- grading the post-COW image ---"
 	python3 embkfs_mkfs/verify_embkfs.py $(EMBKFS_SCRATCH)
 

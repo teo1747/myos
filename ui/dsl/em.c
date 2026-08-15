@@ -613,9 +613,20 @@ static bool em_button_impl(const char *s, EmProps p, bool *out_hov) {
     else if (hov) ui_set_paint(solid(shade(t->accent_soft, pressed ? 0.9f : 1.0f)));
     ui_set_corner_radius(p.corner > 0 ? p.corner : t->radius_md);
     if (has_border || p.border > 0) ui_set_border(p.border > 0 ? p.border : 1.0f, hov ? t->accent : bcol);
-    ui_set_padding(t->sp2 + 1, t->sp4, t->sp2 + 1, t->sp4);
+    if (p.padding < 0) {
+        ui_set_padding(0, 0, 0, 0);
+    } else {
+        float py = p.padding > 0 ? p.padding : t->sp2 + 1;
+        float px = p.padding > 0 ? p.padding : t->sp4;
+        if (p.py > 0) py = p.py;
+        if (p.px > 0) px = p.px;
+        ui_set_padding(p.pt > 0 ? p.pt : py,
+                       p.pr > 0 ? p.pr : px,
+                       p.pb > 0 ? p.pb : py,
+                       p.pl > 0 ? p.pl : px);
+    }
     ui_set_align(ALIGN_CENTER);
-    ui_set_justify(JUSTIFY_CENTER);
+    ui_set_justify(p.align ? map_justify(p.align) : JUSTIFY_CENTER);
     if (p.grow || p.width > 0) { struct layout_size w = p.width > 0 ? sz_fixed(p.width) : sz_grow(); ui_set_size(w, sz_intrinsic()); }
     uint32_t fh; float sz; em_resolve_font(p.font ? p.font : BodyBold, &fh, &sz);
     ui_set_font(fh); ui_set_text_size(sz); ui_set_text_color(txt);

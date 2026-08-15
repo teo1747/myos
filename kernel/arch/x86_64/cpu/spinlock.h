@@ -27,6 +27,11 @@ void spin_lock(spinlock_t *lock);
 // Release the spinlock. Restores previous interrupt state from lock->saved_rflags.
 void spin_unlock(spinlock_t *lock);
 
+/* Release without changing IF.  Scheduler context switches use this after the
+ * incoming context has restored its own RFLAGS; restoring lock->saved_flags
+ * there could enable interrupts while still inside an older IRQ frame. */
+void spin_unlock_preserve_irq(spinlock_t *lock);
+
 
 
 #endif /* __SPINLOCK_H__ */

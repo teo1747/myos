@@ -40,3 +40,8 @@ void spin_unlock(spinlock_t *lock) {
         __asm__ volatile ("sti" ::: "memory"); // Re-enable interrupts if they were enabled before
     }
 }
+
+
+void spin_unlock_preserve_irq(spinlock_t *lock) {
+    __atomic_store_n(&lock->locked, 0, __ATOMIC_RELEASE);
+}

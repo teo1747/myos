@@ -1905,7 +1905,10 @@ static void process_trampoline(void) {
      * got scheduled under SMP, not a theoretical race). See
      * kthread_trampoline() below for the exact same fix on the kthread
      * side. */
-    spin_unlock(&g_sched_lock);
+    /* The fabricated context starts with IF=0 and will enter ring 3 through an
+     * iretq carrying IF=1 below.  Do not restore the shared lock flags here:
+     * they belong to the scheduler invocation that dispatched this thread. */
+    spin_unlock_preserve_irq(&g_sched_lock);
 
     uint64_t entry = current_thread->entry_point;
     uint64_t user_rsp = current_thread->user_rsp;
@@ -2023,15 +2026,12 @@ int64_t process_sbrk(struct process *proc, int64_t increment){
  * thread). thread::entry_point doubles as the stash for the real entry
  * function pointer here -- kthreads have no user-mode entry of their own. */
 static void kthread_trampoline(void) {
-    spin_unlock(&g_sched_lock);
+    spin_unlock_preserve_irq(&g_sched_lock);
 
-    /* spin_unlock() only re-enables interrupts if g_sched_lock's OWN
-     * saved_flags (captured back when whichever schedule_locked() call
-     * dispatched this kthread first acquired the lock) had IF=1. When that
-     * dispatch happened from the ordinary case -- a timer tick, i.e. from
-     * INSIDE lapic_timer_handler() -- the live flags at that exact moment
-     * are IF=0 (hardware auto-clears IF on interrupt entry), so saved_flags
-     * has IF=0, and spin_unlock() correctly leaves interrupts off... for a
+    /* The preserve-IRQ unlock above deliberately leaves IF=0. When dispatch
+     * happened from the ordinary case -- a timer tick, i.e. from INSIDE
+     * lapic_timer_handler() -- the live flags at that exact moment are IF=0
+     * (hardware auto-clears IF on interrupt entry). That is correct for a
      * NORMAL return, where the ISR's own `iretq` epilogue would go on to
      * restore the TRUE pre-interrupt flags from the stack regardless of
      * what spin_unlock decided. But THIS path never reaches that iretq --
@@ -2389,12 +2389,13 @@ static void schedule_locked(void) {
      * mechanism actually applies to this resumption (kernel_ctx_switch
      * saves flags verbatim now -- see kcontext.asm and docs §16 Bugs
      * 20/21 -- so it's either a trampoline's own sti, an iretq's pushed
-     * rflags, or spin_unlock's saved-flags restore). Releases g_sched_lock
-     * as the tail end of WHICHEVER thread's schedule() call resumes here
+     * rflags). Release g_sched_lock without consulting its shared saved_flags:
+     * the restored context's IF is authoritative. This is the tail end of
+     * WHICHEVER thread's schedule() call resumes here
      * -- see the lock's acquire comment at the top of this function for
      * why that's always correct, regardless of who's actually running
      * this line. */
-    spin_unlock(&g_sched_lock);
+    spin_unlock_preserve_irq(&g_sched_lock);
 }
 
 void sys_yield(void) {
